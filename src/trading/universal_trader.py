@@ -614,8 +614,11 @@ class UniversalTrader:
                             f"Failed to exit position: {sell_result.error_message}"
                         )
                         # Keep monitoring in case sell can be retried
-
-                    break
+                        # Do not break; continue monitoring loop for another attempt
+                    
+                    if sell_result.success:
+                        # Exit monitoring loop after successful sell
+                        break
                 else:
                     # Log current status
                     pnl = position.get_pnl(current_price)
