@@ -445,6 +445,9 @@ class UniversalTrader:
             buy_result.price,
             buy_result.amount,
             buy_result.tx_signature,
+            fee_lamports=buy_result.fee_lamports,
+            buy_fee_lamports=buy_result.fee_lamports,
+            total_fees_lamports=buy_result.fee_lamports,
         )
         self.traded_mints.add(token_info.mint)
 
@@ -485,6 +488,7 @@ class UniversalTrader:
             symbol=token_info.symbol,
             entry_price=buy_result.price,
             quantity=buy_result.amount,
+            buy_fee_lamports=buy_result.fee_lamports,
             take_profit_percentage=self.take_profit_percentage,
             stop_loss_percentage=self.stop_loss_percentage,
             max_hold_time=self.max_hold_time,
@@ -515,6 +519,8 @@ class UniversalTrader:
                 sell_result.price,
                 sell_result.amount,
                 sell_result.tx_signature,
+                fee_lamports=sell_result.fee_lamports,
+                sell_fee_lamports=sell_result.fee_lamports,
             )
             # Close ATA if enabled
             await handle_cleanup_after_sell(
@@ -566,7 +572,11 @@ class UniversalTrader:
 
                     if sell_result.success:
                         # Close position with actual exit price
-                        position.close_position(sell_result.price, exit_reason)
+                        position.close_position(
+                            sell_result.price,
+                            exit_reason,
+                            sell_fee_lamports=sell_result.fee_lamports,
+                        )
 
                         logger.info(
                             f"Successfully exited position: {exit_reason.value}"
@@ -577,12 +587,16 @@ class UniversalTrader:
                             sell_result.price,
                             sell_result.amount,
                             sell_result.tx_signature,
+                            fee_lamports=sell_result.fee_lamports,
+                            buy_fee_lamports=position.buy_fee_lamports,
+                            sell_fee_lamports=sell_result.fee_lamports,
+                            total_fees_lamports=((position.buy_fee_lamports or 0) + (sell_result.fee_lamports or 0)),
                         )
 
                         # Log final PnL
                         final_pnl = position.get_pnl()
                         logger.info(
-                            f"Final PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['unrealized_pnl_sol']:.6f} SOL)"
+                            f"Final PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['realized_pnl_sol']:.6f} SOL)"
                         )
 
                         # Close ATA if enabled
@@ -605,7 +619,7 @@ class UniversalTrader:
                 else:
                     # Log current status
                     pnl = position.get_pnl(current_price)
-                    logger.debug(
+                    logger.info(
                         f"Position status: {current_price:.8f} SOL ({pnl['price_change_pct']:+.2f}%)"
                     )
 
@@ -677,6 +691,10 @@ class UniversalTrader:
         price: float,
         amount: float,
         tx_hash: str | None,
+        fee_lamports: int | None = None,
+        buy_fee_lamports: int | None = None,
+        sell_fee_lamports: int | None = None,
+        total_fees_lamports: int | None = None,
     ) -> None:
         """Log trade information."""
         try:
@@ -693,6 +711,15 @@ class UniversalTrader:
                 "amount": amount,
                 "tx_hash": str(tx_hash) if tx_hash else None,
             }
+
+            if fee_lamports is not None:
+                log_entry["fee_lamports"] = fee_lamports
+            if buy_fee_lamports is not None:
+                log_entry["buy_fee_lamports"] = buy_fee_lamports
+            if sell_fee_lamports is not None:
+                log_entry["sell_fee_lamports"] = sell_fee_lamports
+            if total_fees_lamports is not None:
+                log_entry["total_fees_lamports"] = total_fees_lamports
 
             log_file_path = trades_dir / "trades.log"
             with log_file_path.open("a", encoding="utf-8") as log_file:

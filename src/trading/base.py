@@ -26,6 +26,7 @@ class TradeResult:
     error_message: str | None = None
     amount: float | None = None
     price: float | None = None
+    fee_lamports: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization.
@@ -40,6 +41,7 @@ class TradeResult:
             "error_message": self.error_message,
             "amount": self.amount,
             "price": self.price,
+            "fee_lamports": self.fee_lamports,
         }
 
 

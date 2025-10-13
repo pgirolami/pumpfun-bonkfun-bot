@@ -7,6 +7,7 @@ from datetime import datetime
 from enum import Enum
 
 from solders.pubkey import Pubkey
+from core.pubkeys import LAMPORTS_PER_SOL
 
 
 class ExitReason(Enum):
@@ -41,6 +42,9 @@ class Position:
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
     exit_time: datetime | None = None
+    # Fees (lamports)
+    buy_fee_lamports: int | None = None
+    sell_fee_lamports: int | None = None
 
     @classmethod
     def create_from_buy_result(
@@ -49,9 +53,10 @@ class Position:
         symbol: str,
         entry_price: float,
         quantity: float,
-        take_profit_percentage: float | None = None,
-        stop_loss_percentage: float | None = None,
-        max_hold_time: int | None = None,
+        buy_fee_lamports: int | None,
+        take_profit_percentage: float | None,
+        stop_loss_percentage: float | None,
+        max_hold_time: int | None,
     ) -> "Position":
         """Create a position from a successful buy transaction.
 
@@ -84,6 +89,7 @@ class Position:
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
             max_hold_time=max_hold_time,
+            buy_fee_lamports=buy_fee_lamports,
         )
 
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
@@ -114,7 +120,7 @@ class Position:
 
         return False, None
 
-    def close_position(self, exit_price: float, exit_reason: ExitReason) -> None:
+    def close_position(self, exit_price: float, exit_reason: ExitReason, sell_fee_lamports: int | None = None) -> None:
         """Close the position with exit details.
 
         Args:
@@ -125,6 +131,7 @@ class Position:
         self.exit_price = exit_price
         self.exit_reason = exit_reason
         self.exit_time = datetime.utcnow()
+        self.sell_fee_lamports = sell_fee_lamports
 
     def get_pnl(self, current_price: float | None = None) -> dict:
         """Calculate profit/loss for the position.
@@ -144,16 +151,39 @@ class Position:
 
         price_change = price_to_use - self.entry_price
         price_change_pct = (price_change / self.entry_price) * 100
-        unrealized_pnl = price_change * self.quantity
+        gross_pnl_sol = price_change * self.quantity
 
-        return {
-            "entry_price": self.entry_price,
-            "current_price": price_to_use,
-            "price_change": price_change,
-            "price_change_pct": price_change_pct,
-            "unrealized_pnl_sol": unrealized_pnl,
-            "quantity": self.quantity,
-        }
+        buy_fee_lamports = int(self.buy_fee_lamports or 0)
+        sell_fee_lamports = int(self.sell_fee_lamports or 0)
+
+        if self.is_active:
+            net_unrealized_pnl_sol = gross_pnl_sol - (buy_fee_lamports / LAMPORTS_PER_SOL)
+            return {
+                "entry_price": self.entry_price,
+                "current_price": price_to_use,
+                "price_change": price_change,
+                "price_change_pct": price_change_pct,
+                "unrealized_pnl_sol": net_unrealized_pnl_sol,
+                "quantity": self.quantity,
+                "buy_fee_lamports": buy_fee_lamports,
+                "total_fees_lamports": buy_fee_lamports,
+                "total_fees_sol": buy_fee_lamports / LAMPORTS_PER_SOL,
+            }
+        else:
+            total_fees_lamports = buy_fee_lamports + sell_fee_lamports
+            net_realized_pnl_sol = gross_pnl_sol - (total_fees_lamports / LAMPORTS_PER_SOL)
+            return {
+                "entry_price": self.entry_price,
+                "current_price": price_to_use,
+                "price_change": price_change,
+                "price_change_pct": price_change_pct,
+                "realized_pnl_sol": net_realized_pnl_sol,
+                "quantity": self.quantity,
+                "buy_fee_lamports": buy_fee_lamports,
+                "sell_fee_lamports": sell_fee_lamports,
+                "total_fees_lamports": total_fees_lamports,
+                "total_fees_sol": total_fees_lamports / LAMPORTS_PER_SOL,
+            }
 
     def __str__(self) -> str:
         """String representation of position."""

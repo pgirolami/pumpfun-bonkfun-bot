@@ -228,6 +228,45 @@ class SolanaClient:
             logger.exception(f"Failed to confirm transaction {signature}")
             return False
 
+    async def get_transaction(self, signature: str) -> dict[str, Any] | None:
+        """Fetch a transaction by signature.
+
+        Args:
+            signature: Transaction signature
+
+        Returns:
+            Parsed RPC response dictionary or None on failure
+        """
+        try:
+            client = await self.get_client()
+            # Use jsonParsed encoding to access meta fields easily
+            resp = await client.get_transaction(
+                signature,
+                encoding="jsonParsed",
+                max_supported_transaction_version=0,
+            )
+            return resp.value  # type: ignore[return-value]
+        except Exception:
+            logger.exception(f"Failed to fetch transaction {signature}")
+            return None
+
+    async def get_transaction_fee(self, signature: str) -> int | None:
+        """Return the actual fee paid for a confirmed transaction in lamports.
+
+        Args:
+            signature: Transaction signature
+
+        Returns:
+            Fee in lamports if available, otherwise None
+        """
+        tx = await self.get_transaction(signature)
+        try:
+            if tx and tx.get("meta") and tx["meta"].get("fee") is not None:
+                return int(tx["meta"]["fee"])  # includes base + priority fees
+        except Exception:
+            logger.exception("Error parsing transaction fee from meta")
+        return None
+
     async def post_rpc(self, body: dict[str, Any]) -> dict[str, Any] | None:
         """
         Send a raw RPC request to the Solana node.

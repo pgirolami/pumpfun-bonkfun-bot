@@ -117,12 +117,14 @@ class PlatformAwareBuyer(Trader):
 
             if success:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
+                fee_lamports = await self.client.get_transaction_fee(tx_signature)
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
                     tx_signature=tx_signature,
                     amount=token_amount,
                     price=token_price_sol,
+                    fee_lamports=fee_lamports,
                 )
             else:
                 return TradeResult(
@@ -204,6 +206,7 @@ class PlatformAwareSeller(Trader):
             user_token_account = address_provider.derive_user_token_account(
                 self.wallet.pubkey, token_info.mint
             )
+            logger.info(f"user_token_account={str(user_token_account)} for wallet {self.wallet.pubkey} and mint {token_info.mint}")
 
             token_balance = await self.client.get_token_account_balance(
                 user_token_account
@@ -272,12 +275,14 @@ class PlatformAwareSeller(Trader):
 
             if success:
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
+                fee_lamports = await self.client.get_transaction_fee(tx_signature)
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
                     tx_signature=tx_signature,
                     amount=token_balance_decimal,
                     price=token_price_sol,
+                    fee_lamports=fee_lamports,
                 )
             else:
                 return TradeResult(

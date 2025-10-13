@@ -8,11 +8,11 @@ rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
 wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
 private_key: "${SOLANA_PRIVATE_KEY}"
 
-enabled: false # You can turn off the bot w/o removing its config
+enabled: true # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
-platform: "lets_bonk"
+platform: "pump_fun"
 
 # PumpPortal configuration (optional - uses default URL if not specified)
 pumpportal:
@@ -26,7 +26,7 @@ trade:
   sell_slippage: 0.3
 
   # Exit strategy configuration
-  exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual"
+  exit_strategy: "tp_sl" # Options: "time_based", "tp_sl", "manual"
   take_profit_percentage: 0.1 # Take profit at 10% gain (0.1 = 10%)
   stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
   max_hold_time: 600 # Maximum hold time in seconds (600 = 10 minutes)
@@ -35,7 +35,7 @@ trade:
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot buys the specified number of tokens directly, making the process faster but less precise.
-  extreme_fast_mode: true
+  extreme_fast_mode: false
   extreme_fast_token_amount: 20 # Amount of tokens to buy
 
 # Priority fee configuration
