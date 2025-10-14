@@ -169,3 +169,5 @@ cython_debug/
 trades/trades.log
 # Mac OS X
 .DS_Store
+
+trades/
