@@ -29,7 +29,7 @@ trade:
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual"
   take_profit_percentage: 0.5 # Take profit at 10% gain (0.1 = 10%)
   stop_loss_percentage: 0.2 # Stop loss at 10% loss (0.1 = 10%)
-  max_hold_time: 600 # Maximum hold time in seconds (600 = 10 minutes)
+  max_hold_time: 120 # Maximum hold time in seconds (600 = 10 minutes)
   price_check_interval: 2 # Check price every 2 seconds
 
   # EXTREME FAST mode configuration
@@ -67,8 +67,8 @@ filters:
 # Retry and timeout settings
 retries:
   max_attempts: 1 # Number of attempts for transaction submission
-  wait_after_creation: 15 # Seconds to wait after token creation (only if EXTREME FAST is disabled)
-  wait_after_buy: 15 # Holding period after buy transaction
+  wait_after_creation: 10 # Seconds to wait after token creation (only if EXTREME FAST is disabled)
+  wait_after_buy: 10 # Holding period after buy transaction
   wait_before_new_token: 15 # Pause between token trades
 
 # Token and account management
