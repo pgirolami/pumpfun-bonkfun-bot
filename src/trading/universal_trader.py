@@ -170,6 +170,10 @@ class UniversalTrader:
         self.exit_strategy = exit_strategy.lower()
         self.take_profit_percentage = take_profit_percentage
         self.stop_loss_percentage = stop_loss_percentage
+        self.trailing_stop_percentage: float | None = None
+        if self.exit_strategy == "trailing":
+            # Use stop_loss_percentage input as trailing percentage if provided
+            self.trailing_stop_percentage = stop_loss_percentage
         self.max_hold_time = max_hold_time
         self.price_check_interval = price_check_interval
 
@@ -455,6 +459,8 @@ class UniversalTrader:
         if not self.marry_mode:
             if self.exit_strategy == "tp_sl":
                 await self._handle_tp_sl_exit(token_info, buy_result)
+            elif self.exit_strategy == "trailing":
+                await self._handle_trailing_exit(token_info, buy_result)
             elif self.exit_strategy == "time_based":
                 await self._handle_time_based_exit(token_info)
             elif self.exit_strategy == "manual":
@@ -491,6 +497,7 @@ class UniversalTrader:
             buy_fee_lamports=buy_result.fee_lamports,
             take_profit_percentage=self.take_profit_percentage,
             stop_loss_percentage=self.stop_loss_percentage,
+            trailing_stop_percentage=None,
             max_hold_time=self.max_hold_time,
         )
 
@@ -501,6 +508,30 @@ class UniversalTrader:
             logger.info(f"Stop loss target: {position.stop_loss_price:.8f} SOL")
 
         # Monitor position until exit condition is met
+        await self._monitor_position_until_exit(token_info, position)
+
+    async def _handle_trailing_exit(
+        self, token_info: TokenInfo, buy_result: TradeResult
+    ) -> None:
+        """Handle trailing stop exit strategy (no fixed take profit)."""
+        position = Position.create_from_buy_result(
+            mint=token_info.mint,
+            symbol=token_info.symbol,
+            entry_price=buy_result.price,
+            quantity=buy_result.amount,
+            buy_fee_lamports=buy_result.fee_lamports,
+            take_profit_percentage=None,
+            stop_loss_percentage=None,
+            trailing_stop_percentage=self.trailing_stop_percentage,
+            max_hold_time=self.max_hold_time,
+        )
+
+        logger.info(f"Created trailing position: {position}")
+        if position.trailing_stop_percentage is not None:
+            logger.info(
+                f"Trailing stop: {position.trailing_stop_percentage * 100:.2f}% (updates with highs)"
+            )
+
         await self._monitor_position_until_exit(token_info, position)
 
     async def _handle_time_based_exit(self, token_info: TokenInfo) -> None:

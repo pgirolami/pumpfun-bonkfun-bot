@@ -75,7 +75,7 @@ CONFIG_VALIDATION_RULES = [
 VALID_VALUES = {
     "filters.listener_type": ["logs", "blocks", "geyser", "pumpportal"],
     "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
-    "trade.exit_strategy": ["time_based", "tp_sl", "manual"],
+    "trade.exit_strategy": ["time_based", "tp_sl", "manual", "trailing"],
     "platform": ["pump_fun", "lets_bonk"],
 }
 

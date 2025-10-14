@@ -15,6 +15,7 @@ class ExitReason(Enum):
 
     TAKE_PROFIT = "take_profit"
     STOP_LOSS = "stop_loss"
+    TRAILING_STOP = "trailing_stop"
     MAX_HOLD_TIME = "max_hold_time"
     MANUAL = "manual"
 
@@ -36,6 +37,9 @@ class Position:
     take_profit_price: float | None = None
     stop_loss_price: float | None = None
     max_hold_time: int | None = None  # seconds
+    # Trailing stop configuration/state
+    trailing_stop_percentage: float | None = None  # fraction (e.g., 0.2 for 20%)
+    highest_price: float | None = None  # highest observed price since entry
 
     # Status
     is_active: bool = True
@@ -56,6 +60,7 @@ class Position:
         buy_fee_lamports: int | None,
         take_profit_percentage: float | None,
         stop_loss_percentage: float | None,
+        trailing_stop_percentage: float | None,
         max_hold_time: int | None,
     ) -> "Position":
         """Create a position from a successful buy transaction.
@@ -90,6 +95,8 @@ class Position:
             stop_loss_price=stop_loss_price,
             max_hold_time=max_hold_time,
             buy_fee_lamports=buy_fee_lamports,
+            trailing_stop_percentage=trailing_stop_percentage,
+            highest_price=entry_price,
         )
 
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
@@ -104,6 +111,10 @@ class Position:
         if not self.is_active:
             return False, None
 
+        # Update highest price for trailing stop tracking
+        if self.highest_price is None or current_price > self.highest_price:
+            self.highest_price = current_price
+
         # Check take profit
         if self.take_profit_price and current_price >= self.take_profit_price:
             return True, ExitReason.TAKE_PROFIT
@@ -111,6 +122,12 @@ class Position:
         # Check stop loss
         if self.stop_loss_price and current_price <= self.stop_loss_price:
             return True, ExitReason.STOP_LOSS
+
+        # Check trailing stop (if configured)
+        if self.trailing_stop_percentage is not None and self.highest_price is not None:
+            trailing_limit = self.highest_price * (1 - self.trailing_stop_percentage)
+            if current_price <= trailing_limit:
+                return True, ExitReason.TRAILING_STOP
 
         # Check max hold time
         if self.max_hold_time:
