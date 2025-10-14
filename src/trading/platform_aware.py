@@ -113,9 +113,9 @@ class PlatformAwareBuyer(Trader):
                 ),
             )
 
-            success = await self.client.confirm_transaction(tx_signature)
+            confirm_result = await self.client.confirm_transaction(tx_signature)
 
-            if success:
+            if confirm_result.success:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
                 fee_lamports = await self.client.get_transaction_fee(tx_signature)
                 return TradeResult(
@@ -130,7 +130,11 @@ class PlatformAwareBuyer(Trader):
                 return TradeResult(
                     success=False,
                     platform=token_info.platform,
-                    error_message=f"Transaction failed to confirm: {tx_signature}",
+                    tx_signature=tx_signature,
+                    amount=token_amount,
+                    price=token_price_sol,
+                    fee_lamports=fee_lamports,
+                    error_message=confirm_result.error_message,
                 )
 
         except Exception as e:
@@ -271,9 +275,9 @@ class PlatformAwareSeller(Trader):
                 ),
             )
 
-            success = await self.client.confirm_transaction(tx_signature)
+            confirm = await self.client.confirm_transaction(tx_signature)
 
-            if success:
+            if confirm.success:
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
                 fee_lamports = await self.client.get_transaction_fee(tx_signature)
                 return TradeResult(
@@ -288,7 +292,7 @@ class PlatformAwareSeller(Trader):
                 return TradeResult(
                     success=False,
                     platform=token_info.platform,
-                    error_message=f"Transaction failed to confirm: {tx_signature}",
+                    error_message=confirm.error_message or f"Transaction failed to confirm: {tx_signature}",
                 )
 
         except Exception as e:

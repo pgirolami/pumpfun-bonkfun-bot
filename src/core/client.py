@@ -8,8 +8,9 @@ import logging
 from typing import Any
 
 import aiohttp
+from dataclasses import dataclass
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.commitment import Processed
+from solana.rpc.commitment import Confirmed, Processed
 from solana.rpc.core import UnconfirmedTxError
 from solana.rpc.types import TxOpts
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
@@ -216,27 +217,56 @@ class SolanaClient:
                 await asyncio.sleep(wait_time)
 
 
+    @dataclass
+    class ConfirmationResult:
+        success: bool
+        error_message: str | None = None
+
     async def confirm_transaction(
         self, signature: str, commitment: str = "confirmed"
-    ) -> bool:
-        """Wait for transaction confirmation.
+    ) -> "SolanaClient.ConfirmationResult":
+        """Wait for transaction confirmation and extract error details if any.
 
         Args:
-            signature: Transaction signature
-            commitment: Confirmation commitment level
+            signature: Transaction signature to confirm.
+            commitment: Confirmation commitment level (e.g., "processed", "confirmed").
 
         Returns:
-            Whether transaction was confirmed
+            ConfirmationResult: Dataclass containing:
+                - success: True if confirmed without RPC error in the response.
+                - error_message: Enriched error details if an error was present;
+                  includes transaction logMessages when available.
         """
         client = await self.get_client()
-        try:
-            await client.confirm_transaction(
+
+        # Wait for confirmation and inspect response for errors
+        resp = await client.confirm_transaction(
                 signature, commitment=commitment, sleep_seconds=1
-            )
-            return True
-        except Exception:
-            logger.exception(f"Failed to confirm transaction {signature}")
-            return False
+        )
+
+        # Try to extract an error from the confirm response
+        if resp.value[0].err:
+            # Here I get the transaction anyway so that I can have the logs and extract the error from them
+            error_string = str(resp.value[0].err)
+            try:
+                tx = await client.get_transaction(signature, commitment=commitment)
+                if tx and tx.value:
+                    tx_time = tx.value.block_time
+                    if tx.value.transaction.meta:
+                        fee = tx.value.transaction.meta.fee
+                        if tx.value.transaction.meta.log_messages:
+                            error_string = str(tx.value.transaction.meta.log_messages)
+            except BaseException as e:
+                logging.info(
+                    "client.confirm_transaction - got exception while getting transaction that failed to get its log messages. Ignoring and will use the following for error extraction: %s",
+                    resp,
+                )
+                logging.exception(e)
+
+            return SolanaClient.ConfirmationResult(
+                success=False, error_message=error_string) 
+
+        return SolanaClient.ConfirmationResult(success=True, error_message=None)
 
     @retry(
         reraise=True,
