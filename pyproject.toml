@@ -20,6 +20,7 @@ dependencies = [
     "protobuf>=5.29.4",
     "pyyaml>=6.0.2",
     "uvloop>=0.21.0",
+    "tenacity>=9.1.2",
 ]
 
 [project.optional-dependencies]
