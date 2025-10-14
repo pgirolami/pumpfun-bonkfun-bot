@@ -4,11 +4,13 @@ Solana client abstraction for blockchain operations.
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 import aiohttp
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Processed
+from solana.rpc.core import UnconfirmedTxError
 from solana.rpc.types import TxOpts
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
 from solders.hash import Hash
@@ -19,6 +21,13 @@ from solders.pubkey import Pubkey
 from solders.transaction import Transaction
 
 from utils.logger import get_logger
+from tenacity import (
+    after_log,
+    retry,
+    retry_if_not_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 logger = get_logger(__name__)
 
@@ -206,6 +215,7 @@ class SolanaClient:
                 )
                 await asyncio.sleep(wait_time)
 
+
     async def confirm_transaction(
         self, signature: str, commitment: str = "confirmed"
     ) -> bool:
@@ -228,6 +238,13 @@ class SolanaClient:
             logger.exception(f"Failed to confirm transaction {signature}")
             return False
 
+    @retry(
+        reraise=True,
+        wait=wait_fixed(2),
+        stop=stop_after_attempt(5),
+        retry=retry_if_not_exception_type(UnconfirmedTxError),
+        after=after_log(logging.getLogger(), logging.INFO),
+    )
     async def get_transaction(self, signature: str) -> dict[str, Any] | None:
         """Fetch a transaction by signature.
 
@@ -237,18 +254,14 @@ class SolanaClient:
         Returns:
             Parsed RPC response dictionary or None on failure
         """
-        try:
-            client = await self.get_client()
-            # Use jsonParsed encoding to access meta fields easily
-            resp = await client.get_transaction(
-                signature,
-                encoding="jsonParsed",
-                max_supported_transaction_version=0,
-            )
-            return resp.value  # type: ignore[return-value]
-        except Exception:
-            logger.exception(f"Failed to fetch transaction {signature}")
-            return None
+        client = await self.get_client()
+        # Use jsonParsed encoding to access meta fields easily
+        resp = await client.get_transaction(
+            signature,
+            encoding="jsonParsed",
+            max_supported_transaction_version=0,
+        )
+        return resp.value  # type: ignore[return-value]
 
     async def get_transaction_fee(self, signature: str) -> int | None:
         """Return the actual fee paid for a confirmed transaction in lamports.
