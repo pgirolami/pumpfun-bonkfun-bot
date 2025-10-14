@@ -221,6 +221,7 @@ class SolanaClient:
     class ConfirmationResult:
         success: bool
         error_message: str | None = None
+        fees: int | None = None
 
     async def confirm_transaction(
         self, signature: str, commitment: str = "confirmed"
@@ -241,21 +242,30 @@ class SolanaClient:
 
         # Wait for confirmation and inspect response for errors
         resp = await client.confirm_transaction(
-                signature, commitment=commitment, sleep_seconds=1
+            signature, commitment=commitment, sleep_seconds=1
         )
+
+        # Extract fees from the transaction (always try to get them)
+        fees = None
+        try:
+            tx = await client.get_transaction(signature, commitment=commitment)
+            if tx and tx.value and tx.value.transaction and tx.value.transaction.meta:
+                fees = tx.value.transaction.meta.fee
+        except Exception as e:
+            logging.info(
+                "client.confirm_transaction - failed to extract fees from transaction: %s",
+                tx,
+            )
+            logging.exception(e)
 
         # Try to extract an error from the confirm response
         if resp.value[0].err:
             # Here I get the transaction anyway so that I can have the logs and extract the error from them
             error_string = str(resp.value[0].err)
             try:
-                tx = await client.get_transaction(signature, commitment=commitment)
-                if tx and tx.value:
-                    tx_time = tx.value.block_time
-                    if tx.value.transaction.meta:
-                        fee = tx.value.transaction.meta.fee
-                        if tx.value.transaction.meta.log_messages:
-                            error_string = str(tx.value.transaction.meta.log_messages)
+                if tx and tx.value and tx.value.transaction and tx.value.transaction.meta:
+                    if tx.value.transaction.meta.log_messages:
+                        error_string = str(tx.value.transaction.meta.log_messages)
             except BaseException as e:
                 logging.info(
                     "client.confirm_transaction - got exception while getting transaction that failed to get its log messages. Ignoring and will use the following for error extraction: %s",
@@ -264,9 +274,9 @@ class SolanaClient:
                 logging.exception(e)
 
             return SolanaClient.ConfirmationResult(
-                success=False, error_message=error_string) 
+                success=False, error_message=error_string, fees=fees) 
 
-        return SolanaClient.ConfirmationResult(success=True, error_message=None)
+        return SolanaClient.ConfirmationResult(success=True, error_message=None, fees=fees)
 
     @retry(
         reraise=True,
@@ -293,22 +303,6 @@ class SolanaClient:
         )
         return resp.value  # type: ignore[return-value]
 
-    async def get_transaction_fee(self, signature: str) -> int | None:
-        """Return the actual fee paid for a confirmed transaction in lamports.
-
-        Args:
-            signature: Transaction signature
-
-        Returns:
-            Fee in lamports if available, otherwise None
-        """
-        tx = await self.get_transaction(signature)
-        try:
-            if tx and tx.get("meta") and tx["meta"].get("fee") is not None:
-                return int(tx["meta"]["fee"])  # includes base + priority fees
-        except Exception:
-            logger.exception("Error parsing transaction fee from meta")
-        return None
 
     async def post_rpc(self, body: dict[str, Any]) -> dict[str, Any] | None:
         """

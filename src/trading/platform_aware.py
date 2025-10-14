@@ -117,14 +117,13 @@ class PlatformAwareBuyer(Trader):
 
             if confirm_result.success:
                 logger.info(f"Buy transaction confirmed: {tx_signature}")
-                fee_lamports = await self.client.get_transaction_fee(tx_signature)
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
                     tx_signature=tx_signature,
                     amount=token_amount,
                     price=token_price_sol,
-                    fee_lamports=fee_lamports,
+                    fee_lamports=confirm_result.fees,
                 )
             else:
                 return TradeResult(
@@ -133,7 +132,7 @@ class PlatformAwareBuyer(Trader):
                     tx_signature=tx_signature,
                     amount=token_amount,
                     price=token_price_sol,
-                    fee_lamports=fee_lamports,
+                    fee_lamports=confirm_result.fees,
                     error_message=confirm_result.error_message,
                 )
 
@@ -279,14 +278,13 @@ class PlatformAwareSeller(Trader):
 
             if confirm.success:
                 logger.info(f"Sell transaction confirmed: {tx_signature}")
-                fee_lamports = await self.client.get_transaction_fee(tx_signature)
                 return TradeResult(
                     success=True,
                     platform=token_info.platform,
                     tx_signature=tx_signature,
                     amount=token_balance_decimal,
                     price=token_price_sol,
-                    fee_lamports=fee_lamports,
+                    fee_lamports=confirm.fees,
                 )
             else:
                 return TradeResult(
