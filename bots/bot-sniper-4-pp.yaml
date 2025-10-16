@@ -85,3 +85,8 @@ cleanup:
 # Node provider configuration (not implemented)
 node:
   max_rps: 25 # Maximum requests per second
+
+# Testing configuration (optional)
+testing:
+  dry_run: true  # Set to true to simulate transactions without sending to blockchain
+  dry_run_wait_time_seconds: 2  # Simulate RPC latency in dry-run mode

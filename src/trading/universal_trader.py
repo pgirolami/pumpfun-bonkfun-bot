@@ -85,6 +85,8 @@ class UniversalTrader:
         yolo_mode: bool = False,
         # Compute unit configuration
         compute_units: dict | None = None,
+        # Testing configuration
+        testing: dict | None = None,
     ):
         """Initialize the universal trader."""
         # Core components
@@ -125,27 +127,65 @@ class UniversalTrader:
         # Store compute unit configuration
         self.compute_units = compute_units or {}
 
-        # Create platform-aware traders
-        self.buyer = PlatformAwareBuyer(
-            self.solana_client,
-            self.wallet,
-            self.priority_fee_manager,
-            buy_amount,
-            buy_slippage,
-            max_retries,
-            extreme_fast_token_amount,
-            extreme_fast_mode,
-            compute_units=self.compute_units,
-        )
+        # Extract testing configuration
+        dry_run = False
+        dry_run_wait_time = 0.5
+        if testing:
+            dry_run = testing.get('dry_run', False)
+            dry_run_wait_time = testing.get('dry_run_wait_time_seconds', 0.5)
 
-        self.seller = PlatformAwareSeller(
-            self.solana_client,
-            self.wallet,
-            self.priority_fee_manager,
-            sell_slippage,
-            max_retries,
-            compute_units=self.compute_units,
-        )
+        # Create platform-aware traders based on mode
+        if dry_run:
+            from trading.dry_run_platform_aware import (
+                DryRunPlatformAwareBuyer,
+                DryRunPlatformAwareSeller,
+            )
+            logger.info("Initializing DRY-RUN mode traders")
+            
+            self.buyer = DryRunPlatformAwareBuyer(
+                self.solana_client,
+                self.wallet,
+                self.priority_fee_manager,
+                buy_amount,
+                buy_slippage,
+                max_retries,
+                extreme_fast_token_amount,
+                extreme_fast_mode,
+                dry_run_wait_time=dry_run_wait_time,
+                compute_units=self.compute_units,
+            )
+            
+            self.seller = DryRunPlatformAwareSeller(
+                self.solana_client,
+                self.wallet,
+                self.priority_fee_manager,
+                sell_slippage,
+                max_retries,
+                dry_run_wait_time=dry_run_wait_time,
+                compute_units=self.compute_units,
+            )
+        else:
+            # Create platform-aware traders
+            self.buyer = PlatformAwareBuyer(
+                self.solana_client,
+                self.wallet,
+                self.priority_fee_manager,
+                buy_amount,
+                buy_slippage,
+                max_retries,
+                extreme_fast_token_amount,
+                extreme_fast_mode,
+                compute_units=self.compute_units,
+            )
+
+            self.seller = PlatformAwareSeller(
+                self.solana_client,
+                self.wallet,
+                self.priority_fee_manager,
+                sell_slippage,
+                max_retries,
+                compute_units=self.compute_units,
+            )
 
         # Initialize the appropriate listener with platform filtering
         self.token_listener = ListenerFactory.create_listener(

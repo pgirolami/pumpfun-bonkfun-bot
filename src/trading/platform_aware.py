@@ -13,6 +13,7 @@ from interfaces.core import AddressProvider, Platform, TokenInfo
 from platforms import get_platform_implementations
 from trading.base import Trader, TradeResult
 from trading.position import Position
+from trading.trade_order import BuyOrder, SellOrder
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -44,104 +45,122 @@ class PlatformAwareBuyer(Trader):
         self.extreme_fast_token_amount = extreme_fast_token_amount
         self.compute_units = compute_units or {}
 
+    async def _prepare_buy_order(self, token_info: TokenInfo) -> BuyOrder:
+        """Prepare buy order by calculating all parameters (shared logic)."""
+        implementations = get_platform_implementations(token_info.platform, self.client)
+        address_provider = implementations.address_provider
+        curve_manager = implementations.curve_manager
+        instruction_builder = implementations.instruction_builder
+
+        # Create order with input
+        order = BuyOrder(token_info=token_info, sol_amount_raw=int(self.amount * LAMPORTS_PER_SOL))
+
+        # Calculate price and token amount
+        if self.extreme_fast_mode:
+            order.token_amount_raw = self.extreme_fast_token_amount
+            order.token_price_sol = self.amount / order.token_amount_raw if order.token_amount_raw > 0 else 0
+        else:
+            pool_address = self._get_pool_address(token_info, address_provider)
+            order.token_price_sol = await curve_manager.calculate_price(pool_address)
+            order.token_amount_raw = int((self.amount / order.token_price_sol) * 10**TOKEN_DECIMALS) if order.token_price_sol > 0 else 0
+
+        logger.info(f"Token price computed on-chain: {order.token_price_sol:.8f} SOL")
+
+        # Calculate minimum with slippage
+        order.minimum_token_swap_amount_raw = int(order.token_amount_raw * (1 - self.slippage))
+
+        logger.info(f"Amount to spend: {self.amount:.6f} SOL => expected token amount: {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens"
+        f", slippage: {self.slippage:.2f} so expected minimum token amount: {order.minimum_token_swap_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens")
+
+        # Get compute units and priority fee
+        order.compute_unit_limit = instruction_builder.get_buy_compute_unit_limit(
+            self._get_cu_override("buy", token_info.platform)
+        )
+        priority_accounts = instruction_builder.get_required_accounts_for_buy(
+            token_info, self.wallet.pubkey, address_provider
+        )
+        order.priority_fee = await self.priority_fee_manager.calculate_priority_fee(priority_accounts)
+
+        return order
+
+    async def _execute_transaction(self, order: BuyOrder) -> BuyOrder:
+        """Execute the transaction (overridden in dry-run)."""
+        implementations = get_platform_implementations(order.token_info.platform, self.client)
+        instruction_builder = implementations.instruction_builder
+        address_provider = implementations.address_provider
+
+        # Build buy instructions using platform-specific builder
+        instructions = await instruction_builder.build_buy_instruction(
+            order.token_info,
+            self.wallet.pubkey,
+            order.sol_amount_raw,  # amount_in (SOL)
+            order.minimum_token_swap_amount_raw,  # minimum_amount_out (tokens)
+            address_provider,
+        )
+
+        # Send transaction
+        order.tx_signature = await self.client.build_and_send_transaction(
+            instructions,
+            self.wallet.keypair,
+            skip_preflight=True,
+            max_retries=self.max_retries,
+            priority_fee=order.priority_fee,
+            compute_unit_limit=order.compute_unit_limit,
+        )
+
+        return order
+
+    async def _confirm_transaction(self, tx_signature: str):
+        """Confirm transaction (overridden in dry-run)."""
+        return await self.client.confirm_transaction(tx_signature)
+
+    async def _analyze_balance_changes(self, order: BuyOrder):
+        """Analyze balance changes (overridden in dry-run)."""
+        # Get transaction with full metadata for balance analysis
+        tx = await self.client.get_transaction(order.tx_signature)
+        if tx:
+            # Get instruction accounts for balance analysis
+            implementations = get_platform_implementations(order.token_info.platform, self.client)
+            instruction_accounts = implementations.address_provider.get_buy_instruction_accounts(order.token_info, self.wallet.pubkey)
+            return implementations.balance_analyzer.analyze_balance_changes(
+                tx, order.token_info, self.wallet.pubkey, instruction_accounts
+            )
+        else:
+            logger.info(f"Failed to analyze transaction balances for lack of transaction {order.tx_signature} : {tx}")
+            return None
+
     async def execute(self, token_info: TokenInfo) -> TradeResult:
-        """Execute buy operation using platform-specific implementations."""
+        """Execute buy operation using the order pattern."""
         try:
-            # Get platform-specific implementations
-            implementations = get_platform_implementations(
-                token_info.platform, self.client
-            )
-            address_provider = implementations.address_provider
-            instruction_builder = implementations.instruction_builder
-            curve_manager = implementations.curve_manager
+            # Prepare order (shared with dry-run)
+            order = await self._prepare_buy_order(token_info)
 
-            # Convert amount to lamports
-            amount_lamports = int(self.amount * LAMPORTS_PER_SOL)
+            # Execute transaction (overridden in dry-run)
+            order = await self._execute_transaction(order)
 
-            if self.extreme_fast_mode:
-                # Skip the wait and directly calculate the amount
-                token_amount = self.extreme_fast_token_amount
-                token_price_sol = self.amount / token_amount if token_amount > 0 else 0
-            else:
-                # Get pool address based on platform using platform-agnostic method
-                pool_address = self._get_pool_address(token_info, address_provider)
+            # Confirm and analyze
+            confirm_result = await self._confirm_transaction(order.tx_signature)
+            logger.info(f"Confirm result is {confirm_result}")
 
-                # Regular behavior with RPC call
-                token_price_sol = await curve_manager.calculate_price(pool_address)
-                token_amount = (
-                    self.amount / token_price_sol if token_price_sol > 0 else 0
-                )
-
-            logger.info(f"Token price computed on-chain: {token_price_sol:.8f} SOL")
-
-            # Calculate minimum token amount with slippage
-            minimum_token_amount = token_amount * (1 - self.slippage)
-            minimum_token_swap_amount_raw = int(minimum_token_amount * 10**TOKEN_DECIMALS)
-
-            logger.info(f"Amount to spend: {self.amount:.6f} SOL => expected token amount: {token_amount:.6f} tokens"
-            f", slippage: {self.slippage:.2f} so expected minimum token amount: {minimum_token_amount:.6f} tokens")
-
-            # Calculate maximum SOL to spend with slippage
-            max_amount_lamports = amount_lamports
-            # Build buy instructions using platform-specific builder
-            instructions = await instruction_builder.build_buy_instruction(
-                token_info,
-                self.wallet.pubkey,
-                max_amount_lamports,  # amount_in (SOL)
-                minimum_token_swap_amount_raw,  # minimum_amount_out (tokens)
-                address_provider,
-            )
-
-            # Get accounts for priority fee calculation
-            priority_accounts = instruction_builder.get_required_accounts_for_buy(
-                token_info, self.wallet.pubkey, address_provider
-            )
-
-
-            # Send transaction
-            tx_signature = await self.client.build_and_send_transaction(
-                instructions,
-                self.wallet.keypair,
-                skip_preflight=True,
-                max_retries=self.max_retries,
-                priority_fee=await self.priority_fee_manager.calculate_priority_fee(
-                    priority_accounts
-                ),
-                compute_unit_limit=instruction_builder.get_buy_compute_unit_limit(
-                    self._get_cu_override("buy", token_info.platform)
-                ),
-            )
-
-            confirm_result = await self.client.confirm_transaction(tx_signature)
-            logger.info(f"Confirm result is {confirm_result}")    
             balance_changes = None
             try:
-                # Get transaction with full metadata for balance analysis
-                tx = await self.client.get_transaction(tx_signature)
-                if tx:
-                    # Get instruction accounts for balance analysis
-                    instruction_accounts = address_provider.get_buy_instruction_accounts(token_info, self.wallet.pubkey)
-                    balance_changes = implementations.balance_analyzer.analyze_balance_changes(
-                        tx, token_info, self.wallet.pubkey, instruction_accounts
-                    )
-                    logger.info(f"Transaction inspection resulted in {balance_changes}")
-                else:
-                    logger.info(f"Failed to analyze transaction balances for lack of transaction {tx_signature} : {tx}")
+                balance_changes = await self._analyze_balance_changes(order)
+                logger.info(f"Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances")
                 logger.exception(e)
 
             result = TradeResult(
                 success=confirm_result.success,
-                platform=token_info.platform,
-                tx_signature=str(tx_signature),
-                transaction_fee_raw=balance_changes.transaction_fee_raw,
-                token_swap_amount_raw=balance_changes.token_swap_amount_raw,
-                sol_swap_amount_raw=balance_changes.sol_swap_amount_raw,
-                platform_fee_raw=balance_changes.platform_fee_raw,
+                platform=order.token_info.platform,
+                tx_signature=str(order.tx_signature),
+                transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
+                token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
+                sol_swap_amount_raw=balance_changes.sol_swap_amount_raw if balance_changes else None,
+                platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
             )
             if not confirm_result.success:
-                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {tx_signature}"
+                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
 
             return result
 
@@ -203,100 +222,128 @@ class PlatformAwareSeller(Trader):
         self.max_retries = max_retries
         self.compute_units = compute_units or {}
 
+    async def _prepare_sell_order(self, token_info: TokenInfo, position: Position) -> SellOrder:
+        """Prepare sell order by calculating all parameters."""
+        implementations = get_platform_implementations(token_info.platform, self.client)
+        address_provider = implementations.address_provider
+        curve_manager = implementations.curve_manager
+        instruction_builder = implementations.instruction_builder
+
+        # Create order with input
+        order = SellOrder(token_info=token_info, token_amount_raw=position.token_amount_raw)
+
+        # Calculate decimal amount for logging
+        token_balance_decimal = order.token_amount_raw / 10**TOKEN_DECIMALS
+        logger.info(f"Token balance: {token_balance_decimal}")
+
+        # Get pool address and current price
+        pool_address = self._get_pool_address(token_info, address_provider)
+        order.token_price_sol = await curve_manager.calculate_price(pool_address)
+
+        logger.info(f"Price per Token: {order.token_price_sol:.8f} SOL")
+
+        # Calculate expected SOL output
+        expected_sol_output = token_balance_decimal * order.token_price_sol
+        order.expected_sol_swap_amount_raw = int(expected_sol_output * LAMPORTS_PER_SOL)
+
+        # Calculate minimum SOL output with slippage protection
+        order.minimum_sol_swap_amount_raw = int(
+            (expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL
+        )
+
+        logger.info(f"Selling {token_balance_decimal} tokens on {token_info.platform.value}")
+        logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
+        logger.info(
+            f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {order.minimum_sol_swap_amount_raw / LAMPORTS_PER_SOL:.8f} SOL"
+        )
+
+        # Get compute units and priority fee
+        order.compute_unit_limit = instruction_builder.get_sell_compute_unit_limit(
+            self._get_cu_override("sell", token_info.platform)
+        )
+        priority_accounts = instruction_builder.get_required_accounts_for_sell(
+            token_info, self.wallet.pubkey, address_provider
+        )
+        order.priority_fee = await self.priority_fee_manager.calculate_priority_fee(priority_accounts)
+
+        return order
+
+    async def _execute_transaction(self, order: SellOrder) -> SellOrder:
+        """Execute the transaction (overridden in dry-run)."""
+        implementations = get_platform_implementations(order.token_info.platform, self.client)
+        instruction_builder = implementations.instruction_builder
+        address_provider = implementations.address_provider
+
+        # Build sell instructions using platform-specific builder
+        instructions = await instruction_builder.build_sell_instruction(
+            order.token_info,
+            self.wallet.pubkey,
+            order.token_amount_raw,  # amount_in (tokens)
+            order.minimum_sol_swap_amount_raw,  # minimum_amount_out (SOL)
+            address_provider,
+        )
+
+        # Send transaction
+        order.tx_signature = await self.client.build_and_send_transaction(
+            instructions,
+            self.wallet.keypair,
+            skip_preflight=True,
+            max_retries=self.max_retries,
+            priority_fee=order.priority_fee,
+            compute_unit_limit=order.compute_unit_limit,
+        )
+
+        return order
+
+    async def _confirm_transaction(self, tx_signature: str):
+        """Confirm transaction (overridden in dry-run)."""
+        return await self.client.confirm_transaction(tx_signature)
+
+    async def _analyze_balance_changes(self, order: SellOrder):
+        """Analyze balance changes (overridden in dry-run)."""
+        # Get transaction with full metadata for balance analysis
+        tx_with_meta = await self.client.get_transaction(order.tx_signature)
+        if tx_with_meta:
+            # Get instruction accounts for balance analysis
+            implementations = get_platform_implementations(order.token_info.platform, self.client)
+            instruction_accounts = implementations.address_provider.get_sell_instruction_accounts(order.token_info, self.wallet.pubkey)
+            return implementations.balance_analyzer.analyze_balance_changes(
+                tx_with_meta, order.token_info, self.wallet.pubkey, instruction_accounts
+            )
+        else:
+            logger.info(f"Failed to analyze transaction balances for lack of transaction {order.tx_signature} : {tx_with_meta}")
+            return None
+
     async def execute(self, token_info: TokenInfo, position: Position) -> TradeResult:
-        """Execute sell operation using platform-specific implementations."""
+        """Execute sell operation using the order pattern."""
         try:
-            # Get platform-specific implementations
-            implementations = get_platform_implementations(
-                token_info.platform, self.client
-            )
-            address_provider = implementations.address_provider
-            instruction_builder = implementations.instruction_builder
-            curve_manager = implementations.curve_manager
+            # Prepare order (shared with dry-run)
+            order = await self._prepare_sell_order(token_info, position)
 
-            # Use token amount from position instead of RPC call
-            token_balance = position.token_amount_raw
-            token_balance_decimal = token_balance / 10**TOKEN_DECIMALS
+            # Execute transaction (overridden in dry-run)
+            order = await self._execute_transaction(order)
 
-            logger.info(f"Token balance: {token_balance_decimal}")
-
-            # Get pool address and current price using platform-agnostic method
-            pool_address = self._get_pool_address(token_info, address_provider)
-            token_price_sol = await curve_manager.calculate_price(pool_address)
-
-            logger.info(f"Price per Token: {token_price_sol:.8f} SOL")
-
-            # Calculate expected SOL output
-            expected_sol_output = token_balance_decimal * token_price_sol
-
-            # Calculate minimum SOL output with slippage protection
-            min_sol_output = int(
-                (expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL
-            )
-
-            logger.info(f"Selling {token_balance_decimal} tokens on {token_info.platform.value}")
-            logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
-            logger.info(
-                f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {min_sol_output / LAMPORTS_PER_SOL:.8f} SOL"
-            )
-
-            # Build sell instructions using platform-specific builder
-            instructions = await instruction_builder.build_sell_instruction(
-                token_info,
-                self.wallet.pubkey,
-                token_balance,  # amount_in (tokens)
-                min_sol_output,  # minimum_amount_out (SOL)
-                address_provider,
-            )
-
-            # Get accounts for priority fee calculation
-            priority_accounts = instruction_builder.get_required_accounts_for_sell(
-                token_info, self.wallet.pubkey, address_provider
-            )
-
-            # Send transaction
-            tx_signature = await self.client.build_and_send_transaction(
-                instructions,
-                self.wallet.keypair,
-                skip_preflight=True,
-                max_retries=self.max_retries,
-                priority_fee=await self.priority_fee_manager.calculate_priority_fee(
-                    priority_accounts
-                ),
-                compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
-                    self._get_cu_override("sell", token_info.platform)
-                ),
-            )
-
-            confirm_result = await self.client.confirm_transaction(tx_signature)
+            # Confirm and analyze
+            confirm_result = await self._confirm_transaction(order.tx_signature)
 
             balance_changes = None
             try:
-                # Get transaction with full metadata for balance analysis
-                tx_with_meta = await self.client.get_transaction(tx_signature)
-                if tx_with_meta:
-                    # Get instruction accounts for balance analysis
-                    instruction_accounts = address_provider.get_sell_instruction_accounts(token_info, self.wallet.pubkey)
-                    balance_changes = implementations.balance_analyzer.analyze_balance_changes(
-                        tx_with_meta, token_info, self.wallet.pubkey, instruction_accounts
-                    )
-                    logger.info(f"Balance changes ={balance_changes}")
-                else:
-                    logger.info(f"Failed to analyze transaction balances for lack of transaction {tx_signature} : {tx_with_meta}")
+                balance_changes = await self._analyze_balance_changes(order)
+                logger.info(f"Balance changes ={balance_changes}")
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances: {e}")
 
             result = TradeResult(
                 success=confirm_result.success,
-                platform=token_info.platform,
-                tx_signature=str(tx_signature),
-                transaction_fee_raw=balance_changes.transaction_fee_raw,
-                token_swap_amount_raw=balance_changes.token_swap_amount_raw,
-                sol_swap_amount_raw=balance_changes.sol_amount_raw,
-                platform_fee_raw=balance_changes.platform_fee_raw,
+                platform=order.token_info.platform,
+                tx_signature=str(order.tx_signature),
+                transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
+                token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
+                sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
+                platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
             )
             if not confirm_result.success:
-                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {tx_signature}"
+                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
 
             return result
 

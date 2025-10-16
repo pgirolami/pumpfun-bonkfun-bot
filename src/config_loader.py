@@ -77,6 +77,7 @@ VALID_VALUES = {
     "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
     "trade.exit_strategy": ["time_based", "tp_sl", "manual", "trailing"],
     "platform": ["pump_fun", "lets_bonk"],
+    "testing.dry_run": [True, False],
 }
 
 # Platform-specific listener compatibility
