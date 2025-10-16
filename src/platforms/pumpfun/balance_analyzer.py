@@ -84,7 +84,6 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
 
         # Extract real fees from transaction balance changes
         # Use addresses from instruction_accounts
-        bonding_curve = instruction_accounts["bonding_curve"]
         creator_vault = instruction_accounts["creator_vault"]
         fee_account = instruction_accounts["fee"]
         
@@ -98,8 +97,6 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
                 fee_index = i
             elif account_key.pubkey == creator_vault:
                 creator_vault_index = i
-            elif account_key.pubkey == bonding_curve:
-                bonding_curve_index = i
         
         # Calculate actual fees from balance changes
         protocol_fee_raw = 0
@@ -137,10 +134,7 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
             token_swap_amount_raw = user_token_post_balance - user_token_pre_balance
         
         total_platform_fee_raw = protocol_fee_raw + creator_fee_raw
-        
-        # Determine transaction type for logging
-        tx_type = "buy" if sol_amount_raw < 0 else "sell"
-        
+                
         sol_swap_amount_raw = sol_amount_raw-rent_exemption_amount_raw
         
         return BalanceChangeResult(
