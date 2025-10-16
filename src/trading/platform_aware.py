@@ -12,6 +12,7 @@ from core.wallet import Wallet
 from interfaces.core import AddressProvider, Platform, TokenInfo
 from platforms import get_platform_implementations
 from trading.base import Trader, TradeResult
+from trading.position import Position
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -202,7 +203,7 @@ class PlatformAwareSeller(Trader):
         self.max_retries = max_retries
         self.compute_units = compute_units or {}
 
-    async def execute(self, token_info: TokenInfo) -> TradeResult:
+    async def execute(self, token_info: TokenInfo, position: Position) -> TradeResult:
         """Execute sell operation using platform-specific implementations."""
         try:
             # Get platform-specific implementations
@@ -213,26 +214,11 @@ class PlatformAwareSeller(Trader):
             instruction_builder = implementations.instruction_builder
             curve_manager = implementations.curve_manager
 
-            # Get user's token account and balance
-            user_token_account = address_provider.derive_user_token_account(
-                self.wallet.pubkey, token_info.mint
-            )
-            logger.info(f"user_token_account={str(user_token_account)} for wallet {self.wallet.pubkey} and mint {token_info.mint}")
-
-            token_balance = await self.client.get_token_account_balance(
-                user_token_account
-            )
+            # Use token amount from position instead of RPC call
+            token_balance = position.token_amount_raw
             token_balance_decimal = token_balance / 10**TOKEN_DECIMALS
 
             logger.info(f"Token balance: {token_balance_decimal}")
-
-            if token_balance == 0:
-                logger.info("No tokens to sell.")
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message="No tokens to sell",
-                )
 
             # Get pool address and current price using platform-agnostic method
             pool_address = self._get_pool_address(token_info, address_provider)

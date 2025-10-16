@@ -33,6 +33,7 @@ class Position:
     # Position details
     entry_price: float
     quantity: float
+    token_amount_raw: int
     entry_time: datetime
 
     # Exit conditions
@@ -59,6 +60,7 @@ class Position:
         symbol: str,
         entry_price: float,
         quantity: float,
+        token_amount_raw: int,
         buy_fee_raw: int | None,
         take_profit_percentage: float | None,
         stop_loss_percentage: float | None,
@@ -71,9 +73,12 @@ class Position:
             mint: Token mint address
             symbol: Token symbol
             entry_price: Price at which position was entered
-            quantity: Quantity of tokens purchased
+            quantity: Quantity of tokens purchased (decimal)
+            token_amount_raw: Raw token amount purchased (integer)
+            buy_fee_raw: Buy fee in lamports
             take_profit_percentage: Take profit percentage (0.5 = 50% profit)
             stop_loss_percentage: Stop loss percentage (0.2 = 20% loss)
+            trailing_stop_percentage: Trailing stop percentage
             max_hold_time: Maximum hold time in seconds
 
         Returns:
@@ -92,6 +97,7 @@ class Position:
             symbol=symbol,
             entry_price=entry_price,
             quantity=quantity,
+            token_amount_raw=token_amount_raw,
             entry_time=datetime.utcnow(),
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
@@ -227,5 +233,6 @@ class Position:
         else:
             status = "CLOSED (UNKNOWN)"
         quantity_str = f"{self.quantity:.6f}" if self.quantity is not None else "None"
+        quantity_raw_str = f"{self.token_amount_raw}" if self.token_amount_raw is not None else "None"
         price_str = f"{self.entry_price:.8f}" if self.entry_price is not None else "None"
-        return f"Position({self.symbol}: {quantity_str} @ {price_str} SOL - {status})"
+        return f"Position({self.symbol}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} SOL - {status})"

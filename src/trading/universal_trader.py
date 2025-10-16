@@ -458,14 +458,28 @@ class UniversalTrader:
         )
         self.traded_mints.add(token_info.mint)
 
+        # Create position once from buy result
+        position = Position.create_from_buy_result(
+            mint=token_info.mint,
+            symbol=token_info.symbol,
+            entry_price=buy_result.net_price_decimal(),
+            quantity=buy_result.token_swap_amount_decimal(),
+            token_amount_raw=buy_result.token_swap_amount_raw,
+            buy_fee_raw=buy_result.platform_fee_raw + buy_result.transaction_fee_raw,
+            take_profit_percentage=self.take_profit_percentage,
+            stop_loss_percentage=self.stop_loss_percentage,
+            trailing_stop_percentage=self.trailing_stop_percentage,
+            max_hold_time=self.max_hold_time,
+        )
+
         # Choose exit strategy
         if not self.marry_mode:
             if self.exit_strategy == "tp_sl":
-                await self._handle_tp_sl_exit(token_info, buy_result)
+                await self._handle_tp_sl_exit(token_info, position)
             elif self.exit_strategy == "trailing":
-                await self._handle_trailing_exit(token_info, buy_result)
+                await self._handle_trailing_exit(token_info, position)
             elif self.exit_strategy == "time_based":
-                await self._handle_time_based_exit(token_info)
+                await self._handle_time_based_exit(token_info, position)
             elif self.exit_strategy == "manual":
                 logger.info("Manual exit strategy - position will remain open")
         else:
@@ -488,22 +502,9 @@ class UniversalTrader:
         )
 
     async def _handle_tp_sl_exit(
-        self, token_info: TokenInfo, buy_result: TradeResult
+        self, token_info: TokenInfo, position: Position
     ) -> None:
         """Handle take profit/stop loss exit strategy."""
-        # Create position
-        position = Position.create_from_buy_result(
-            mint=token_info.mint,
-            symbol=token_info.symbol,
-            entry_price=buy_result.net_price_decimal(),
-            quantity=buy_result.token_swap_amount_decimal(),
-            buy_fee_raw=buy_result.platform_fee_raw+buy_result.transaction_fee_raw,
-            take_profit_percentage=self.take_profit_percentage,
-            max_hold_time=self.max_hold_time,
-            stop_loss_percentage=self.stop_loss_percentage,
-            trailing_stop_percentage = None
-        )
-
         logger.info(f"Created position: {position}")
         if position.take_profit_price:
             logger.info(f"Take profit target: {position.take_profit_price:.8f} SOL")
@@ -514,21 +515,9 @@ class UniversalTrader:
         await self._monitor_position_until_exit(token_info, position)
 
     async def _handle_trailing_exit(
-        self, token_info: TokenInfo, buy_result: TradeResult
+        self, token_info: TokenInfo, position: Position
     ) -> None:
         """Handle trailing stop exit strategy (no fixed take profit)."""
-        position = Position.create_from_buy_result(
-            mint=token_info.mint,
-            symbol=token_info.symbol,
-            entry_price=buy_result.net_price_decimal(),
-            quantity=buy_result.token_swap_amount_decimal(),
-            buy_fee_raw=buy_result.platform_fee_raw+buy_result.transaction_fee_raw,
-            take_profit_percentage=self.take_profit_percentage,
-            max_hold_time=self.max_hold_time,
-            trailing_stop_percentage=self.trailing_stop_percentage,
-            stop_loss_percentage = None,
-        )
-
         logger.info(f"Created trailing position: {position}")
         if position.trailing_stop_percentage is not None:
             logger.info(
@@ -537,13 +526,13 @@ class UniversalTrader:
 
         await self._monitor_position_until_exit(token_info, position)
 
-    async def _handle_time_based_exit(self, token_info: TokenInfo) -> None:
+    async def _handle_time_based_exit(self, token_info: TokenInfo, position: Position) -> None:
         """Handle legacy time-based exit strategy."""
         logger.info(f"Waiting for {self.wait_time_after_buy} seconds before selling...")
         await asyncio.sleep(self.wait_time_after_buy)
 
         logger.info(f"Selling {token_info.symbol}...")
-        sell_result: TradeResult = await self.seller.execute(token_info)
+        sell_result: TradeResult = await self.seller.execute(token_info, position)
 
         if sell_result.success:
             logger.info(f"Successfully sold {token_info.symbol}")
@@ -600,7 +589,7 @@ class UniversalTrader:
                     logger.info(f"PNL: {pnl}")
 
                     # Execute sell
-                    sell_result = await self.seller.execute(token_info)
+                    sell_result = await self.seller.execute(token_info, position)
                     logger.info(f"Sell result: {sell_result}")
 
                     if sell_result.success:
