@@ -71,19 +71,23 @@ class PlatformAwareBuyer(Trader):
                     self.amount / token_price_sol if token_price_sol > 0 else 0
                 )
 
+            logger.info(f"Token price computed on-chain: {token_price_sol:.8f} SOL")
+
             # Calculate minimum token amount with slippage
             minimum_token_amount = token_amount * (1 - self.slippage)
-            minimum_token_amount_raw = int(minimum_token_amount * 10**TOKEN_DECIMALS)
+            minimum_token_swap_amount_raw = int(minimum_token_amount * 10**TOKEN_DECIMALS)
+
+            logger.info(f"Amount to spend: {self.amount:.6f} SOL => expected token amount: {token_amount:.6f} tokens"
+            f", slippage: {self.slippage:.2f} so expected minimum token amount: {minimum_token_amount:.6f} tokens")
 
             # Calculate maximum SOL to spend with slippage
-            max_amount_lamports = int(amount_lamports * (1 + self.slippage))
-
+            max_amount_lamports = amount_lamports
             # Build buy instructions using platform-specific builder
             instructions = await instruction_builder.build_buy_instruction(
                 token_info,
                 self.wallet.pubkey,
                 max_amount_lamports,  # amount_in (SOL)
-                minimum_token_amount_raw,  # minimum_amount_out (tokens)
+                minimum_token_swap_amount_raw,  # minimum_amount_out (tokens)
                 address_provider,
             )
 
@@ -92,12 +96,6 @@ class PlatformAwareBuyer(Trader):
                 token_info, self.wallet.pubkey, address_provider
             )
 
-            logger.info(
-                f"Buying {token_amount:.6f} tokens at {token_price_sol:.8f} SOL per token on {token_info.platform.value}"
-            )
-            logger.info(
-                f"Total cost: {self.amount:.6f} SOL (max: {max_amount_lamports / LAMPORTS_PER_SOL:.6f} SOL)"
-            )
 
             # Send transaction
             tx_signature = await self.client.build_and_send_transaction(
@@ -114,27 +112,37 @@ class PlatformAwareBuyer(Trader):
             )
 
             confirm_result = await self.client.confirm_transaction(tx_signature)
+            logger.info(f"Confirm result is {confirm_result}")    
+            balance_changes = None
+            try:
+                # Get transaction with full metadata for balance analysis
+                tx = await self.client.get_transaction(tx_signature)
+                if tx:
+                    # Get instruction accounts for balance analysis
+                    instruction_accounts = address_provider.get_buy_instruction_accounts(token_info, self.wallet.pubkey)
+                    balance_changes = implementations.balance_analyzer.analyze_balance_changes(
+                        tx, token_info, self.wallet.pubkey, instruction_accounts
+                    )
+                    logger.info(f"Transaction inspection resulted in {balance_changes}")
+                else:
+                    logger.info(f"Failed to analyze transaction balances for lack of transaction {tx_signature} : {tx}")
+            except Exception as e:
+                logger.warning(f"Failed to analyze transaction balances")
+                logger.exception(e)
 
-            if confirm_result.success:
-                logger.info(f"Buy transaction confirmed: {tx_signature}")
-                return TradeResult(
-                    success=True,
-                    platform=token_info.platform,
-                    tx_signature=tx_signature,
-                    amount=token_amount,
-                    price=token_price_sol,
-                    fee_lamports=confirm_result.fees,
-                )
-            else:
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    tx_signature=tx_signature,
-                    amount=token_amount,
-                    price=token_price_sol,
-                    fee_lamports=confirm_result.fees,
-                    error_message=confirm_result.error_message,
-                )
+            result = TradeResult(
+                success=confirm_result.success,
+                platform=token_info.platform,
+                tx_signature=str(tx_signature),
+                transaction_fee_raw=balance_changes.transaction_fee_raw,
+                token_swap_amount_raw=balance_changes.token_swap_amount_raw,
+                sol_swap_amount_raw=balance_changes.sol_swap_amount_raw,
+                platform_fee_raw=balance_changes.platform_fee_raw,
+            )
+            if not confirm_result.success:
+                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {tx_signature}"
+
+            return result
 
         except Exception as e:
             logger.exception("Buy operation failed")
@@ -274,27 +282,41 @@ class PlatformAwareSeller(Trader):
                 ),
             )
 
-            confirm = await self.client.confirm_transaction(tx_signature)
+            confirm_result = await self.client.confirm_transaction(tx_signature)
 
-            if confirm.success:
-                logger.info(f"Sell transaction confirmed: {tx_signature}")
-                return TradeResult(
-                    success=True,
-                    platform=token_info.platform,
-                    tx_signature=tx_signature,
-                    amount=token_balance_decimal,
-                    price=token_price_sol,
-                    fee_lamports=confirm.fees,
-                )
-            else:
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message=confirm.error_message or f"Transaction failed to confirm: {tx_signature}",
-                )
+            balance_changes = None
+            try:
+                # Get transaction with full metadata for balance analysis
+                tx_with_meta = await self.client.get_transaction(tx_signature)
+                if tx_with_meta:
+                    # Get instruction accounts for balance analysis
+                    instruction_accounts = address_provider.get_sell_instruction_accounts(token_info, self.wallet.pubkey)
+                    balance_changes = implementations.balance_analyzer.analyze_balance_changes(
+                        tx_with_meta, token_info, self.wallet.pubkey, instruction_accounts
+                    )
+                    logger.info(f"Balance changes ={balance_changes}")
+                else:
+                    logger.info(f"Failed to analyze transaction balances for lack of transaction {tx_signature} : {tx_with_meta}")
+            except Exception as e:
+                logger.warning(f"Failed to analyze transaction balances: {e}")
+
+            result = TradeResult(
+                success=confirm_result.success,
+                platform=token_info.platform,
+                tx_signature=str(tx_signature),
+                transaction_fee_raw=balance_changes.transaction_fee_raw,
+                token_swap_amount_raw=balance_changes.token_swap_amount_raw,
+                sol_swap_amount_raw=balance_changes.sol_amount_raw,
+                platform_fee_raw=balance_changes.platform_fee_raw,
+            )
+            if not confirm_result.success:
+                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {tx_signature}"
+
+            return result
 
         except Exception as e:
             logger.exception("Sell operation failed")
+            logger.exception(e)
             return TradeResult(
                 success=False, platform=token_info.platform, error_message=str(e)
             )

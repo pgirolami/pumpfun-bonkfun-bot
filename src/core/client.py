@@ -10,7 +10,7 @@ from typing import Any
 import aiohttp
 from dataclasses import dataclass
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.commitment import Confirmed, Processed
+from solana.rpc.commitment import Commitment, Confirmed, Processed
 from solana.rpc.core import UnconfirmedTxError
 from solana.rpc.types import TxOpts
 from solders.compute_budget import set_compute_unit_limit, set_compute_unit_price
@@ -19,6 +19,7 @@ from solders.instruction import Instruction
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
+from solders.solders import EncodedConfirmedTransactionWithStatusMeta, Signature
 from solders.transaction import Transaction
 
 from utils.logger import get_logger
@@ -145,7 +146,7 @@ class SolanaClient:
             Recent blockhash as string
         """
         client = await self.get_client()
-        response = await client.get_latest_blockhash(commitment="processed")
+        response = await client.get_latest_blockhash(commitment=Processed)
         return response.value.blockhash
 
     async def build_and_send_transaction(
@@ -156,7 +157,7 @@ class SolanaClient:
         max_retries: int = 3,
         priority_fee: int | None = None,
         compute_unit_limit: int | None = None,
-    ) -> str:
+    ) -> Signature:
         """
         Send a transaction with optional priority fee and compute unit limit.
 
@@ -220,11 +221,26 @@ class SolanaClient:
     @dataclass
     class ConfirmationResult:
         success: bool
+        tx:Signature
         error_message: str | None = None
-        fees: int | None = None
+        fees_raw: int | None = None  # Transaction fees in lamports
+
+        def __str__(self) -> str:
+            """String representation of confirmation result."""
+            result = f"ConfirmationResult(success={self.success}"
+            if self.tx:
+                result += f", tx='{self.tx}'"
+            if self.error_message:
+                result += f", error_message='{self.error_message}'"
+            if self.fees_raw is not None:
+                from core.pubkeys import LAMPORTS_PER_SOL
+                fees_sol = self.fees_raw / LAMPORTS_PER_SOL
+                result += f", fees_raw={self.fees_raw} lamports ({fees_sol:.6f} SOL)"
+            result += ")"
+            return result
 
     async def confirm_transaction(
-        self, signature: str, commitment: str = "confirmed"
+        self, signature: Signature, commitment: Commitment = Confirmed
     ) -> "SolanaClient.ConfirmationResult":
         """Wait for transaction confirmation and extract error details if any.
 
@@ -254,7 +270,7 @@ class SolanaClient:
         except Exception as e:
             logging.info(
                 "client.confirm_transaction - failed to extract fees from transaction: %s",
-                tx,
+                signature,
             )
             logging.exception(e)
 
@@ -274,9 +290,9 @@ class SolanaClient:
                 logging.exception(e)
 
             return SolanaClient.ConfirmationResult(
-                success=False, error_message=error_string, fees=fees) 
+                success=False, tx=signature, error_message=error_string, fees_raw=fees) 
 
-        return SolanaClient.ConfirmationResult(success=True, error_message=None, fees=fees)
+        return SolanaClient.ConfirmationResult(success=True, tx=signature, error_message=None, fees_raw=fees)
 
     @retry(
         reraise=True,
@@ -285,7 +301,7 @@ class SolanaClient:
         retry=retry_if_not_exception_type(UnconfirmedTxError),
         after=after_log(logging.getLogger(), logging.INFO),
     )
-    async def get_transaction(self, signature: str) -> dict[str, Any] | None:
+    async def get_transaction(self, signature: str) -> EncodedConfirmedTransactionWithStatusMeta:
         """Fetch a transaction by signature.
 
         Args:
@@ -300,8 +316,94 @@ class SolanaClient:
             signature,
             encoding="jsonParsed",
             max_supported_transaction_version=0,
+            commitment=Confirmed,
         )
-        return resp.value  # type: ignore[return-value]
+        return resp.value
+
+
+    def compute_token_balance_change(
+        self, tx: dict[str, Any], owner: Pubkey, mint: Pubkey
+    ) -> int:
+        """Compute token balance change for a specific owner and mint.
+
+        Args:
+            tx: Transaction data with meta information
+            owner: Owner public key
+            mint: Token mint address
+
+        Returns:
+            Token balance change in raw units
+        """
+        if not tx or not tx.get("meta"):
+            return 0
+
+        meta = tx["meta"]
+        pre_balances = meta.get("preTokenBalances", [])
+        post_balances = meta.get("postTokenBalances", [])
+
+        if not pre_balances and not post_balances:
+            logger.warning(
+                f"compute_token_balance_change() - no pre/post token balances for tx={tx.get('transaction', {}).get('signatures', ['unknown'])[0]}"
+            )
+            return 0
+
+        token_pre_balance = 0
+        token_post_balance = 0
+
+        # Find pre-balance
+        if pre_balances:
+            for balance in pre_balances:
+                if balance.get("owner") == str(owner) and balance.get("mint") == str(mint):
+                    token_pre_balance = int(balance["uiTokenAmount"]["amount"])
+                    break
+
+        # Find post-balance
+        if post_balances:
+            for balance in post_balances:
+                if balance.get("owner") == str(owner) and balance.get("mint") == str(mint):
+                    token_post_balance = int(balance["uiTokenAmount"]["amount"])
+                    break
+
+        return token_post_balance - token_pre_balance
+
+    def compute_sol_balance_change(self, tx: dict[str, Any], owner: Pubkey) -> int:
+        """Compute SOL balance change for a specific owner.
+
+        Args:
+            tx: Transaction data with meta information
+            owner: Owner public key
+
+        Returns:
+            SOL balance change in lamports
+        """
+        if not tx or not tx.get("meta"):
+            return 0
+
+        meta = tx["meta"]
+        pre_balances = meta.get("preBalances", [])
+        post_balances = meta.get("postBalances", [])
+        account_keys = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
+
+        # Find the account index for the owner
+        owner_index = None
+        for i, account_key in enumerate(account_keys):
+            if account_key == str(owner):
+                owner_index = i
+                break
+
+        if owner_index is None:
+            logger.warning(f"Owner {owner} not found in transaction account keys")
+            return 0
+
+        if owner_index >= len(pre_balances) or owner_index >= len(post_balances):
+            logger.warning(f"Account index {owner_index} out of range for balance arrays")
+            return 0
+
+        pre_balance = int(pre_balances[owner_index])
+        post_balance = int(post_balances[owner_index])
+
+        return post_balance - pre_balance
+
 
 
     async def post_rpc(self, body: dict[str, Any]) -> dict[str, Any] | None:

@@ -24,9 +24,84 @@ class TradeResult:
     platform: Platform = Platform.PUMP_FUN  # Add platform tracking
     tx_signature: str | None = None
     error_message: str | None = None
-    amount: float | None = None
-    price: float | None = None
-    fee_lamports: int | None = None
+    # Actual amounts from transaction analysis
+    token_swap_amount_raw: int | None = None  # Raw token amount from balance change
+    sol_swap_amount_raw: int | None = None  # Raw SOL amount from balance change (including transaction fee)
+    transaction_fee_raw: int | None = None  # Base + priority transaction fee in lamports (from meta.fee)
+    platform_fee_raw: int | None = None  # Platform fee in lamports (includes creator + platform fees)
+
+    def token_swap_amount_decimal(self) -> float | None:
+        """Get token amount in decimal form.
+        
+        Returns:
+            Token amount in decimal form, or None if not available
+        """
+        if self.token_swap_amount_raw is None:
+            return None
+        from core.pubkeys import TOKEN_DECIMALS
+        return self.token_swap_amount_raw / (10 ** TOKEN_DECIMALS)
+
+    def sol_swap_amount_decimal(self) -> float | None:
+        """Get SOL amount in decimal form.
+        
+        Returns:
+            SOL amount in decimal form, or None if not available
+        """
+        if self.sol_swap_amount_raw is None:
+            return None
+        from core.pubkeys import LAMPORTS_PER_SOL
+        return self.sol_swap_amount_raw / LAMPORTS_PER_SOL
+
+    def price_decimal(self) -> float | None:
+        """Get price per token in SOL.
+        
+        Returns:
+            Price per token in SOL, or None if not available
+        """
+        if self.token_swap_amount_raw is None or self.sol_swap_amount_raw is None or self.token_swap_amount_raw == 0:
+            return None
+        from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
+        return (abs(self.sol_swap_amount_raw / self.token_swap_amount_raw)) * (10 ** TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+
+    def net_sol_swap_amount_raw(self) -> int | None:
+        """Get SOL amount actually used for token purchase (excluding fees).
+        
+        Returns:
+            SOL amount in lamports used for token purchase, or None if not available
+        """
+        if self.sol_swap_amount_raw is None:
+            return None
+        
+        # Calculate net SOL amount (excluding platform and transaction fees)
+        # The amount of SOL that corresponded to that amount of tokens so it's sol_swap_amount PLUS (transaction_fee + platform_fee)
+        #  For a buy, sol_swap_amount_raw is negative and has been even more negative because of the fees => thats why we add the fees back
+        #  For a sell, sol_swap_amount_raw is positive but has been made lower by the fees that were token => that's why we add the fees back too
+        net_sol_amount_raw = self.sol_swap_amount_raw
+        if self.platform_fee_raw:
+            net_sol_amount_raw += self.platform_fee_raw
+        if self.transaction_fee_raw:
+            net_sol_amount_raw += self.transaction_fee_raw
+        
+        return net_sol_amount_raw
+
+    def net_price_decimal(self) -> float | None:
+        """Get net price per token in SOL (excluding platform and transaction fees).
+        
+        Returns:
+            Net price per token in SOL, or None if not available
+        """
+        if self.token_swap_amount_raw is None or self.token_swap_amount_raw == 0:
+            return None
+        
+        net_sol_amount_raw = abs(self.net_sol_swap_amount_raw())
+        if net_sol_amount_raw is None:
+            return None
+        
+        from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
+        
+        result = abs(net_sol_amount_raw / self.token_swap_amount_raw) * (10 ** TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+        
+        return result
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/serialization.
@@ -39,10 +114,60 @@ class TradeResult:
             "platform": self.platform.value,
             "tx_signature": self.tx_signature,
             "error_message": self.error_message,
-            "amount": self.amount,
-            "price": self.price,
-            "fee_lamports": self.fee_lamports,
+            "transaction_fee_raw": self.transaction_fee_raw,
+            "token_swap_amount_raw": self.token_swap_amount_raw,
+            "sol_swap_amount_raw": self.sol_swap_amount_raw,
+            "platform_fee_raw": self.platform_fee_raw,
+            # Computed values
+            "token_swap_amount_decimal": self.token_swap_amount_decimal(),
+            "net_sol_swap_amount_raw": self.net_sol_swap_amount_raw(),
+            "sol_swap_amount_decimal": self.sol_swap_amount_decimal(),
+            "price_decimal": self.price_decimal(),
+            "net_price_decimal": self.net_price_decimal(),
         }
+
+    def __str__(self) -> str:
+        """String representation of trade result."""
+        from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
+        
+        result = f"TradeResult(success={self.success}, platform={self.platform.value}"
+        
+        if self.tx_signature:
+            result += f", tx_signature='{self.tx_signature}'"
+        
+        if self.error_message:
+            result += f", error_message='{self.error_message}'"
+        
+        if self.token_swap_amount_raw is not None:
+            token_decimal = self.token_swap_amount_decimal()
+            result += f", token_swap_amount_raw={self.token_swap_amount_raw} ({token_decimal:.6f} tokens)" if token_decimal is not None else f", token_swap_amount_raw={self.token_swap_amount_raw}"
+        
+        if self.sol_swap_amount_raw is not None:
+            sol_decimal = self.sol_swap_amount_raw / LAMPORTS_PER_SOL
+            result += f", sol_swap_amount_raw={self.sol_swap_amount_raw} ({sol_decimal:.6f} SOL)"
+
+        if self.sol_swap_amount_raw is not None:
+            sol_decimal = self.net_sol_swap_amount_raw() / LAMPORTS_PER_SOL
+            result += f", net_sol_swap_amount_raw={self.net_sol_swap_amount_raw()} ({sol_decimal:.6f} SOL)"
+
+        if self.transaction_fee_raw is not None:
+            fee_decimal = self.transaction_fee_raw / LAMPORTS_PER_SOL
+            result += f", transaction_fee_raw={self.transaction_fee_raw} ({fee_decimal:.6f} SOL)"
+        
+        if self.platform_fee_raw is not None:
+            platform_fee_decimal = self.platform_fee_raw / LAMPORTS_PER_SOL
+            result += f", platform_fee_raw={self.platform_fee_raw} ({platform_fee_decimal:.6f} SOL)"
+        
+        price_decimal = self.price_decimal()
+        if price_decimal is not None:
+            result += f", price_decimal={price_decimal:.8f} SOL"
+        
+        net_price_decimal = self.net_price_decimal()
+        if net_price_decimal is not None:
+            result += f", net_price_decimal={net_price_decimal:.8f} SOL"
+        
+        result += ")"
+        return result
 
 
 class Trader(ABC):

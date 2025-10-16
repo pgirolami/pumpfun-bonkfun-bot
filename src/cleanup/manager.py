@@ -102,8 +102,8 @@ class AccountCleanupManager:
                     skip_preflight=True,
                     priority_fee=priority_fee,
                 )
-                await self.client.confirm_transaction(tx_sig)
-                logger.info(f"Closed successfully: {ata}")
+                confirmation_result =await self.client.confirm_transaction(tx_sig)
+                logger.info(f"Close {ata} confirmation : {confirmation_result}")
 
         except Exception as e:
             logger.warning(f"Cleanup failed for ATA {ata}: {e!s}")

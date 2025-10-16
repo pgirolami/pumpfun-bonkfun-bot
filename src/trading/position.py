@@ -8,7 +8,9 @@ from enum import Enum
 
 from solders.pubkey import Pubkey
 from core.pubkeys import LAMPORTS_PER_SOL
+from utils.logger import get_logger
 
+logger = get_logger(__name__)
 
 class ExitReason(Enum):
     """Reasons for position exit."""
@@ -47,8 +49,8 @@ class Position:
     exit_price: float | None = None
     exit_time: datetime | None = None
     # Fees (lamports)
-    buy_fee_lamports: int | None = None
-    sell_fee_lamports: int | None = None
+    buy_fee_raw: int | None = None
+    sell_fee_raw: int | None = None
 
     @classmethod
     def create_from_buy_result(
@@ -57,7 +59,7 @@ class Position:
         symbol: str,
         entry_price: float,
         quantity: float,
-        buy_fee_lamports: int | None,
+        buy_fee_raw: int | None,
         take_profit_percentage: float | None,
         stop_loss_percentage: float | None,
         trailing_stop_percentage: float | None,
@@ -85,7 +87,7 @@ class Position:
         if stop_loss_percentage is not None:
             stop_loss_price = entry_price * (1 - stop_loss_percentage)
 
-        return cls(
+        result = cls(
             mint=mint,
             symbol=symbol,
             entry_price=entry_price,
@@ -94,10 +96,11 @@ class Position:
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
             max_hold_time=max_hold_time,
-            buy_fee_lamports=buy_fee_lamports,
+            buy_fee_raw=buy_fee_raw,
             trailing_stop_percentage=trailing_stop_percentage,
             highest_price=entry_price,
         )
+        return result
 
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
         """Check if position should be exited based on current conditions.
@@ -114,30 +117,35 @@ class Position:
         # Update highest price for trailing stop tracking
         if self.highest_price is None or current_price > self.highest_price:
             self.highest_price = current_price
+            logger.info(f"Highest price updated to {self.highest_price}")
 
         # Check take profit
         if self.take_profit_price and current_price >= self.take_profit_price:
             return True, ExitReason.TAKE_PROFIT
+        logger.info(f"current_price {current_price} < take_profit_price {self.take_profit_price}")
 
         # Check stop loss
         if self.stop_loss_price and current_price <= self.stop_loss_price:
             return True, ExitReason.STOP_LOSS
+        logger.info(f"current_price {current_price} > stop_loss_price {self.stop_loss_price}")
 
         # Check trailing stop (if configured)
         if self.trailing_stop_percentage is not None and self.highest_price is not None:
             trailing_limit = self.highest_price * (1 - self.trailing_stop_percentage)
             if current_price <= trailing_limit:
                 return True, ExitReason.TRAILING_STOP
+            logger.info(f"current_price {current_price} > trailing_limit {trailing_limit}")
 
         # Check max hold time
         if self.max_hold_time:
             elapsed_time = (datetime.utcnow() - self.entry_time).total_seconds()
             if elapsed_time >= self.max_hold_time:
                 return True, ExitReason.MAX_HOLD_TIME
+            logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
 
         return False, None
 
-    def close_position(self, exit_price: float, exit_reason: ExitReason, sell_fee_lamports: int | None = None) -> None:
+    def close_position(self, exit_price: float, exit_reason: ExitReason, sell_fee_raw: int | None = None) -> None:
         """Close the position with exit details.
 
         Args:
@@ -148,9 +156,9 @@ class Position:
         self.exit_price = exit_price
         self.exit_reason = exit_reason
         self.exit_time = datetime.utcnow()
-        self.sell_fee_lamports = sell_fee_lamports
+        self.sell_fee_raw = sell_fee_raw
 
-    def get_pnl(self, current_price: float | None = None) -> dict:
+    def get_net_pnl(self, current_price: float | None = None) -> dict:
         """Calculate profit/loss for the position.
 
         Args:
@@ -165,41 +173,49 @@ class Position:
         price_to_use = self.exit_price if not self.is_active else current_price
         if price_to_use is None:
             raise ValueError("No price available for PnL calculation")
+        
+        if self.entry_price is None:
+            raise ValueError("No entry price available for PnL calculation")
+        
+        if self.quantity is None:
+            raise ValueError("No quantity available for PnL calculation")
 
         price_change = price_to_use - self.entry_price
         price_change_pct = (price_change / self.entry_price) * 100
         gross_pnl_sol = price_change * self.quantity
 
-        buy_fee_lamports = int(self.buy_fee_lamports or 0)
-        sell_fee_lamports = int(self.sell_fee_lamports or 0)
+        buy_fee_raw = int(self.buy_fee_raw or 0)
+        sell_fee_raw = int(self.sell_fee_raw or 0)
 
         if self.is_active:
-            net_unrealized_pnl_sol = gross_pnl_sol - (buy_fee_lamports / LAMPORTS_PER_SOL)
+            net_unrealized_pnl_sol = gross_pnl_sol - (float(buy_fee_raw) / LAMPORTS_PER_SOL)
             return {
                 "entry_price": self.entry_price,
                 "current_price": price_to_use,
                 "price_change": price_change,
                 "price_change_pct": price_change_pct,
-                "unrealized_pnl_sol": net_unrealized_pnl_sol,
+                "gross_pnl_sol": gross_pnl_sol,
+                "net_unrealized_pnl_sol": net_unrealized_pnl_sol,
                 "quantity": self.quantity,
-                "buy_fee_lamports": buy_fee_lamports,
-                "total_fees_lamports": buy_fee_lamports,
-                "total_fees_sol": buy_fee_lamports / LAMPORTS_PER_SOL,
+                "buy_fee_raw": buy_fee_raw,
+                "total_fees_raw": buy_fee_raw,
+                "total_fees_sol": buy_fee_raw / LAMPORTS_PER_SOL,
             }
         else:
-            total_fees_lamports = buy_fee_lamports + sell_fee_lamports
-            net_realized_pnl_sol = gross_pnl_sol - (total_fees_lamports / LAMPORTS_PER_SOL)
+            total_fees_raw = float(buy_fee_raw + sell_fee_raw)
+            net_realized_pnl_sol = gross_pnl_sol - (total_fees_raw / LAMPORTS_PER_SOL)
             return {
                 "entry_price": self.entry_price,
                 "current_price": price_to_use,
                 "price_change": price_change,
                 "price_change_pct": price_change_pct,
-                "realized_pnl_sol": net_realized_pnl_sol,
+                "gross_pnl_sol": gross_pnl_sol,
+                "net_realized_pnl_sol": net_realized_pnl_sol,
                 "quantity": self.quantity,
-                "buy_fee_lamports": buy_fee_lamports,
-                "sell_fee_lamports": sell_fee_lamports,
-                "total_fees_lamports": total_fees_lamports,
-                "total_fees_sol": total_fees_lamports / LAMPORTS_PER_SOL,
+                "buy_fee_raw": buy_fee_raw,
+                "sell_fee_raw": sell_fee_raw,
+                "total_fees_raw": total_fees_raw,
+                "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
             }
 
     def __str__(self) -> str:
@@ -210,4 +226,6 @@ class Position:
             status = f"CLOSED ({self.exit_reason.value})"
         else:
             status = "CLOSED (UNKNOWN)"
-        return f"Position({self.symbol}: {self.quantity:.6f} @ {self.entry_price:.8f} SOL - {status})"
+        quantity_str = f"{self.quantity:.6f}" if self.quantity is not None else "None"
+        price_str = f"{self.entry_price:.8f}" if self.entry_price is not None else "None"
+        return f"Position({self.symbol}: {quantity_str} @ {price_str} SOL - {status})"

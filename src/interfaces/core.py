@@ -12,6 +12,50 @@ from typing import Any
 
 from solders.instruction import Instruction
 from solders.pubkey import Pubkey
+from solders.solders import EncodedConfirmedTransactionWithStatusMeta
+
+
+@dataclass
+class BalanceChangeResult:
+    """Result of balance change analysis for trading transactions."""
+    
+    token_swap_amount_raw: int = 0  # Token amount in raw units: positive for buys, negative for sells
+    sol_amount_raw: int = 0  # SOL amount in lamports: negative for buys, positive for sells. Includes fees.
+    #Note that the real amount of SOL expended on a buy or received in a sell is sol_amount_raw-platform_fee_raw-transaction_fee_raw
+    platform_fee_raw: int = 0  # Platform fee in lamports (includes creator + platform fees)
+    transaction_fee_raw: int = 0  # Base + priority transaction fee in lamports (from meta.fee)
+    rent_exemption_amount_raw: int = 0  # Rent exemption amount in lamports for token account creation
+    sol_swap_amount_raw:int = 0  # SOL amount in lamports that was actually used for token purchase (excluding rent exemption since we get that back after closing the ATA)
+
+    def __str__(self) -> str:
+        """String representation with raw and decimal values."""
+        from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
+        
+        # The amount of SOL that corresponded to that amount of tokens so it's sol_swap_amount PLUS (transaction_fee + platform_fee)
+        #  For a buy, sol_swap_amount_raw is negative and has been even more negative because of the fees => thats why we add the fees back
+        #  For a sell, sol_swap_amount_raw is positive but has been made lower by the fees that were token => that's why we add the fees back too
+        net_sol_swap_amount_raw = self.sol_swap_amount_raw + (self.transaction_fee_raw + self.platform_fee_raw)
+        
+        # Convert to decimal values
+        sol_amount_decimal = self.sol_amount_raw / LAMPORTS_PER_SOL
+        rent_exemption_decimal = self.rent_exemption_amount_raw / LAMPORTS_PER_SOL
+        sol_swap_amount_decimal = self.sol_swap_amount_raw / LAMPORTS_PER_SOL
+        transaction_fee_decimal = self.transaction_fee_raw / LAMPORTS_PER_SOL
+        platform_fee_decimal = self.platform_fee_raw / LAMPORTS_PER_SOL
+        net_sol_swap_amount_decimal = net_sol_swap_amount_raw / LAMPORTS_PER_SOL
+        token_swap_amount_decimal = self.token_swap_amount_raw / (10 ** TOKEN_DECIMALS)
+        
+        return (
+            f"BalanceChangeResult("
+            f"sol_amount={self.sol_amount_raw} lamports ({sol_amount_decimal:.6f} SOL) & "
+            f"rent_exemption_amount={self.rent_exemption_amount_raw} lamports ({rent_exemption_decimal:.6f} SOL) "
+            f"=> sol_swap_amount={self.sol_swap_amount_raw} lamports ({sol_swap_amount_decimal:.6f} SOL), "
+            f"transaction_fee={self.transaction_fee_raw} lamports ({transaction_fee_decimal:.6f} SOL) & "
+            f"platform_fee={self.platform_fee_raw} lamports ({platform_fee_decimal:.6f} SOL), "
+            f"=> net_sol_swap_amount ={net_sol_swap_amount_raw} lamports ({net_sol_swap_amount_decimal:.6f} SOL), "
+            f"token_swap_amount={self.token_swap_amount_raw} raw units ({token_swap_amount_decimal:.6f} tokens)"
+            f")"
+        )
 
 
 class Platform(Enum):
@@ -385,5 +429,28 @@ class EventParser(ABC):
 
         Returns:
             List of discriminator bytes to match
+        """
+        pass
+
+
+class BalanceAnalyzer(ABC):
+    """Interface for analyzing transaction balance changes and fee breakdown."""
+
+    @abstractmethod
+    def analyze_balance_changes(
+        self, tx: EncodedConfirmedTransactionWithStatusMeta, token_info: TokenInfo, wallet_pubkey: Pubkey, instruction_accounts: dict[str, Pubkey]
+    ) -> BalanceChangeResult:
+        """Analyze balance changes for trading transactions.
+
+        Args:
+            tx: Transaction data with meta information
+            token_info: Token information including mint, user, creator, etc.
+            wallet_pubkey: The wallet executing the transaction (may differ from token_info.user)
+            instruction_accounts: Dictionary of account names to Pubkeys for the instruction
+
+        Returns:
+            BalanceChangeResult with balance changes and fees in lamports.
+            SOL amounts are negative for buys, positive for sells.
+            Token amounts are positive for buys, negative for sells.
         """
         pass

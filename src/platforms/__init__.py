@@ -11,6 +11,7 @@ from typing import Any
 from core.client import SolanaClient
 from interfaces.core import (
     AddressProvider,
+    BalanceAnalyzer,
     CurveManager,
     EventParser,
     InstructionBuilder,
@@ -30,6 +31,7 @@ class PlatformImplementations:
     instruction_builder: InstructionBuilder
     curve_manager: CurveManager
     event_parser: EventParser
+    balance_analyzer: BalanceAnalyzer
 
 
 class PlatformRegistry:
@@ -46,6 +48,7 @@ class PlatformRegistry:
         instruction_builder_class: type[InstructionBuilder],
         curve_manager_class: type[CurveManager],
         event_parser_class: type[EventParser],
+        balance_analyzer_class: type[BalanceAnalyzer],
     ) -> None:
         """Register platform implementations.
 
@@ -55,12 +58,14 @@ class PlatformRegistry:
             instruction_builder_class: InstructionBuilder implementation class
             curve_manager_class: CurveManager implementation class
             event_parser_class: EventParser implementation class
+            balance_analyzer_class: BalanceAnalyzer implementation class
         """
         self._implementations[platform] = {
             "address_provider": address_provider_class,
             "instruction_builder": instruction_builder_class,
             "curve_manager": curve_manager_class,
             "event_parser": event_parser_class,
+            "balance_analyzer": balance_analyzer_class,
         }
 
     def create_platform_implementations(
@@ -107,6 +112,7 @@ class PlatformRegistry:
 
         # Create instances - pass IDL parser to classes that need it
         address_provider = impl_classes["address_provider"]()
+        balance_analyzer = impl_classes["balance_analyzer"]()
 
         # For platforms with IDL support, pass the parser to relevant classes
         if idl_parser and platform in [Platform.LETS_BONK, Platform.PUMP_FUN]:
@@ -126,6 +132,7 @@ class PlatformRegistry:
             instruction_builder=instruction_builder,
             curve_manager=curve_manager,
             event_parser=event_parser,
+            balance_analyzer=balance_analyzer,
         )
 
         # Cache the instances
@@ -198,6 +205,7 @@ class PlatformFactory:
         try:
             from platforms.pumpfun import (
                 PumpFunAddressProvider,
+                PumpFunBalanceAnalyzer,
                 PumpFunCurveManager,
                 PumpFunEventParser,
                 PumpFunInstructionBuilder,
@@ -209,6 +217,7 @@ class PlatformFactory:
                 PumpFunInstructionBuilder,
                 PumpFunCurveManager,
                 PumpFunEventParser,
+                PumpFunBalanceAnalyzer,
             )
 
         except ImportError as e:
@@ -218,6 +227,7 @@ class PlatformFactory:
         try:
             from platforms.letsbonk import (
                 LetsBonkAddressProvider,
+                LetsBonkBalanceAnalyzer,
                 LetsBonkCurveManager,
                 LetsBonkEventParser,
                 LetsBonkInstructionBuilder,
@@ -229,6 +239,7 @@ class PlatformFactory:
                 LetsBonkInstructionBuilder,
                 LetsBonkCurveManager,
                 LetsBonkEventParser,
+                LetsBonkBalanceAnalyzer,
             )
 
         except ImportError as e:

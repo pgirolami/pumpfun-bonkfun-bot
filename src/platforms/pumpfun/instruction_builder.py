@@ -315,27 +315,27 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts_info["fee_program"],
         ]
 
-    def calculate_token_amount_raw(self, token_amount_decimal: float) -> int:
+    def calculate_token_swap_amount_raw(self, token_swap_amount_decimal: float) -> int:
         """Convert decimal token amount to raw token units.
 
         Args:
-            token_amount_decimal: Token amount in decimal form
+            token_swap_amount_decimal: Token amount in decimal form
 
         Returns:
             Token amount in raw units (adjusted for decimals)
         """
-        return int(token_amount_decimal * 10**TOKEN_DECIMALS)
+        return int(token_swap_amount_decimal * 10**TOKEN_DECIMALS)
 
-    def calculate_token_amount_decimal(self, token_amount_raw: int) -> float:
+    def calculate_token_swap_amount_decimal(self, token_swap_amount_raw: int) -> float:
         """Convert raw token amount to decimal form.
 
         Args:
-            token_amount_raw: Token amount in raw units
+            token_swap_amount_raw: Token amount in raw units
 
         Returns:
             Token amount in decimal form
         """
-        return token_amount_raw / 10**TOKEN_DECIMALS
+        return token_swap_amount_raw / 10**TOKEN_DECIMALS
 
     def get_buy_compute_unit_limit(self, config_override: int | None = None) -> int:
         """Get the recommended compute unit limit for pump.fun buy operations.

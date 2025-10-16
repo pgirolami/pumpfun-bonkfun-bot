@@ -419,7 +419,10 @@ class UniversalTrader:
             logger.info(
                 f"Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} on {token_info.platform.value}..."
             )
-            buy_result: TradeResult = await self.buyer.execute(token_info)
+            buy_result = await self.buyer.execute(token_info)
+            logger.info(
+                f"Buy result is {buy_result}"
+            )
 
             if buy_result.success:
                 await self._handle_successful_buy(token_info, buy_result)
@@ -443,15 +446,15 @@ class UniversalTrader:
         logger.info(
             f"Successfully bought {token_info.symbol} on {token_info.platform.value}"
         )
+        logger.info(f"buy_result.tx_signature: {buy_result.tx_signature}")
         self._log_trade(
             "buy",
             token_info,
-            buy_result.price,
-            buy_result.amount,
+            buy_result.net_price_decimal(),
+            buy_result.token_swap_amount_decimal(),
             buy_result.tx_signature,
-            fee_lamports=buy_result.fee_lamports,
-            buy_fee_lamports=buy_result.fee_lamports,
-            total_fees_lamports=buy_result.fee_lamports,
+            platform_fee_raw=buy_result.platform_fee_raw,
+            transaction_fee_raw=buy_result.transaction_fee_raw,
         )
         self.traded_mints.add(token_info.mint)
 
@@ -492,13 +495,13 @@ class UniversalTrader:
         position = Position.create_from_buy_result(
             mint=token_info.mint,
             symbol=token_info.symbol,
-            entry_price=buy_result.price,
-            quantity=buy_result.amount,
-            buy_fee_lamports=buy_result.fee_lamports,
+            entry_price=buy_result.net_price_decimal(),
+            quantity=buy_result.token_swap_amount_decimal(),
+            buy_fee_raw=buy_result.platform_fee_raw+buy_result.transaction_fee_raw,
             take_profit_percentage=self.take_profit_percentage,
-            stop_loss_percentage=self.stop_loss_percentage,
-            trailing_stop_percentage=None,
             max_hold_time=self.max_hold_time,
+            stop_loss_percentage=self.stop_loss_percentage,
+            trailing_stop_percentage = None
         )
 
         logger.info(f"Created position: {position}")
@@ -517,13 +520,13 @@ class UniversalTrader:
         position = Position.create_from_buy_result(
             mint=token_info.mint,
             symbol=token_info.symbol,
-            entry_price=buy_result.price,
-            quantity=buy_result.amount,
-            buy_fee_lamports=buy_result.fee_lamports,
-            take_profit_percentage=None,
-            stop_loss_percentage=None,
-            trailing_stop_percentage=self.trailing_stop_percentage,
+            entry_price=buy_result.net_price_decimal(),
+            quantity=buy_result.token_swap_amount_decimal(),
+            buy_fee_raw=buy_result.platform_fee_raw+buy_result.transaction_fee_raw,
+            take_profit_percentage=self.take_profit_percentage,
             max_hold_time=self.max_hold_time,
+            trailing_stop_percentage=self.trailing_stop_percentage,
+            stop_loss_percentage = None,
         )
 
         logger.info(f"Created trailing position: {position}")
@@ -545,13 +548,13 @@ class UniversalTrader:
         if sell_result.success:
             logger.info(f"Successfully sold {token_info.symbol}")
             self._log_trade(
-                "sell",
-                token_info,
-                sell_result.price,
-                sell_result.amount,
-                sell_result.tx_signature,
-                fee_lamports=sell_result.fee_lamports,
-                sell_fee_lamports=sell_result.fee_lamports,
+                action="sell",
+                token_info=token_info,
+                net_price=sell_result.net_price_decimal(),
+                token_swap_amount=sell_result.token_swap_amount_decimal(),
+                tx_hash=sell_result.tx_signature,
+                transaction_fee_raw=sell_result.transaction_fee_raw,
+                platform_fee_raw=sell_result.platform_fee_raw,
             )
             # Close ATA if enabled
             await handle_cleanup_after_sell(
@@ -590,23 +593,22 @@ class UniversalTrader:
 
                 if should_exit and exit_reason:
                     logger.info(f"Exit condition met: {exit_reason.value}")
-                    logger.info(f"Current price: {current_price:.8f} SOL")
+                    logger.info(f"Current onchain price: {current_price:.8f} SOL")
 
                     # Log PnL before exit
-                    pnl = position.get_pnl(current_price)
-                    logger.info(
-                        f"Position PnL: {pnl['price_change_pct']:.2f}% ({pnl['unrealized_pnl_sol']:.6f} SOL)"
-                    )
+                    pnl = position.get_net_pnl(current_price)
+                    logger.info(f"PNL: {pnl}")
 
                     # Execute sell
                     sell_result = await self.seller.execute(token_info)
+                    logger.info(f"Sell result: {sell_result}")
 
                     if sell_result.success:
                         # Close position with actual exit price
                         position.close_position(
-                            sell_result.price,
+                            sell_result.net_price_decimal(),
                             exit_reason,
-                            sell_fee_lamports=sell_result.fee_lamports,
+                            sell_fee_raw=sell_result.platform_fee_raw+sell_result.transaction_fee_raw,
                         )
 
                         logger.info(
@@ -614,21 +616,17 @@ class UniversalTrader:
                         )
                         self._log_trade(
                             "sell",
-                            token_info,
-                            sell_result.price,
-                            sell_result.amount,
-                            sell_result.tx_signature,
-                            fee_lamports=sell_result.fee_lamports,
-                            buy_fee_lamports=position.buy_fee_lamports,
-                            sell_fee_lamports=sell_result.fee_lamports,
-                            total_fees_lamports=((position.buy_fee_lamports or 0) + (sell_result.fee_lamports or 0)),
+                            token_info=token_info,
+                            net_price=sell_result.net_price_decimal(),
+                            token_swap_amount=sell_result.token_swap_amount_decimal(),
+                            tx_hash=sell_result.tx_signature,
+                            transaction_fee_raw=sell_result.transaction_fee_raw,
+                            platform_fee_raw=sell_result.platform_fee_raw,
                         )
 
                         # Log final PnL
-                        final_pnl = position.get_pnl()
-                        logger.info(
-                            f"Final PnL: {final_pnl['price_change_pct']:.2f}% ({final_pnl['realized_pnl_sol']:.6f} SOL)"
-                        )
+                        final_pnl = position.get_net_pnl()
+                        logger.info(f"Final net PnL: {final_pnl}")
 
                         # Close ATA if enabled
                         await handle_cleanup_after_sell(
@@ -652,7 +650,7 @@ class UniversalTrader:
                         break
                 else:
                     # Log current status
-                    pnl = position.get_pnl(current_price)
+                    pnl = position.get_net_pnl(current_price)
                     logger.info(
                         f"Position status: {current_price:.8f} SOL ({pnl['price_change_pct']:+.2f}%)"
                     )
@@ -722,13 +720,11 @@ class UniversalTrader:
         self,
         action: str,
         token_info: TokenInfo,
-        price: float,
-        amount: float,
+        net_price: float,
+        token_swap_amount: float,
         tx_hash: str | None,
-        fee_lamports: int | None = None,
-        buy_fee_lamports: int | None = None,
-        sell_fee_lamports: int | None = None,
-        total_fees_lamports: int | None = None,
+        transaction_fee_raw: int | None = None,
+        platform_fee_raw: int | None = None,
     ) -> None:
         """Log trade information."""
         try:
@@ -741,19 +737,18 @@ class UniversalTrader:
                 "platform": token_info.platform.value,
                 "token_address": str(token_info.mint),
                 "symbol": token_info.symbol,
-                "price": price,
-                "amount": amount,
+                "price": net_price,
+                "amount": token_swap_amount,
                 "tx_hash": str(tx_hash) if tx_hash else None,
             }
 
-            if fee_lamports is not None:
-                log_entry["fee_lamports"] = fee_lamports
-            if buy_fee_lamports is not None:
-                log_entry["buy_fee_lamports"] = buy_fee_lamports
-            if sell_fee_lamports is not None:
-                log_entry["sell_fee_lamports"] = sell_fee_lamports
-            if total_fees_lamports is not None:
-                log_entry["total_fees_lamports"] = total_fees_lamports
+            if transaction_fee_raw is not None:
+                log_entry["transaction_fee_raw"] = transaction_fee_raw
+            if platform_fee_raw is not None:
+                log_entry["platform_fee_raw"] = platform_fee_raw
+
+
+            logger.info(f"log_entry: {str(log_entry)}")
 
             log_file_path = trades_dir / "trades.log"
             with log_file_path.open("a", encoding="utf-8") as log_file:
