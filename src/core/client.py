@@ -223,7 +223,6 @@ class SolanaClient:
         success: bool
         tx:Signature
         error_message: str | None = None
-        fees_raw: int | None = None  # Transaction fees in lamports
 
         def __str__(self) -> str:
             """String representation of confirmation result."""
@@ -232,10 +231,6 @@ class SolanaClient:
                 result += f", tx='{self.tx}'"
             if self.error_message:
                 result += f", error_message='{self.error_message}'"
-            if self.fees_raw is not None:
-                from core.pubkeys import LAMPORTS_PER_SOL
-                fees_sol = self.fees_raw / LAMPORTS_PER_SOL
-                result += f", fees_raw={self.fees_raw} lamports ({fees_sol:.6f} SOL)"
             result += ")"
             return result
 
@@ -261,24 +256,12 @@ class SolanaClient:
             signature, commitment=commitment, sleep_seconds=1
         )
 
-        # Extract fees from the transaction (always try to get them)
-        fees = None
-        try:
-            tx = await client.get_transaction(signature, commitment=commitment)
-            if tx and tx.value and tx.value.transaction and tx.value.transaction.meta:
-                fees = tx.value.transaction.meta.fee
-        except Exception as e:
-            logging.info(
-                "client.confirm_transaction - failed to extract fees from transaction: %s",
-                signature,
-            )
-            logging.exception(e)
-
         # Try to extract an error from the confirm response
+        error_string = None
         if resp.value[0].err:
-            # Here I get the transaction anyway so that I can have the logs and extract the error from them
             error_string = str(resp.value[0].err)
             try:
+                tx = await client.get_transaction(signature, commitment=commitment)
                 if tx and tx.value and tx.value.transaction and tx.value.transaction.meta:
                     if tx.value.transaction.meta.log_messages:
                         error_string = str(tx.value.transaction.meta.log_messages)
@@ -289,10 +272,7 @@ class SolanaClient:
                 )
                 logging.exception(e)
 
-            return SolanaClient.ConfirmationResult(
-                success=False, tx=signature, error_message=error_string, fees_raw=fees) 
-
-        return SolanaClient.ConfirmationResult(success=True, tx=signature, error_message=None, fees_raw=fees)
+        return SolanaClient.ConfirmationResult(success=not resp.value[0].err, tx=signature, error_message=error_string)
 
     @retry(
         reraise=True,
