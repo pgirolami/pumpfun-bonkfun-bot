@@ -53,7 +53,7 @@ class TradeResult:
         from core.pubkeys import LAMPORTS_PER_SOL
         return self.sol_swap_amount_raw / LAMPORTS_PER_SOL
 
-    def price_decimal(self) -> float | None:
+    def price_sol_decimal(self) -> float | None:
         """Get price per token in SOL.
         
         Returns:
@@ -85,7 +85,7 @@ class TradeResult:
         
         return net_sol_amount_raw
 
-    def net_price_decimal(self) -> float | None:
+    def net_price_sol_decimal(self) -> float | None:
         """Get net price per token in SOL (excluding platform and transaction fees).
         
         Returns:
@@ -123,8 +123,8 @@ class TradeResult:
             "token_swap_amount_decimal": self.token_swap_amount_decimal(),
             "net_sol_swap_amount_raw": self.net_sol_swap_amount_raw(),
             "sol_swap_amount_decimal": self.sol_swap_amount_decimal(),
-            "price_decimal": self.price_decimal(),
-            "net_price_decimal": self.net_price_decimal(),
+            "price_decimal": self.price_sol_decimal(),
+            "net_price_decimal": self.net_price_sol_decimal(),
         }
 
     def __str__(self) -> str:
@@ -159,13 +159,13 @@ class TradeResult:
             platform_fee_decimal = self.platform_fee_raw / LAMPORTS_PER_SOL
             result += f", platform_fee_raw={self.platform_fee_raw} ({platform_fee_decimal:.6f} SOL)"
         
-        price_decimal = self.price_decimal()
+        price_decimal = self.price_sol_decimal()
         if price_decimal is not None:
             result += f", price_decimal={price_decimal:.8f} SOL"
         
-        net_price_decimal = self.net_price_decimal()
-        if net_price_decimal is not None:
-            result += f", net_price_decimal={net_price_decimal:.8f} SOL"
+        net_price_sol_decimal = self.net_price_sol_decimal()
+        if net_price_sol_decimal is not None:
+            result += f", net_price_sol_decimal={net_price_sol_decimal:.8f} SOL"
         
         result += ")"
         return result

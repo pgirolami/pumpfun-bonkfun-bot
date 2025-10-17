@@ -16,6 +16,8 @@ from config_loader import (
 )
 from trading.universal_trader import UniversalTrader
 from utils.logger import setup_file_logging
+from database.manager import DatabaseManager
+from core.wallet import Wallet
 
 
 def setup_logging(bot_name: str):
@@ -67,13 +69,32 @@ async def start_bot(config_path: str):
         )
         return
 
+    # Create database manager
+    try:
+        # Derive wallet pubkey for database naming
+        wallet = Wallet(cfg["private_key"])
+        wallet_pubkey_short = str(wallet.pubkey)[:8]
+        
+        # Determine mode (dryrun or live)
+        testing = cfg.get("testing", {})
+        mode = "dryrun" if testing.get("dry_run", False) else "live"
+        
+        # Create database path
+        db_path = f"data/{cfg['name']}_{wallet_pubkey_short}_{mode}.db"
+        database_manager = DatabaseManager(db_path)
+        
+        logging.info(f"Database initialized: {db_path}")
+    except Exception as e:
+        logging.exception(f"Failed to initialize database: {e}")
+        database_manager = None
+
     # Initialize universal trader with platform-specific configuration
     try:
         trader = UniversalTrader(
             # Connection settings
             rpc_endpoint=cfg["rpc_endpoint"],
             wss_endpoint=cfg["wss_endpoint"],
-            private_key=cfg["private_key"],
+            wallet=wallet,
             # Platform configuration - pass platform enum directly
             platform=platform,
             # Trade parameters
@@ -139,6 +160,8 @@ async def start_bot(config_path: str):
             compute_units=cfg.get("compute_units", {}),
             # Testing configuration
             testing=cfg.get("testing"),
+            # Database configuration
+            database_manager=database_manager,
         )
 
         await trader.start()

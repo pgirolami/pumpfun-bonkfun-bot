@@ -15,13 +15,15 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
     """Dry-run buyer that simulates execution without blockchain calls."""
     
     def __init__(self, *args, dry_run_wait_time: float = 0.5, **kwargs):
+        # Remove database_manager from kwargs since PlatformAwareBuyer doesn't accept it
+        kwargs.pop('database_manager', None)
         super().__init__(*args, **kwargs)
         self.dry_run_wait_time = dry_run_wait_time
     
     async def _execute_transaction(self, order: BuyOrder) -> BuyOrder:
         """Override to simulate instead of actually sending transaction."""
         # Simulate network latency
-        logger.info(f"[DRY-RUN] Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
+        logger.info(f"Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
         
         # Generate fake signature
@@ -31,12 +33,12 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
         order.platform_fee_raw = int(order.sol_amount_raw * 0.008)  # 0.8% estimate
         
-        logger.info(f"[DRY-RUN] Buy transaction simulated: {order.tx_signature}")
+        logger.info(f"Buy transaction simulated: {order.tx_signature}")
         return order
     
     async def _confirm_transaction(self, tx_signature: str):
         """Override to simulate transaction confirmation."""
-        logger.info(f"[DRY-RUN] Simulating transaction confirmation: {tx_signature}")
+        logger.info(f"Simulating transaction confirmation: {tx_signature}")
         await asyncio.sleep(0.1)  # Brief simulation delay
         
         # Return a mock confirmation result
@@ -46,12 +48,12 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             success=True,
             tx=tx_signature,
             error_message=None,
-            block_time=int(time() * 1000),  # Current time for dry run
+            block_ts=int(time() * 1000),  # Current time for dry run
         )
     
     async def _analyze_balance_changes(self, order: BuyOrder):
         """Override to simulate balance analysis for dry-run."""
-        logger.info(f"[DRY-RUN] Simulating balance analysis for buy order")
+        logger.info(f"Simulating balance analysis for buy order")
         
         # Create a mock balance change result
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
@@ -70,13 +72,15 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
     """Dry-run seller that simulates execution without blockchain calls."""
     
     def __init__(self, *args, dry_run_wait_time: float = 0.5, **kwargs):
+        # Remove database_manager from kwargs since PlatformAwareSeller doesn't accept it
+        kwargs.pop('database_manager', None)
         super().__init__(*args, **kwargs)
         self.dry_run_wait_time = dry_run_wait_time
     
     async def _execute_transaction(self, order: SellOrder) -> SellOrder:
         """Override to simulate instead of actually sending transaction."""
         # Simulate network latency
-        logger.info(f"[DRY-RUN] Simulating sell transaction (wait: {self.dry_run_wait_time}s)")
+        logger.info(f"Simulating sell transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
         
         # Generate fake signature
@@ -86,12 +90,12 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
         order.platform_fee_raw = int(order.minimum_sol_swap_amount_raw * 0.008)  # 0.8% estimate
         
-        logger.info(f"[DRY-RUN] Sell transaction simulated: {order.tx_signature}")
+        logger.info(f"Sell transaction simulated: {order.tx_signature}")
         return order
     
     async def _confirm_transaction(self, tx_signature: str):
         """Override to simulate transaction confirmation."""
-        logger.info(f"[DRY-RUN] Simulating transaction confirmation: {tx_signature}")
+        logger.info(f"Simulating transaction confirmation: {tx_signature}")
         await asyncio.sleep(0.1)  # Brief simulation delay
         
         # Return a mock confirmation result
@@ -101,12 +105,12 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
             success=True,
             tx=tx_signature,
             error_message=None,
-            block_time=int(time() * 1000),  # Current time for dry run
+            block_ts=int(time() * 1000),  # Current time for dry run
         )
     
     async def _analyze_balance_changes(self, order: SellOrder):
         """Override to simulate balance analysis for dry-run."""
-        logger.info(f"[DRY-RUN] Simulating balance analysis for sell order")
+        logger.info(f"Simulating balance analysis for sell order")
         
         # Create a mock balance change result
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult

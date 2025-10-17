@@ -223,7 +223,7 @@ class SolanaClient:
         success: bool
         tx:Signature
         error_message: str | None = None
-        block_time: int | None = None  # Unix epoch milliseconds
+        block_ts: int | None = None  # Unix epoch milliseconds
 
         def __str__(self) -> str:
             """String representation of confirmation result."""
@@ -287,7 +287,7 @@ class SolanaClient:
             success=not resp.value[0].err, 
             tx=signature, 
             error_message=error_string,
-            block_time=block_time
+            block_ts=block_time
         )
 
     @retry(

@@ -25,8 +25,9 @@ from monitoring.listener_factory import ListenerFactory
 from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
-from trading.position import Position
+from trading.position import ExitReason, Position
 from utils.logger import get_logger
+from database.models import PositionConverter
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
@@ -40,7 +41,7 @@ class UniversalTrader:
         self,
         rpc_endpoint: str,
         wss_endpoint: str,
-        private_key: str,
+        wallet: Wallet,
         buy_amount: float,
         buy_slippage: float,
         sell_slippage: float,
@@ -87,11 +88,13 @@ class UniversalTrader:
         compute_units: dict | None = None,
         # Testing configuration
         testing: dict | None = None,
+        # Database configuration
+        database_manager = None,
     ):
         """Initialize the universal trader."""
         # Core components
         self.solana_client = SolanaClient(rpc_endpoint)
-        self.wallet = Wallet(private_key)
+        self.wallet = wallet
         self.priority_fee_manager = PriorityFeeManager(
             client=self.solana_client,
             enable_dynamic_fee=enable_dynamic_priority_fee,
@@ -100,6 +103,15 @@ class UniversalTrader:
             extra_fee=extra_priority_fee,
             hard_cap=hard_cap_prior_fee,
         )
+        
+        # Database manager
+        self.database_manager = database_manager
+        
+        # Generate run ID for this trader instance
+        self.run_id = str(int(time() * 1000))
+        
+        # Trading parameters (needed for validation)
+        self.buy_amount = buy_amount
 
         # Platform setup
         if isinstance(platform, str):
@@ -107,7 +119,7 @@ class UniversalTrader:
         else:
             self.platform = platform
 
-        logger.info(f"Initialized Universal Trader for platform: {self.platform.value}")
+        logger.info(f"Initialized Universal Trader for platform: {self.platform.value} with run_id={self.run_id}")
 
         # Validate platform support
         try:
@@ -153,6 +165,7 @@ class UniversalTrader:
                 extreme_fast_mode,
                 dry_run_wait_time=dry_run_wait_time,
                 compute_units=self.compute_units,
+                database_manager=self.database_manager,
             )
             
             self.seller = DryRunPlatformAwareSeller(
@@ -163,8 +176,12 @@ class UniversalTrader:
                 max_retries,
                 dry_run_wait_time=dry_run_wait_time,
                 compute_units=self.compute_units,
+                database_manager=self.database_manager,
             )
         else:
+            if self.buy_amount>0.01:
+                raise ValueError("Buy amount must NOT be greater than 0.01 SOL in live mode")
+
             # Create platform-aware traders
             self.buyer = PlatformAwareBuyer(
                 self.solana_client,
@@ -199,7 +216,6 @@ class UniversalTrader:
         )
 
         # Trading parameters
-        self.buy_amount = buy_amount
         self.buy_slippage = buy_slippage
         self.sell_slippage = sell_slippage
         self.max_retries = max_retries
@@ -449,7 +465,6 @@ class UniversalTrader:
 
             # Wait for pool/curve to stabilize (unless in extreme fast mode)
             if not self.extreme_fast_mode:
-                await self._save_token_info(token_info)
                 logger.info(
                     f"Waiting for {self.wait_time_after_creation} seconds for the pool/curve to stabilize..."
                 )
@@ -464,10 +479,51 @@ class UniversalTrader:
                 f"Buy result is {buy_result}"
             )
 
+            # Create position immediately after buy (regardless of success/failure)
+            entry_ts = buy_result.block_time or int(time() * 1000)
             if buy_result.success:
-                await self._handle_successful_buy(token_info, buy_result)
+                # Successful buy - create active position
+                position = Position.create_from_buy_result(
+                    mint=token_info.mint,
+                    platform=token_info.platform,
+                    entry_net_price_decimal=buy_result.net_price_sol_decimal(),
+                    quantity=buy_result.token_swap_amount_decimal(),
+                    token_swapin_amount_raw=buy_result.token_swap_amount_raw,
+                    entry_ts=entry_ts,
+                    transaction_fee_raw=buy_result.transaction_fee_raw,
+                    platform_fee_raw=buy_result.platform_fee_raw,
+                    exit_strategy=self.exit_strategy,
+                    buy_amount=self.buy_amount,
+                    total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw(),  # Raw value (negative for buys)
+                    take_profit_percentage=self.take_profit_percentage,
+                    stop_loss_percentage=self.stop_loss_percentage,
+                    trailing_stop_percentage=self.trailing_stop_percentage,
+                    max_hold_time=self.max_hold_time,
+                )
             else:
-                await self._handle_failed_buy(token_info, buy_result)
+                # Failed buy - create inactive position with None values
+                position = Position(
+                    mint=token_info.mint,
+                    platform=token_info.platform,
+                    entry_net_price_decimal=None,  # No actual entry
+                    token_quantity_decimal=None,  # No tokens acquired
+                    total_token_swapin_amount_raw=None,  # No tokens acquired
+                    total_token_swapout_amount_raw=None,  # No tokens acquired
+                    entry_ts=entry_ts,
+                    exit_strategy=self.exit_strategy,
+                    is_active=False,  # Mark as inactive
+                    exit_reason=ExitReason.FAILED_BUY,
+                    transaction_fee_raw=buy_result.transaction_fee_raw,  # Still incurred fees
+                    platform_fee_raw=buy_result.platform_fee_raw,  # Still incurred fees
+                    buy_amount=self.buy_amount,  # Still intended to buy this amount
+                    total_net_sol_swapout_amount_raw=0,  # No SOL spent
+                    total_net_sol_swapin_amount_raw=0,   # No SOL received
+                )
+
+            if buy_result.success:
+                await self._handle_successful_buy(token_info, buy_result, position)
+            else:
+                await self._handle_failed_buy(token_info, buy_result, position)
 
             # Only wait for next token in yolo mode
             if self.yolo_mode:
@@ -480,43 +536,36 @@ class UniversalTrader:
             logger.exception(f"Error handling token {token_info.symbol}")
 
     async def _handle_successful_buy(
-        self, token_info: TokenInfo, buy_result: TradeResult
+        self, token_info: TokenInfo, buy_result: TradeResult, position: Position
     ) -> None:
         """Handle successful token purchase."""
         logger.info(
             f"Successfully bought {token_info.symbol} on {token_info.platform.value}"
         )
         logger.info(f"buy_result.tx_signature: {buy_result.tx_signature}")
-        self._log_trade(
-            "buy",
-            token_info,
-            buy_result.net_price_decimal(),
-            buy_result.token_swap_amount_decimal(),
-            buy_result.tx_signature,
-            platform_fee_raw=buy_result.platform_fee_raw,
-            transaction_fee_raw=buy_result.transaction_fee_raw,
-        )
         self.traded_mints.add(token_info.mint)
-
-        # Create position once from buy result
-        # Use block_time if available, otherwise fall back to current time
-        entry_ts = buy_result.block_time or int(time() * 1000)
-        position = Position.create_from_buy_result(
-            mint=token_info.mint,
-            symbol=token_info.symbol,
-            platform=token_info.platform,
-            entry_price=buy_result.net_price_decimal(),
-            quantity=buy_result.token_swap_amount_decimal(),
-            token_amount_raw=buy_result.token_swap_amount_raw,
-            entry_ts=entry_ts,
-            transaction_fee_raw=buy_result.transaction_fee_raw,
-            platform_fee_raw=buy_result.platform_fee_raw,
-            exit_strategy=self.exit_strategy,
-            take_profit_percentage=self.take_profit_percentage,
-            stop_loss_percentage=self.stop_loss_percentage,
-            trailing_stop_percentage=self.trailing_stop_percentage,
-            max_hold_time=self.max_hold_time,
-        )
+        
+        # Persist to database if available
+        if self.database_manager:
+            try:
+                # Insert token info (will be ignored if already exists)
+                await self.database_manager.insert_token_info(token_info)
+                
+                # Insert position
+                position_id = await self.database_manager.insert_position(position)
+                
+                # Insert buy trade
+                await self.database_manager.insert_trade(
+                    trade_result=buy_result,
+                    mint=str(token_info.mint),
+                    position_id=position_id,
+                    trade_type="buy",
+                    run_id=self.run_id,
+                )
+                
+                logger.debug(f"Persisted buy trade and position to database")
+            except Exception as e:
+                logger.exception(f"Failed to persist buy trade to database: {e}")
 
         # Choose exit strategy
         if not self.marry_mode:
@@ -532,10 +581,33 @@ class UniversalTrader:
             logger.info("Marry mode enabled. Skipping sell operation.")
 
     async def _handle_failed_buy(
-        self, token_info: TokenInfo, buy_result: TradeResult
+        self, token_info: TokenInfo, buy_result: TradeResult, position: Position
     ) -> None:
         """Handle failed token purchase."""
         logger.error(f"Failed to buy {token_info.symbol}: {buy_result.error_message}")
+        
+        # Persist failed trade to database if available
+        if self.database_manager:
+            try:
+                # Insert token info (will be ignored if already exists)
+                await self.database_manager.insert_token_info(token_info)
+                
+                # Insert position
+                position_id = await self.database_manager.insert_position(position)
+                
+                # Insert failed buy trade
+                await self.database_manager.insert_trade(
+                    trade_result=buy_result,
+                    mint=str(token_info.mint),
+                    position_id=position_id,  # Now has a position!
+                    trade_type="buy",
+                    run_id=self.run_id,
+                )
+                
+                logger.debug(f"Persisted failed buy trade and position to database")
+            except Exception as e:
+                logger.exception(f"Failed to persist failed buy trade to database: {e}")
+        
         # Close ATA if enabled
         await handle_cleanup_after_failure(
             self.solana_client,
@@ -582,15 +654,7 @@ class UniversalTrader:
 
         if sell_result.success:
             logger.info(f"Successfully sold {token_info.symbol}")
-            self._log_trade(
-                action="sell",
-                token_info=token_info,
-                net_price=sell_result.net_price_decimal(),
-                token_swap_amount=sell_result.token_swap_amount_decimal(),
-                tx_hash=sell_result.tx_signature,
-                transaction_fee_raw=sell_result.transaction_fee_raw,
-                platform_fee_raw=sell_result.platform_fee_raw,
-            )
+
             # Close ATA if enabled
             await handle_cleanup_after_sell(
                 self.solana_client,
@@ -623,6 +687,18 @@ class UniversalTrader:
                 # Get current price from pool/curve
                 current_price = await curve_manager.calculate_price(pool_address)
 
+                # Update highest_price if this is a new high
+                if current_price > (position.highest_price or 0):
+                    position.highest_price = current_price
+                    
+                    # Update position in database with new highest price
+                    if self.database_manager:
+                        try:
+                            await self.database_manager.update_position(position)
+                            logger.debug(f"Updated highest_price to {current_price:.8f} SOL in database")
+                        except Exception as e:
+                            logger.exception(f"Failed to update position in database: {e}")
+
                 # Check if position should be exited
                 should_exit, exit_reason = position.should_exit(current_price)
 
@@ -631,7 +707,7 @@ class UniversalTrader:
                     logger.info(f"Current onchain price: {current_price:.8f} SOL")
 
                     # Log PnL before exit
-                    pnl = position.get_net_pnl(current_price)
+                    pnl = position._get_pnl(current_price)
                     logger.info(f"PNL: {pnl}")
 
                     # Execute sell
@@ -640,28 +716,36 @@ class UniversalTrader:
 
                     if sell_result.success:
                         # Close position with actual exit price
-                        position.close_position(
-                            sell_result.net_price_decimal(),
-                            exit_reason,
-                            transaction_fee_raw=sell_result.transaction_fee_raw,
-                            platform_fee_raw=sell_result.platform_fee_raw,
-                        )
+                        position.close_position(sell_result, exit_reason)
 
                         logger.info(
                             f"Successfully exited position: {exit_reason.value}"
                         )
-                        self._log_trade(
-                            "sell",
-                            token_info=token_info,
-                            net_price=sell_result.net_price_decimal(),
-                            token_swap_amount=sell_result.token_swap_amount_decimal(),
-                            tx_hash=sell_result.tx_signature,
-                            transaction_fee_raw=sell_result.transaction_fee_raw,
-                            platform_fee_raw=sell_result.platform_fee_raw,
-                        )
+                        
+                        # Persist sell trade and update position
+                        if self.database_manager:
+                            try:
+                                # Update position in database
+                                await self.database_manager.update_position(position)
+                                
+                                # Insert sell trade
+                                position_id = PositionConverter.generate_position_id(
+                                    position.mint, position.platform, position.entry_ts
+                                )
+                                await self.database_manager.insert_trade(
+                                    trade_result=sell_result,
+                                    mint=str(token_info.mint),
+                                    position_id=position_id,
+                                    trade_type="sell",
+                                    run_id=self.run_id,
+                                )
+                                
+                                logger.debug(f"Persisted sell trade and updated position in database")
+                            except Exception as e:
+                                logger.exception(f"Failed to persist sell trade to database: {e}")
 
                         # Log final PnL
-                        final_pnl = position.get_net_pnl()
+                        final_pnl = position._get_pnl()
                         logger.info(f"Final net PnL: {final_pnl}")
 
                         # Close ATA if enabled
@@ -686,9 +770,9 @@ class UniversalTrader:
                         break
                 else:
                     # Log current status
-                    pnl = position.get_net_pnl(current_price)
+                    pnl = position._get_pnl(current_price)
                     logger.info(
-                        f"Position status: {current_price:.8f} SOL ({pnl['price_change_pct']:+.2f}%)"
+                        f"Position status: {current_price:.8f} SOL ({pnl['net_price_change_pct']:+.2f}%)"
                     )
 
                 # Wait before next price check
@@ -712,86 +796,6 @@ class UniversalTrader:
         else:
             # Fallback to deriving the address using platform provider
             return address_provider.derive_pool_address(token_info.mint)
-
-    async def _save_token_info(self, token_info: TokenInfo) -> None:
-        """Save token information to a file."""
-        try:
-            trades_dir = Path("trades")
-            trades_dir.mkdir(exist_ok=True)
-            file_path = trades_dir / f"{token_info.mint}.txt"
-
-            # Convert to dictionary for saving - platform-agnostic
-            token_dict = {
-                "name": token_info.name,
-                "symbol": token_info.symbol,
-                "uri": token_info.uri,
-                "mint": str(token_info.mint),
-                "platform": token_info.platform.value,
-                "user": str(token_info.user) if token_info.user else None,
-                "creator": str(token_info.creator) if token_info.creator else None,
-                "creation_timestamp": token_info.creation_timestamp,
-            }
-
-            # Add platform-specific fields only if they exist
-            platform_fields = {
-                "bonding_curve": token_info.bonding_curve,
-                "associated_bonding_curve": token_info.associated_bonding_curve,
-                "creator_vault": token_info.creator_vault,
-                "pool_state": token_info.pool_state,
-                "base_vault": token_info.base_vault,
-                "quote_vault": token_info.quote_vault,
-            }
-
-            for field_name, field_value in platform_fields.items():
-                if field_value is not None:
-                    token_dict[field_name] = str(field_value)
-
-            file_path.write_text(json.dumps(token_dict, indent=2))
-
-            logger.info(f"Token information saved to {file_path}")
-        except OSError:
-            logger.exception("Failed to save token information")
-
-    def _log_trade(
-        self,
-        action: str,
-        token_info: TokenInfo,
-        net_price: float,
-        token_swap_amount: float,
-        tx_hash: str | None,
-        transaction_fee_raw: int | None = None,
-        platform_fee_raw: int | None = None,
-    ) -> None:
-        """Log trade information."""
-        try:
-            trades_dir = Path("trades")
-            trades_dir.mkdir(exist_ok=True)
-
-            log_entry = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "action": action,
-                "platform": token_info.platform.value,
-                "token_address": str(token_info.mint),
-                "symbol": token_info.symbol,
-                "price": net_price,
-                "amount": token_swap_amount,
-                "tx_hash": str(tx_hash) if tx_hash else None,
-            }
-
-            if transaction_fee_raw is not None:
-                log_entry["transaction_fee_raw"] = transaction_fee_raw
-            if platform_fee_raw is not None:
-                log_entry["platform_fee_raw"] = platform_fee_raw
-
-
-            logger.info(f"log_entry: {str(log_entry)}")
-
-            log_file_path = trades_dir / "trades.log"
-            with log_file_path.open("a", encoding="utf-8") as log_file:
-                log_file.write(json.dumps(log_entry) + "\n")
-        except OSError:
-            logger.exception("Failed to log trade information")
-
 
 # Backward compatibility alias
 PumpTrader = UniversalTrader  # Legacy name for backward compatibility

@@ -170,4 +170,5 @@ trades/trades.log
 # Mac OS X
 .DS_Store
 
-trades/
+trades
+data

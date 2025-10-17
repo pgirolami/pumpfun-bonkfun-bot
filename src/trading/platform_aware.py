@@ -154,7 +154,7 @@ class PlatformAwareBuyer(Trader):
                 success=confirm_result.success,
                 platform=order.token_info.platform,
                 tx_signature=str(order.tx_signature),
-                block_time=confirm_result.block_time,
+                block_time=confirm_result.block_ts,
                 transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 sol_swap_amount_raw=balance_changes.sol_swap_amount_raw if balance_changes else None,
@@ -231,7 +231,7 @@ class PlatformAwareSeller(Trader):
         instruction_builder = implementations.instruction_builder
 
         # Create order with input
-        order = SellOrder(token_info=token_info, token_amount_raw=position.current_token_amount_raw)
+        order = SellOrder(token_info=token_info, token_amount_raw=position.get_current_token_balance_raw())
 
         # Calculate decimal amount for logging
         token_balance_decimal = order.token_amount_raw / 10**TOKEN_DECIMALS
@@ -338,7 +338,7 @@ class PlatformAwareSeller(Trader):
                 success=confirm_result.success,
                 platform=order.token_info.platform,
                 tx_signature=str(order.tx_signature),
-                block_time=confirm_result.block_time,
+                block_time=confirm_result.block_ts,
                 transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
