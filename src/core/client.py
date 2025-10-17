@@ -223,6 +223,7 @@ class SolanaClient:
         success: bool
         tx:Signature
         error_message: str | None = None
+        block_time: int | None = None  # Unix epoch milliseconds
 
         def __str__(self) -> str:
             """String representation of confirmation result."""
@@ -256,23 +257,38 @@ class SolanaClient:
             signature, commitment=commitment, sleep_seconds=1
         )
 
-        # Try to extract an error from the confirm response
+        # Fetch transaction once to extract both error details and block time
         error_string = None
+        block_time = None
+        
+        # Extract error from confirmation response
         if resp.value[0].err:
             error_string = str(resp.value[0].err)
-            try:
-                tx = await client.get_transaction(signature, commitment=commitment)
-                if tx and tx.value and tx.value.transaction and tx.value.transaction.meta:
+        
+        # Fetch transaction for additional details (error logs and block time)
+        try:
+            tx = await client.get_transaction(signature, commitment=commitment)
+            if tx and tx.value:
+                # Extract block time if available
+                if hasattr(tx.value, 'block_time') and tx.value.block_time:
+                    block_time = int(tx.value.block_time * 1000)  # Convert to milliseconds
+                
+                # Extract detailed error messages if transaction failed
+                if resp.value[0].err and tx.value.transaction and tx.value.transaction.meta:
                     if tx.value.transaction.meta.log_messages:
                         error_string = str(tx.value.transaction.meta.log_messages)
-            except BaseException as e:
-                logging.info(
-                    "client.confirm_transaction - got exception while getting transaction that failed to get its log messages. Ignoring and will use the following for error extraction: %s",
-                    resp,
-                )
-                logging.exception(e)
+        except BaseException as e:
+            logging.info(
+                "client.confirm_transaction - got exception while getting transaction details: %s",
+                e
+            )
 
-        return SolanaClient.ConfirmationResult(success=not resp.value[0].err, tx=signature, error_message=error_string)
+        return SolanaClient.ConfirmationResult(
+            success=not resp.value[0].err, 
+            tx=signature, 
+            error_message=error_string,
+            block_time=block_time
+        )
 
     @retry(
         reraise=True,

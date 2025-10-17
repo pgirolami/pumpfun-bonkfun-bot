@@ -41,10 +41,12 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         
         # Return a mock confirmation result
         from core.client import SolanaClient
+        from time import time
         return SolanaClient.ConfirmationResult(
             success=True,
             tx=tx_signature,
             error_message=None,
+            block_time=int(time() * 1000),  # Current time for dry run
         )
     
     async def _analyze_balance_changes(self, order: BuyOrder):
@@ -94,10 +96,12 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         
         # Return a mock confirmation result
         from core.client import SolanaClient
+        from time import time
         return SolanaClient.ConfirmationResult(
             success=True,
             tx=tx_signature,
             error_message=None,
+            block_time=int(time() * 1000),  # Current time for dry run
         )
     
     async def _analyze_balance_changes(self, order: SellOrder):

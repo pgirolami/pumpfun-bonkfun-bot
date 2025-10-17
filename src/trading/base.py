@@ -24,6 +24,7 @@ class TradeResult:
     platform: Platform = Platform.PUMP_FUN  # Add platform tracking
     tx_signature: str | None = None
     error_message: str | None = None
+    block_time: int | None = None  # Unix epoch milliseconds from block time
     # Actual amounts from transaction analysis
     token_swap_amount_raw: int | None = None  # Raw token amount from balance change
     sol_swap_amount_raw: int | None = None  # Raw SOL amount from balance change (including transaction fee)

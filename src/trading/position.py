@@ -3,11 +3,12 @@ Position management for take profit/stop loss functionality.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
+from time import time
 
 from solders.pubkey import Pubkey
-from core.pubkeys import LAMPORTS_PER_SOL
+from interfaces.core import Platform
+from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -29,14 +30,17 @@ class Position:
     # Token information
     mint: Pubkey
     symbol: str
+    platform: Platform
 
     # Position details
     entry_price: float
-    quantity: float
-    token_amount_raw: int
-    entry_time: datetime
+    token_quantity_decimal: float  # Renamed from quantity, kept for business logic
+    original_token_amount_raw: int  # Renamed from token_amount_raw
+    current_token_amount_raw: int  # New field to track current amount
+    entry_ts: int  # Unix epoch milliseconds (renamed from entry_time)
+    exit_strategy: str  # New field from config
 
-    # Exit conditions
+    # Exit conditions (kept for business logic, not persisted to DB)
     take_profit_price: float | None = None
     stop_loss_price: float | None = None
     max_hold_time: int | None = None  # seconds
@@ -48,20 +52,28 @@ class Position:
     is_active: bool = True
     exit_reason: ExitReason | None = None
     exit_price: float | None = None
-    exit_time: datetime | None = None
-    # Fees (lamports)
-    buy_fee_raw: int | None = None
-    sell_fee_raw: int | None = None
+    exit_ts: int | None = None  # Unix epoch milliseconds (renamed from exit_time)
+    
+    # Fees (lamports) - accumulated
+    transaction_fee_raw: int | None = None  # Replaces buy_fee_raw and sell_fee_raw
+    platform_fee_raw: int | None = None  # New field
+    
+    # PnL tracking
+    realized_pnl: float | None = None  # Calculated when position closes
 
     @classmethod
     def create_from_buy_result(
         cls,
         mint: Pubkey,
         symbol: str,
+        platform: Platform,
         entry_price: float,
         quantity: float,
         token_amount_raw: int,
-        buy_fee_raw: int | None,
+        entry_ts: int,
+        transaction_fee_raw: int | None,
+        platform_fee_raw: int | None,
+        exit_strategy: str,
         take_profit_percentage: float | None,
         stop_loss_percentage: float | None,
         trailing_stop_percentage: float | None,
@@ -72,10 +84,14 @@ class Position:
         Args:
             mint: Token mint address
             symbol: Token symbol
+            platform: Trading platform
             entry_price: Price at which position was entered
             quantity: Quantity of tokens purchased (decimal)
             token_amount_raw: Raw token amount purchased (integer)
-            buy_fee_raw: Buy fee in lamports
+            entry_ts: Unix epoch milliseconds from block time (or current time if unavailable)
+            transaction_fee_raw: Transaction fee in lamports
+            platform_fee_raw: Platform fee in lamports
+            exit_strategy: Exit strategy from config
             take_profit_percentage: Take profit percentage (0.5 = 50% profit)
             stop_loss_percentage: Stop loss percentage (0.2 = 20% loss)
             trailing_stop_percentage: Trailing stop percentage
@@ -95,14 +111,18 @@ class Position:
         result = cls(
             mint=mint,
             symbol=symbol,
+            platform=platform,
             entry_price=entry_price,
-            quantity=quantity,
-            token_amount_raw=token_amount_raw,
-            entry_time=datetime.utcnow(),
+            token_quantity_decimal=quantity,
+            original_token_amount_raw=token_amount_raw,
+            current_token_amount_raw=token_amount_raw,
+            entry_ts=entry_ts,  # Unix epoch milliseconds from block time
+            exit_strategy=exit_strategy,
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
             max_hold_time=max_hold_time,
-            buy_fee_raw=buy_fee_raw,
+            transaction_fee_raw=transaction_fee_raw,
+            platform_fee_raw=platform_fee_raw,
             trailing_stop_percentage=trailing_stop_percentage,
             highest_price=entry_price,
         )
@@ -144,25 +164,36 @@ class Position:
 
         # Check max hold time
         if self.max_hold_time:
-            elapsed_time = (datetime.utcnow() - self.entry_time).total_seconds()
+            current_ts = int(time() * 1000)
+            elapsed_time = (current_ts - self.entry_ts) / 1000  # Convert to seconds
             if elapsed_time >= self.max_hold_time:
                 return True, ExitReason.MAX_HOLD_TIME
             logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
 
         return False, None
 
-    def close_position(self, exit_price: float, exit_reason: ExitReason, sell_fee_raw: int | None = None) -> None:
+    def close_position(self, exit_price: float, exit_reason: ExitReason, transaction_fee_raw: int | None = None, platform_fee_raw: int | None = None) -> None:
         """Close the position with exit details.
 
         Args:
             exit_price: Price at which position was exited
             exit_reason: Reason for exit
+            transaction_fee_raw: Additional transaction fee from sell
+            platform_fee_raw: Additional platform fee from sell
         """
         self.is_active = False
         self.exit_price = exit_price
         self.exit_reason = exit_reason
-        self.exit_time = datetime.utcnow()
-        self.sell_fee_raw = sell_fee_raw
+        self.exit_ts = int(time() * 1000)  # Unix epoch milliseconds
+        
+        # Accumulate fees
+        if transaction_fee_raw is not None:
+            self.transaction_fee_raw = (self.transaction_fee_raw or 0) + transaction_fee_raw
+        if platform_fee_raw is not None:
+            self.platform_fee_raw = (self.platform_fee_raw or 0) + platform_fee_raw
+            
+        # Calculate realized PnL
+        self.realized_pnl = self._calculate_realized_pnl(exit_price)
 
     def get_net_pnl(self, current_price: float | None = None) -> dict:
         """Calculate profit/loss for the position.
@@ -183,46 +214,69 @@ class Position:
         if self.entry_price is None:
             raise ValueError("No entry price available for PnL calculation")
         
-        if self.quantity is None:
+        if self.token_quantity_decimal is None:
             raise ValueError("No quantity available for PnL calculation")
 
         price_change = price_to_use - self.entry_price
         price_change_pct = (price_change / self.entry_price) * 100
-        gross_pnl_sol = price_change * self.quantity
+        gross_pnl_sol = price_change * self.token_quantity_decimal
 
-        buy_fee_raw = int(self.buy_fee_raw or 0)
-        sell_fee_raw = int(self.sell_fee_raw or 0)
+        transaction_fee_raw = int(self.transaction_fee_raw or 0)
+        platform_fee_raw = int(self.platform_fee_raw or 0)
+        total_fees_raw = transaction_fee_raw + platform_fee_raw
+
+        # Use the helper method for PnL calculation
+        net_pnl_sol = self._calculate_realized_pnl(price_to_use)
 
         if self.is_active:
-            net_unrealized_pnl_sol = gross_pnl_sol - (float(buy_fee_raw) / LAMPORTS_PER_SOL)
             return {
                 "entry_price": self.entry_price,
                 "current_price": price_to_use,
                 "price_change": price_change,
                 "price_change_pct": price_change_pct,
                 "gross_pnl_sol": gross_pnl_sol,
-                "net_unrealized_pnl_sol": net_unrealized_pnl_sol,
-                "quantity": self.quantity,
-                "buy_fee_raw": buy_fee_raw,
-                "total_fees_raw": buy_fee_raw,
-                "total_fees_sol": buy_fee_raw / LAMPORTS_PER_SOL,
-            }
-        else:
-            total_fees_raw = float(buy_fee_raw + sell_fee_raw)
-            net_realized_pnl_sol = gross_pnl_sol - (total_fees_raw / LAMPORTS_PER_SOL)
-            return {
-                "entry_price": self.entry_price,
-                "current_price": price_to_use,
-                "price_change": price_change,
-                "price_change_pct": price_change_pct,
-                "gross_pnl_sol": gross_pnl_sol,
-                "net_realized_pnl_sol": net_realized_pnl_sol,
-                "quantity": self.quantity,
-                "buy_fee_raw": buy_fee_raw,
-                "sell_fee_raw": sell_fee_raw,
+                "net_unrealized_pnl_sol": net_pnl_sol,
+                "quantity": self.token_quantity_decimal,
+                "transaction_fee_raw": transaction_fee_raw,
+                "platform_fee_raw": platform_fee_raw,
                 "total_fees_raw": total_fees_raw,
                 "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
             }
+        else:
+            return {
+                "entry_price": self.entry_price,
+                "current_price": price_to_use,
+                "price_change": price_change,
+                "price_change_pct": price_change_pct,
+                "gross_pnl_sol": gross_pnl_sol,
+                "net_realized_pnl_sol": net_pnl_sol,
+                "quantity": self.token_quantity_decimal,
+                "transaction_fee_raw": transaction_fee_raw,
+                "platform_fee_raw": platform_fee_raw,
+                "total_fees_raw": total_fees_raw,
+                "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
+            }
+
+    def _calculate_realized_pnl(self, exit_price: float) -> float:
+        """Calculate realized PnL when position is closed.
+        
+        Args:
+            exit_price: Price at which position was exited
+            
+        Returns:
+            Realized PnL in SOL
+        """
+        if self.entry_price is None or self.token_quantity_decimal is None:
+            return 0.0
+            
+        price_change = exit_price - self.entry_price
+        gross_pnl_sol = price_change * self.token_quantity_decimal
+        
+        transaction_fee_raw = int(self.transaction_fee_raw or 0)
+        platform_fee_raw = int(self.platform_fee_raw or 0)
+        total_fees_raw = transaction_fee_raw + platform_fee_raw
+        
+        return gross_pnl_sol - (float(total_fees_raw) / LAMPORTS_PER_SOL)
 
     def __str__(self) -> str:
         """String representation of position."""
@@ -232,7 +286,7 @@ class Position:
             status = f"CLOSED ({self.exit_reason.value})"
         else:
             status = "CLOSED (UNKNOWN)"
-        quantity_str = f"{self.quantity:.6f}" if self.quantity is not None else "None"
-        quantity_raw_str = f"{self.token_amount_raw}" if self.token_amount_raw is not None else "None"
+        quantity_str = f"{self.token_quantity_decimal:.6f}" if self.token_quantity_decimal is not None else "None"
+        quantity_raw_str = f"{self.original_token_amount_raw}" if self.original_token_amount_raw is not None else "None"
         price_str = f"{self.entry_price:.8f}" if self.entry_price is not None else "None"
         return f"Position({self.symbol}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} SOL - {status})"

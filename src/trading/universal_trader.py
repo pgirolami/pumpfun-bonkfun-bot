@@ -7,7 +7,7 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from time import monotonic
+from time import monotonic, time
 
 import uvloop
 from solders.pubkey import Pubkey
@@ -499,13 +499,19 @@ class UniversalTrader:
         self.traded_mints.add(token_info.mint)
 
         # Create position once from buy result
+        # Use block_time if available, otherwise fall back to current time
+        entry_ts = buy_result.block_time or int(time() * 1000)
         position = Position.create_from_buy_result(
             mint=token_info.mint,
             symbol=token_info.symbol,
+            platform=token_info.platform,
             entry_price=buy_result.net_price_decimal(),
             quantity=buy_result.token_swap_amount_decimal(),
             token_amount_raw=buy_result.token_swap_amount_raw,
-            buy_fee_raw=buy_result.platform_fee_raw + buy_result.transaction_fee_raw,
+            entry_ts=entry_ts,
+            transaction_fee_raw=buy_result.transaction_fee_raw,
+            platform_fee_raw=buy_result.platform_fee_raw,
+            exit_strategy=self.exit_strategy,
             take_profit_percentage=self.take_profit_percentage,
             stop_loss_percentage=self.stop_loss_percentage,
             trailing_stop_percentage=self.trailing_stop_percentage,
@@ -637,7 +643,8 @@ class UniversalTrader:
                         position.close_position(
                             sell_result.net_price_decimal(),
                             exit_reason,
-                            sell_fee_raw=sell_result.platform_fee_raw+sell_result.transaction_fee_raw,
+                            transaction_fee_raw=sell_result.transaction_fee_raw,
+                            platform_fee_raw=sell_result.platform_fee_raw,
                         )
 
                         logger.info(
