@@ -774,12 +774,12 @@ class UniversalTrader:
             f"[{self._mint_prefix(token_info.mint)}] Starting position monitoring (check interval: {self.price_check_interval}s)"
         )
 
-        # Get pool address for price monitoring using platform-agnostic method
-        pool_address = self._get_pool_address(token_info)
-        curve_manager = self.platform_implementations.curve_manager
+        try:
+            # Get pool address for price monitoring using platform-agnostic method
+            pool_address = self._get_pool_address(token_info)
+            curve_manager = self.platform_implementations.curve_manager
 
-        while position.is_active:
-            try:
+            while position.is_active:
                 # Get current price from pool/curve
                 current_price = await curve_manager.calculate_price(pool_address)
 
@@ -896,14 +896,12 @@ class UniversalTrader:
                         f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price:.8f} SOL ({pnl['net_price_change_pct']:+.2f}%)"
                     )
 
-                # Wait before next price check
-                await asyncio.sleep(self.price_check_interval)
 
-            except Exception:
-                logger.exception("Error monitoring position")
-                await asyncio.sleep(
-                    self.price_check_interval
-                )  # Continue monitoring despite errors
+        except Exception:
+            logger.exception("Error monitoring position, continuing though")
+
+        # Wait before next price check
+        await asyncio.sleep(self.price_check_interval)
 
     def _get_pool_address(self, token_info: TokenInfo) -> Pubkey:
         """Get the pool/curve address for price monitoring using platform-agnostic method."""
