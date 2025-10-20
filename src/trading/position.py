@@ -41,7 +41,7 @@ class Position:
     token_quantity_decimal: float  # Renamed from quantity, kept for business logic
     total_token_swapin_amount_raw: int  # Total tokens bought
     total_token_swapout_amount_raw: int  # Total tokens sold (accumulation)
-    entry_ts: int  # Unix epoch milliseconds (renamed from entry_time)
+    entry_ts: int  # Unix epoch milliseconds
     exit_strategy: str  # New field from config
 
     # Exit conditions (kept for business logic, not persisted to DB)
@@ -165,32 +165,36 @@ class Position:
         # Update highest price for trailing stop tracking
         if self.highest_price is None or current_price > self.highest_price:
             self.highest_price = current_price
-            logger.info(f"Highest price updated to {self.highest_price}")
+#            logger.info(f"Highest price updated to {self.highest_price}")
 
         # Check take profit
         if self.take_profit_price and current_price >= self.take_profit_price:
+#            logger.info(f"current_price {current_price} >= take_profit_price {self.take_profit_price}")
             return True, ExitReason.TAKE_PROFIT
-        logger.info(f"current_price {current_price} < take_profit_price {self.take_profit_price}")
+#        logger.info(f"current_price {current_price} < take_profit_price {self.take_profit_price}")
 
         # Check stop loss
         if self.stop_loss_price and current_price <= self.stop_loss_price:
+#            logger.info(f"current_price {current_price} <= stop_loss_price {self.stop_loss_price}")
             return True, ExitReason.STOP_LOSS
-        logger.info(f"current_price {current_price} > stop_loss_price {self.stop_loss_price}")
+#        logger.info(f"current_price {current_price} > stop_loss_price {self.stop_loss_price}")
 
         # Check trailing stop (if configured)
         if self.trailing_stop_percentage is not None and self.highest_price is not None:
             trailing_limit = self.highest_price * (1 - self.trailing_stop_percentage)
             if current_price <= trailing_limit:
+#                logger.info(f"current_price {current_price} <= trailing_limit {trailing_limit}")
                 return True, ExitReason.TRAILING_STOP
-            logger.info(f"current_price {current_price} > trailing_limit {trailing_limit}")
+#            logger.info(f"current_price {current_price} > trailing_limit {trailing_limit}")
 
         # Check max hold time
         if self.max_hold_time:
             current_ts = int(time() * 1000)
             elapsed_time = (current_ts - self.entry_ts) / 1000  # Convert to seconds
             if elapsed_time >= self.max_hold_time:
+#                logger.info(f"elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time}")
                 return True, ExitReason.MAX_HOLD_TIME
-            logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
+#            logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
 
         return False, None
 

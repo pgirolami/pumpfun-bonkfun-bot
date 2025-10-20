@@ -70,8 +70,8 @@ class TokenInfoConverter:
             user=Pubkey.from_string(row[10]) if row[10] else None,
             creator=Pubkey.from_string(row[11]) if row[11] else None,
             creator_vault=Pubkey.from_string(row[12]) if row[12] else None,
-            creation_timestamp=row[13],  # This field is not in the current schema but kept for compatibility
-            additional_data=json.loads(row[14]) if row[14] else None,
+            creation_timestamp=None,
+            additional_data=json.loads(row[13]) if row[13] else None,
         )
 
 

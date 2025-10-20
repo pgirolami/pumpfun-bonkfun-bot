@@ -160,6 +160,7 @@ class UniversalTrader:
                 max_retries,
                 extreme_fast_token_amount,
                 extreme_fast_mode,
+                curve_manager=self.platform_implementations.curve_manager,
                 dry_run_wait_time=dry_run_wait_time,
                 compute_units=self.compute_units,
                 database_manager=self.database_manager,
@@ -171,6 +172,7 @@ class UniversalTrader:
                 self.priority_fee_manager,
                 sell_slippage,
                 max_retries,
+                curve_manager=self.platform_implementations.curve_manager,
                 dry_run_wait_time=dry_run_wait_time,
                 compute_units=self.compute_units,
                 database_manager=self.database_manager,
@@ -249,7 +251,7 @@ class UniversalTrader:
 
         # State tracking
         self.active_mints: set[Pubkey] = set()  # Renamed from traded_mints
-        self.token_queue: asyncio.Queue = asyncio.Queue()
+        self.token_queue: asyncio.Queue[TokenInfo] = asyncio.Queue[TokenInfo]()
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
@@ -294,6 +296,12 @@ class UniversalTrader:
             logger.info(f"RPC warm-up successful (getHealth passed: {health_resp})")
         except Exception as e:
             logger.warning(f"RPC warm-up failed: {e!s}")
+
+        # Resume monitoring of any active positions from database before listening
+        try:
+            await self._resume_active_positions()
+        except Exception:
+            logger.exception("Failed to resume active positions from database")
 
         try:
             # Choose operating mode based on yolo_mode
@@ -416,6 +424,13 @@ class UniversalTrader:
 
         if token_key in self.processed_tokens:
             logger.debug(f"Token {token_info.symbol} already processed. Skipping...")
+            return
+
+        # Enforce max_active_mints globally (including resumed positions)
+        if len(self.active_mints) >= self.max_active_mints:
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({len(self.active_mints)}/{self.max_active_mints})"
+            )
             return
 
         # Record timestamp when token was discovered
@@ -812,6 +827,108 @@ class UniversalTrader:
         else:
             # Fallback to deriving the address using platform provider
             return address_provider.derive_pool_address(token_info.mint)
+
+    async def _resume_active_positions(self) -> None:
+        """Load active positions from DB and resume monitoring with current config."""
+        if not self.database_manager:
+            return
+
+        try:
+            positions = await self.database_manager.get_active_positions()
+        except Exception as e:
+            logger.exception(f"Error loading active positions: {e}")
+            return
+
+        if not positions:
+            return
+
+        logger.info(f"Resuming {len(positions)} active position(s) from database")
+
+        for position in positions:
+            logger.info(f"Handling {position}")
+            try:
+                token_info = await self.database_manager.get_token_info(
+                    str(position.mint), position.platform.value
+                )
+            except Exception as e:
+                logger.exception(f"Failed to load TokenInfo for {position.mint}: {e}")
+                continue
+
+            if not token_info:
+                logger.warning(
+                    f"Missing TokenInfo in DB for {self._mint_prefix(position.mint)}; skipping resume"
+                )
+                continue
+
+            # Apply current exit configuration to the loaded position
+            self._apply_current_exit_config(position)
+
+            # Track as active and start monitoring task
+            self.active_mints.add(position.mint)
+            task_key = str(position.mint)
+            task = asyncio.create_task(self._monitor_resumed_position(token_info, position))
+            self.position_tasks[task_key] = task
+
+    def _apply_current_exit_config(self, position: Position) -> None:
+        """Override exit strategy thresholds using current bot config."""
+        position.exit_strategy = self.exit_strategy
+
+        entry_price = position.entry_net_price_decimal
+        if entry_price is not None:
+            if self.exit_strategy == "tp_sl":
+                position.take_profit_price = (
+                    entry_price * (1 + self.take_profit_percentage)
+                    if self.take_profit_percentage is not None
+                    else None
+                )
+                position.stop_loss_price = (
+                    entry_price * (1 - self.stop_loss_percentage)
+                    if self.stop_loss_percentage is not None
+                    else None
+                )
+                position.trailing_stop_percentage = None
+            elif self.exit_strategy == "trailing":
+                position.take_profit_price = None
+                position.stop_loss_price = None
+                position.trailing_stop_percentage = self.trailing_stop_percentage
+            elif self.exit_strategy == "time_based":
+                position.take_profit_price = None
+                position.stop_loss_price = None
+                position.trailing_stop_percentage = None
+            elif self.exit_strategy == "manual":
+                position.take_profit_price = None
+                position.stop_loss_price = None
+                position.trailing_stop_percentage = None
+
+        # Ensure highest price has a sane default
+        if position.highest_price is None and entry_price is not None:
+            position.highest_price = entry_price
+
+        # Update max_hold_time from current config
+        position.max_hold_time = self.max_hold_time
+
+    async def _monitor_resumed_position(self, token_info: TokenInfo, position: Position) -> None:
+        """Wrapper to monitor a resumed position and cleanup on completion."""
+        mint_key = str(position.mint)
+        try:
+            if not self.marry_mode:
+                if self.exit_strategy == "tp_sl":
+                    await self._handle_tp_sl_exit(token_info, position)
+                elif self.exit_strategy == "trailing":
+                    await self._handle_trailing_exit(token_info, position)
+                elif self.exit_strategy == "time_based":
+                    await self._handle_time_based_exit(token_info, position)
+                elif self.exit_strategy == "manual":
+                    logger.info("Manual exit strategy - position will remain open")
+            else:
+                logger.info("Marry mode enabled. Skipping sell operation for resumed position.")
+        finally:
+            # Remove from active tracking when monitoring ends or task is cancelled
+            if position.mint in self.active_mints:
+                self.active_mints.remove(position.mint)
+            if mint_key in self.position_tasks:
+                del self.position_tasks[mint_key]
+            self.position_slot_available.set()
 
 # Backward compatibility alias
 PumpTrader = UniversalTrader  # Legacy name for backward compatibility
