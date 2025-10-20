@@ -4,9 +4,6 @@ Cleaned up to remove all platform-specific hardcoding.
 """
 
 import asyncio
-import json
-from datetime import datetime
-from pathlib import Path
 from time import monotonic, time
 
 import uvloop
@@ -16,6 +13,7 @@ from cleanup.modes import cleanup_after_sell
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.wallet import Wallet
+from database.models import PositionConverter
 from interfaces.core import Platform, TokenInfo
 from monitoring.listener_factory import ListenerFactory
 from platforms import get_platform_implementations
@@ -23,7 +21,6 @@ from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position import ExitReason, Position
 from utils.logger import get_logger
-from database.models import PositionConverter
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
@@ -84,7 +81,7 @@ class UniversalTrader:
         # Testing configuration
         testing: dict | None = None,
         # Database configuration
-        database_manager = None,
+        database_manager=None,
         # Parallel position configuration
         max_active_mints: int = 1,
     ):
@@ -100,13 +97,13 @@ class UniversalTrader:
             extra_fee=extra_priority_fee,
             hard_cap=hard_cap_prior_fee,
         )
-        
+
         # Database manager
         self.database_manager = database_manager
-        
+
         # Generate run ID for this trader instance
         self.run_id = str(int(time() * 1000))
-        
+
         # Trading parameters (needed for validation)
         self.buy_amount = buy_amount
 
@@ -116,7 +113,9 @@ class UniversalTrader:
         else:
             self.platform = platform
 
-        logger.info(f"Initialized Universal Trader for platform: {self.platform.value} with run_id={self.run_id}")
+        logger.info(
+            f"Initialized Universal Trader for platform: {self.platform.value} with run_id={self.run_id}"
+        )
 
         # Validate platform support
         try:
@@ -140,8 +139,8 @@ class UniversalTrader:
         self.dry_run = False
         dry_run_wait_time = 0.5
         if testing:
-            self.dry_run = testing.get('dry_run', False)
-            dry_run_wait_time = testing.get('dry_run_wait_time_seconds', 0.5)
+            self.dry_run = testing.get("dry_run", False)
+            dry_run_wait_time = testing.get("dry_run_wait_time_seconds", 0.5)
 
         # Create platform-aware traders based on mode
         if self.dry_run:
@@ -149,8 +148,9 @@ class UniversalTrader:
                 DryRunPlatformAwareBuyer,
                 DryRunPlatformAwareSeller,
             )
+
             logger.info("Initializing DRY-RUN mode traders")
-            
+
             self.buyer = DryRunPlatformAwareBuyer(
                 self.solana_client,
                 self.wallet,
@@ -165,7 +165,7 @@ class UniversalTrader:
                 compute_units=self.compute_units,
                 database_manager=self.database_manager,
             )
-            
+
             self.seller = DryRunPlatformAwareSeller(
                 self.solana_client,
                 self.wallet,
@@ -178,8 +178,10 @@ class UniversalTrader:
                 database_manager=self.database_manager,
             )
         else:
-            if self.buy_amount>0.01:
-                raise ValueError("Buy amount must NOT be greater than 0.01 SOL in live mode")
+            if self.buy_amount > 0.01:
+                raise ValueError(
+                    "Buy amount must NOT be greater than 0.01 SOL in live mode"
+                )
 
             # Create platform-aware traders
             self.buyer = PlatformAwareBuyer(
@@ -255,7 +257,7 @@ class UniversalTrader:
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
-        
+
         # Parallel position tracking
         self.max_active_mints = max_active_mints
         self.position_tasks: dict[str, asyncio.Task] = {}
@@ -397,14 +399,16 @@ class UniversalTrader:
         """Perform cleanup operations before shutting down."""
         # Cancel all active position monitoring tasks
         if self.position_tasks:
-            logger.info(f"Cancelling {len(self.position_tasks)} active position task(s)...")
+            logger.info(
+                f"Cancelling {len(self.position_tasks)} active position task(s)..."
+            )
             for task in self.position_tasks.values():
                 task.cancel()
-            
+
             # Wait for all tasks to finish
             await asyncio.gather(*self.position_tasks.values(), return_exceptions=True)
             logger.info("All position tasks cancelled")
-        
+
         # DO NOT cleanup tokens on interrupt - user can recover manually
         if self.active_mints:
             logger.warning(
@@ -450,25 +454,29 @@ class UniversalTrader:
                     while len(self.active_mints) >= self.max_active_mints:
                         self.position_slot_available.clear()
                         await self.position_slot_available.wait()
-                
+
                 # Get next token from queue
                 token_info = await self.token_queue.get()
                 token_key = str(token_info.mint)
-                
+
                 # Check freshness
                 current_time = monotonic()
-                token_age = current_time - self.token_timestamps.get(token_key, current_time)
-                
+                token_age = current_time - self.token_timestamps.get(
+                    token_key, current_time
+                )
+
                 if token_age > self.max_token_age:
-                    logger.info(f"[{self._mint_prefix(token_info.mint)}] Skipping - too old ({token_age:.1f}s)")
+                    logger.info(
+                        f"[{self._mint_prefix(token_info.mint)}] Skipping - too old ({token_age:.1f}s)"
+                    )
                     continue
-                
+
                 self.processed_tokens.add(token_key)
-                
+
                 # Spawn concurrent task
                 task = asyncio.create_task(self._handle_token_wrapper(token_info))
                 self.position_tasks[token_key] = task
-                
+
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -486,10 +494,10 @@ class UniversalTrader:
             # Only remove if present (buy might have failed)
             if token_info.mint in self.active_mints:
                 self.active_mints.remove(token_info.mint)
-            
+
             if mint_key in self.position_tasks:
                 del self.position_tasks[mint_key]
-            
+
             # Signal that a slot is available for next token
             if self.yolo_mode:
                 self.position_slot_available.set()
@@ -558,7 +566,7 @@ class UniversalTrader:
                     platform_fee_raw=buy_result.platform_fee_raw,  # Still incurred fees
                     buy_amount=self.buy_amount,  # Still intended to buy this amount
                     total_net_sol_swapout_amount_raw=0,  # No SOL spent
-                    total_net_sol_swapin_amount_raw=0,   # No SOL received
+                    total_net_sol_swapin_amount_raw=0,  # No SOL received
                 )
 
             if buy_result.success:
@@ -583,18 +591,20 @@ class UniversalTrader:
         logger.info(
             f"[{self._mint_prefix(token_info.mint)}] Successfully bought {token_info.symbol} on {token_info.platform.value}"
         )
-        logger.info(f"[{self._mint_prefix(token_info.mint)}] buy_result.tx_signature: {buy_result.tx_signature}")
+        logger.info(
+            f"[{self._mint_prefix(token_info.mint)}] buy_result.tx_signature: {buy_result.tx_signature}"
+        )
         self.active_mints.add(token_info.mint)
-        
+
         # Persist to database if available
         if self.database_manager:
             try:
                 # Insert token info (will be ignored if already exists)
                 await self.database_manager.insert_token_info(token_info)
-                
+
                 # Insert position
                 position_id = await self.database_manager.insert_position(position)
-                
+
                 # Insert buy trade
                 await self.database_manager.insert_trade(
                     trade_result=buy_result,
@@ -603,8 +613,8 @@ class UniversalTrader:
                     trade_type="buy",
                     run_id=self.run_id,
                 )
-                
-                logger.debug(f"Persisted buy trade and position to database")
+
+                logger.debug("Persisted buy trade and position to database")
             except Exception as e:
                 logger.exception(f"Failed to persist buy trade to database: {e}")
 
@@ -625,17 +635,19 @@ class UniversalTrader:
         self, token_info: TokenInfo, buy_result: TradeResult, position: Position
     ) -> None:
         """Handle failed token purchase."""
-        logger.error(f"[{self._mint_prefix(token_info.mint)}] Failed to buy {token_info.symbol}: {buy_result.error_message}")
-        
+        logger.error(
+            f"[{self._mint_prefix(token_info.mint)}] Failed to buy {token_info.symbol}: {buy_result.error_message}"
+        )
+
         # Persist failed trade to database if available
         if self.database_manager:
             try:
                 # Insert token info (will be ignored if already exists)
                 await self.database_manager.insert_token_info(token_info)
-                
+
                 # Insert position
                 position_id = await self.database_manager.insert_position(position)
-                
+
                 # Insert failed buy trade
                 await self.database_manager.insert_trade(
                     trade_result=buy_result,
@@ -644,22 +656,32 @@ class UniversalTrader:
                     trade_type="buy",
                     run_id=self.run_id,
                 )
-                
-                logger.debug(f"[{self._mint_prefix(token_info.mint)}] Persisted failed buy trade and position to database")
+
+                logger.debug(
+                    f"[{self._mint_prefix(token_info.mint)}] Persisted failed buy trade and position to database"
+                )
             except Exception as e:
-                logger.exception(f"[{self._mint_prefix(token_info.mint)}] Failed to persist failed buy trade to database: {e}")
-        
+                logger.exception(
+                    f"[{self._mint_prefix(token_info.mint)}] Failed to persist failed buy trade to database: {e}"
+                )
+
         # No ATA cleanup needed - buy is atomic, no ATA created
 
     async def _handle_tp_sl_exit(
         self, token_info: TokenInfo, position: Position
     ) -> None:
         """Handle take profit/stop loss exit strategy."""
-        logger.info(f"[{self._mint_prefix(token_info.mint)}] Created position: {position}")
+        logger.info(
+            f"[{self._mint_prefix(token_info.mint)}] Created position: {position}"
+        )
         if position.take_profit_price:
-            logger.info(f"[{self._mint_prefix(token_info.mint)}] Take profit target: {position.take_profit_price:.8f} SOL")
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Take profit target: {position.take_profit_price:.8f} SOL"
+            )
         if position.stop_loss_price:
-            logger.info(f"[{self._mint_prefix(token_info.mint)}] Stop loss target: {position.stop_loss_price:.8f} SOL")
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Stop loss target: {position.stop_loss_price:.8f} SOL"
+            )
 
         # Monitor position until exit condition is met
         await self._monitor_position_until_exit(token_info, position)
@@ -668,7 +690,9 @@ class UniversalTrader:
         self, token_info: TokenInfo, position: Position
     ) -> None:
         """Handle trailing stop exit strategy (no fixed take profit)."""
-        logger.info(f"[{self._mint_prefix(token_info.mint)}] Created trailing position: {position}")
+        logger.info(
+            f"[{self._mint_prefix(token_info.mint)}] Created trailing position: {position}"
+        )
         if position.trailing_stop_percentage is not None:
             logger.info(
                 f"[{self._mint_prefix(token_info.mint)}] Trailing stop: {position.trailing_stop_percentage * 100:.2f}% (updates with highs)"
@@ -676,16 +700,24 @@ class UniversalTrader:
 
         await self._monitor_position_until_exit(token_info, position)
 
-    async def _handle_time_based_exit(self, token_info: TokenInfo, position: Position) -> None:
+    async def _handle_time_based_exit(
+        self, token_info: TokenInfo, position: Position
+    ) -> None:
         """Handle legacy time-based exit strategy."""
-        logger.info(f"[{self._mint_prefix(token_info.mint)}] Waiting for {self.wait_time_after_buy} seconds before selling...")
+        logger.info(
+            f"[{self._mint_prefix(token_info.mint)}] Waiting for {self.wait_time_after_buy} seconds before selling..."
+        )
         await asyncio.sleep(self.wait_time_after_buy)
 
-        logger.info(f"[{self._mint_prefix(token_info.mint)}] Selling {token_info.symbol}...")
+        logger.info(
+            f"[{self._mint_prefix(token_info.mint)}] Selling {token_info.symbol}..."
+        )
         sell_result: TradeResult = await self.seller.execute(token_info, position)
 
         if sell_result.success:
-            logger.info(f"[{self._mint_prefix(token_info.mint)}] Successfully sold {token_info.symbol}")
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Successfully sold {token_info.symbol}"
+            )
 
             # Always cleanup ATA after sell
             await cleanup_after_sell(
@@ -718,24 +750,43 @@ class UniversalTrader:
                 # Get current price from pool/curve
                 current_price = await curve_manager.calculate_price(pool_address)
 
+                # Store price in database if available
+                if self.database_manager:
+                    try:
+                        await self.database_manager.insert_price_history(
+                            mint=str(token_info.mint),
+                            platform=token_info.platform.value,
+                            price_decimal=current_price,
+                        )
+                    except Exception as e:
+                        logger.exception(f"Failed to insert price history: {e}")
+
                 # Update highest_price if this is a new high
                 if current_price > (position.highest_price or 0):
                     position.highest_price = current_price
-                    
+
                     # Update position in database with new highest price
                     if self.database_manager:
                         try:
                             await self.database_manager.update_position(position)
-                            logger.debug(f"Updated highest_price to {current_price:.8f} SOL in database")
+                            logger.debug(
+                                f"Updated highest_price to {current_price:.8f} SOL in database"
+                            )
                         except Exception as e:
-                            logger.exception(f"Failed to update position in database: {e}")
+                            logger.exception(
+                                f"Failed to update position in database: {e}"
+                            )
 
                 # Check if position should be exited
                 should_exit, exit_reason = position.should_exit(current_price)
 
                 if should_exit and exit_reason:
-                    logger.info(f"[{self._mint_prefix(token_info.mint)}] Exit condition met: {exit_reason.value}")
-                    logger.info(f"[{self._mint_prefix(token_info.mint)}] Current onchain price: {current_price:.8f} SOL")
+                    logger.info(
+                        f"[{self._mint_prefix(token_info.mint)}] Exit condition met: {exit_reason.value}"
+                    )
+                    logger.info(
+                        f"[{self._mint_prefix(token_info.mint)}] Current onchain price: {current_price:.8f} SOL"
+                    )
 
                     # Log PnL before exit
                     pnl = position._get_pnl(current_price)
@@ -743,7 +794,9 @@ class UniversalTrader:
 
                     # Execute sell
                     sell_result = await self.seller.execute(token_info, position)
-                    logger.info(f"[{self._mint_prefix(token_info.mint)}] Sell result: {sell_result}")
+                    logger.info(
+                        f"[{self._mint_prefix(token_info.mint)}] Sell result: {sell_result}"
+                    )
 
                     if sell_result.success:
                         # Close position with actual exit price
@@ -752,13 +805,13 @@ class UniversalTrader:
                         logger.info(
                             f"[{self._mint_prefix(token_info.mint)}] Successfully exited position: {exit_reason.value}"
                         )
-                        
+
                         # Persist sell trade and update position
                         if self.database_manager:
                             try:
                                 # Update position in database
                                 await self.database_manager.update_position(position)
-                                
+
                                 # Insert sell trade
                                 position_id = PositionConverter.generate_position_id(
                                     position.mint, position.platform, position.entry_ts
@@ -770,10 +823,14 @@ class UniversalTrader:
                                     trade_type="sell",
                                     run_id=self.run_id,
                                 )
-                                
-                                logger.debug(f"Persisted sell trade and updated position in database")
+
+                                logger.debug(
+                                    "Persisted sell trade and updated position in database"
+                                )
                             except Exception as e:
-                                logger.exception(f"Failed to persist sell trade to database: {e}")
+                                logger.exception(
+                                    f"Failed to persist sell trade to database: {e}"
+                                )
 
                         # Log final PnL
                         final_pnl = position._get_pnl()
@@ -795,7 +852,7 @@ class UniversalTrader:
                         )
                         # Keep monitoring in case sell can be retried
                         # Do not break; continue monitoring loop for another attempt
-                    
+
                     if sell_result.success:
                         # Exit monitoring loop after successful sell
                         break
@@ -866,7 +923,9 @@ class UniversalTrader:
             # Track as active and start monitoring task
             self.active_mints.add(position.mint)
             task_key = str(position.mint)
-            task = asyncio.create_task(self._monitor_resumed_position(token_info, position))
+            task = asyncio.create_task(
+                self._monitor_resumed_position(token_info, position)
+            )
             self.position_tasks[task_key] = task
 
     def _apply_current_exit_config(self, position: Position) -> None:
@@ -907,7 +966,9 @@ class UniversalTrader:
         # Update max_hold_time from current config
         position.max_hold_time = self.max_hold_time
 
-    async def _monitor_resumed_position(self, token_info: TokenInfo, position: Position) -> None:
+    async def _monitor_resumed_position(
+        self, token_info: TokenInfo, position: Position
+    ) -> None:
         """Wrapper to monitor a resumed position and cleanup on completion."""
         mint_key = str(position.mint)
         try:
@@ -921,7 +982,9 @@ class UniversalTrader:
                 elif self.exit_strategy == "manual":
                     logger.info("Manual exit strategy - position will remain open")
             else:
-                logger.info("Marry mode enabled. Skipping sell operation for resumed position.")
+                logger.info(
+                    "Marry mode enabled. Skipping sell operation for resumed position."
+                )
         finally:
             # Remove from active tracking when monitoring ends or task is cancelled
             if position.mint in self.active_mints:
@@ -929,6 +992,7 @@ class UniversalTrader:
             if mint_key in self.position_tasks:
                 del self.position_tasks[mint_key]
             self.position_slot_available.set()
+
 
 # Backward compatibility alias
 PumpTrader = UniversalTrader  # Legacy name for backward compatibility

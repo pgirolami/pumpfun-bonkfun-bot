@@ -24,7 +24,7 @@ trade:
   buy_amount: 0.001 # Amount of SOL to spend when buying (in SOL)
   buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.3
-  max_active_mints: 2 # Maximum concurrent active positions (YOLO mode only)
+  max_active_mints: 1 # Maximum concurrent active positions (YOLO mode only)
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual"
@@ -70,7 +70,7 @@ retries:
   max_attempts: 1 # Number of attempts for transaction submission
   wait_after_creation: 15 # Seconds to wait after token creation (only if EXTREME FAST is disabled)
   wait_after_buy: 10 # Holding period after buy transaction
-  wait_before_new_token: 15 # Pause between token trades
+  wait_before_new_token: 0 # Pause between token trades
 
 # Token and account management
 cleanup:

@@ -6,26 +6,25 @@ This module provides conversion between Python dataclasses and database rows.
 
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Tuple
 
 from solders.pubkey import Pubkey
-from interfaces.core import Platform, TokenInfo
-from trading.position import Position
-from trading.base import TradeResult
-from trading.trade_order import Order
+
 from core.pubkeys import TOKEN_DECIMALS
+from interfaces.core import Platform, TokenInfo
+from trading.base import TradeResult
+from trading.position import Position
 
 
 class TokenInfoConverter:
     """Converter for TokenInfo dataclass to/from database rows."""
-    
+
     @staticmethod
-    def to_row(token_info: TokenInfo) -> Tuple:
+    def to_row(token_info: TokenInfo) -> tuple:
         """Convert TokenInfo to database row tuple.
-        
+
         Args:
             token_info: TokenInfo instance
-            
+
         Returns:
             Tuple of values for database insertion
         """
@@ -36,23 +35,27 @@ class TokenInfoConverter:
             token_info.symbol,
             token_info.uri,
             str(token_info.bonding_curve) if token_info.bonding_curve else None,
-            str(token_info.associated_bonding_curve) if token_info.associated_bonding_curve else None,
+            str(token_info.associated_bonding_curve)
+            if token_info.associated_bonding_curve
+            else None,
             str(token_info.pool_state) if token_info.pool_state else None,
             str(token_info.base_vault) if token_info.base_vault else None,
             str(token_info.quote_vault) if token_info.quote_vault else None,
             str(token_info.user) if token_info.user else None,
             str(token_info.creator) if token_info.creator else None,
             str(token_info.creator_vault) if token_info.creator_vault else None,
-            json.dumps(token_info.additional_data) if token_info.additional_data else None,
+            json.dumps(token_info.additional_data)
+            if token_info.additional_data
+            else None,
         )
-    
+
     @staticmethod
-    def from_row(row: Tuple) -> TokenInfo:
+    def from_row(row: tuple) -> TokenInfo:
         """Convert database row to TokenInfo instance.
-        
+
         Args:
             row: Database row tuple
-            
+
         Returns:
             TokenInfo instance
         """
@@ -77,42 +80,42 @@ class TokenInfoConverter:
 
 class PositionConverter:
     """Converter for Position dataclass to/from database rows."""
-    
+
     @staticmethod
     def generate_position_id(mint: Pubkey, platform: Platform, entry_ts: int) -> str:
         """Generate position ID hash from mint + platform + entry_ts.
-        
+
         Args:
             mint: Token mint address
             platform: Trading platform
             entry_ts: Entry timestamp in milliseconds
-            
+
         Returns:
             SHA256 hash as hex string
         """
-        data = f"{str(mint)}_{platform.value}_{entry_ts}"
+        data = f"{mint!s}_{platform.value}_{entry_ts}"
         return hashlib.sha256(data.encode()).hexdigest()
-    
+
     @staticmethod
-    def to_row(position: Position) -> Tuple:
+    def to_row(position: Position) -> tuple:
         """Convert Position to database row tuple.
-        
+
         Args:
             position: Position instance
-            
+
         Returns:
             Tuple of values for database insertion
         """
         position_id = PositionConverter.generate_position_id(
             position.mint, position.platform, position.entry_ts
         )
-        
+
         return (
             position_id,
             str(position.mint),
             position.platform.value,
             position.entry_net_price_decimal,
-            10 ** TOKEN_DECIMALS,  # token_decimals constant
+            10**TOKEN_DECIMALS,  # token_decimals constant
             position.total_token_swapin_amount_raw,
             position.total_token_swapout_amount_raw,
             position.entry_ts,
@@ -132,24 +135,25 @@ class PositionConverter:
             position.entry_ts,  # created_ts (same as entry_ts for new positions)
             position.entry_ts,  # updated_ts (will be updated on changes)
         )
-    
+
     @staticmethod
-    def from_row(row: Tuple) -> Position:
+    def from_row(row: tuple) -> Position:
         """Convert database row to Position instance.
-        
+
         Args:
             row: Database row tuple
-            
+
         Returns:
             Position instance
         """
         from trading.position import ExitReason
-        
+
         return Position(
             mint=Pubkey.from_string(row[1]),
             platform=Platform(row[2]),
             entry_net_price_decimal=row[3],
-            token_quantity_decimal=row[5] / (10 ** TOKEN_DECIMALS),  # Calculate from raw amount
+            token_quantity_decimal=row[5]
+            / (10**TOKEN_DECIMALS),  # Calculate from raw amount
             total_token_swapin_amount_raw=row[5],
             total_token_swapout_amount_raw=row[6],
             entry_ts=row[7],
@@ -171,18 +175,18 @@ class PositionConverter:
 
 class TradeConverter:
     """Converter for TradeResult dataclass to/from database rows."""
-    
+
     @staticmethod
     def to_row(
         trade_result: TradeResult,
         mint: str,
         timestamp: int,
-        position_id: Optional[str],
+        position_id: str | None,
         trade_type: str,
         run_id: str,
-    ) -> Tuple:
+    ) -> tuple:
         """Convert TradeResult to database row tuple.
-        
+
         Args:
             trade_result: TradeResult instance
             mint: Token mint address
@@ -190,7 +194,7 @@ class TradeConverter:
             position_id: Position ID (can be None)
             trade_type: "buy" or "sell"
             run_id: Bot run identifier
-            
+
         Returns:
             Tuple of values for database insertion
         """
@@ -211,14 +215,14 @@ class TradeConverter:
             trade_result.net_price_sol_decimal(),
             run_id,
         )
-    
+
     @staticmethod
-    def from_row(row: Tuple) -> TradeResult:
+    def from_row(row: tuple) -> TradeResult:
         """Convert database row to TradeResult instance.
-        
+
         Args:
             row: Database row tuple
-            
+
         Returns:
             TradeResult instance
         """
@@ -226,8 +230,10 @@ class TradeConverter:
         net_sol_amount_raw = row[9]  # net_sol_swap_amount_raw from database
         transaction_fee_raw = row[10] or 0
         platform_fee_raw = row[11] or 0
-        sol_swap_amount_raw = net_sol_amount_raw - transaction_fee_raw - platform_fee_raw
-        
+        sol_swap_amount_raw = (
+            net_sol_amount_raw - transaction_fee_raw - platform_fee_raw
+        )
+
         return TradeResult(
             success=bool(row[3]),
             platform=Platform(row[4]),
@@ -239,3 +245,27 @@ class TradeConverter:
             transaction_fee_raw=row[10],
             platform_fee_raw=row[11],
         )
+
+
+class PriceHistoryConverter:
+    """Converter for price history data to/from database rows."""
+
+    @staticmethod
+    def to_row(
+        mint: str,
+        platform: str,
+        timestamp: int,
+        price_decimal: float,
+    ) -> tuple:
+        """Convert price data to database row tuple.
+
+        Args:
+            mint: Token mint address
+            platform: Platform name
+            timestamp: Unix epoch milliseconds
+            price_decimal: Price in SOL (decimal)
+
+        Returns:
+            Tuple of values for database insertion
+        """
+        return (mint, platform, timestamp, price_decimal)

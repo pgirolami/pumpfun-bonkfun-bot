@@ -62,7 +62,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         # Create a mock balance change result
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
 
-        sol_swap_amount_raw = await self.curve_manager.calculate_sell_amount_out(pool_address=self._get_pool_address(order.token_info,None), amount_in=order.token_amount_raw)
+        sol_swap_amount_raw = - await self.curve_manager.calculate_sell_amount_out(pool_address=self._get_pool_address(order.token_info,None), amount_in=order.token_amount_raw)
 
         return BalanceChangeResult(
             token_swap_amount_raw=order.token_amount_raw,

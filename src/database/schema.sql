@@ -77,3 +77,14 @@ CREATE INDEX IF NOT EXISTS idx_trades_position_id ON trades(position_id);
 CREATE INDEX IF NOT EXISTS idx_trades_platform ON trades(platform);
 CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
 CREATE INDEX IF NOT EXISTS idx_trades_success ON trades(success);
+
+-- Price history table (prices calculated during monitoring)
+CREATE TABLE IF NOT EXISTS price_history (
+    mint TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,  -- Unix epoch milliseconds
+    price_decimal REAL NOT NULL  -- Price in SOL (decimal)
+);
+
+-- Create index for efficient queries
+CREATE INDEX IF NOT EXISTS idx_price_history_mint ON price_history(mint);
