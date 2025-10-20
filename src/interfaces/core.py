@@ -345,6 +345,18 @@ class CurveManager(ABC):
         """
         pass
 
+    @abstractmethod
+    async def calculate_market_cap(self, pool_address: Pubkey) -> float:
+        """Calculate fully diluted market cap in SOL.
+
+        Args:
+            pool_address: Address of the pool/curve
+
+        Returns:
+            Market cap in SOL (price × total supply)
+        """
+        pass
+
 
 class EventParser(ABC):
     """Abstract interface for parsing platform-specific token creation events."""

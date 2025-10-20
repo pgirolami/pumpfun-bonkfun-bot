@@ -87,6 +87,27 @@ class LetsBonkCurveManager(CurveManager):
 
         return price_sol
 
+    async def calculate_market_cap(self, pool_address: Pubkey) -> float:
+        """Calculate fully diluted market cap in SOL.
+
+        Args:
+            pool_address: Address of the pool state
+
+        Returns:
+            Market cap in SOL (price × total supply)
+        """
+#        pool_state = await self.get_pool_state(pool_address)
+        price_per_token = await self.calculate_price(pool_address)
+
+        # Get total supply and convert from raw units to decimal
+        supply = 1_000_000_000_000 #pool_state["supply"]
+        total_supply_decimal = supply / 10**TOKEN_DECIMALS
+
+        # Market cap = price × total supply
+        market_cap_sol = price_per_token * total_supply_decimal
+
+        return market_cap_sol
+
     async def calculate_buy_amount_out(
         self, pool_address: Pubkey, amount_in: int
     ) -> int:
