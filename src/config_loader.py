@@ -69,12 +69,18 @@ CONFIG_VALIDATION_RULES = [
         float("inf"),
         "filters.max_token_age must be a non-negative number",
     ),
+    (
+        "trade.max_active_mints",
+        int,
+        1,
+        float("inf"),
+        "trade.max_active_mints must be a positive integer",
+    ),
 ]
 
 # Valid values for enum-like fields
 VALID_VALUES = {
     "filters.listener_type": ["logs", "blocks", "geyser", "pumpportal"],
-    "cleanup.mode": ["disabled", "on_fail", "after_sell", "post_session"],
     "trade.exit_strategy": ["time_based", "tp_sl", "manual", "trailing"],
     "platform": ["pump_fun", "lets_bonk"],
     "testing.dry_run": [True, False],
@@ -327,6 +333,8 @@ def print_config_summary(config: dict) -> None:
     print(
         f"  - Extreme fast mode: {'enabled' if trade.get('extreme_fast_mode') else 'disabled'}"
     )
+    if 'max_active_mints' in trade:
+        print(f"  - Max active mints: {trade.get('max_active_mints')}")
 
     fees = config.get("priority_fees", {})
     print("Priority fees:")

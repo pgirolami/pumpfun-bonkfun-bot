@@ -144,7 +144,6 @@ async def start_bot(config_path: str):
             max_token_age=cfg.get("filters", {}).get("max_token_age", 0.001),
             token_wait_timeout=cfg.get("timing", {}).get("token_wait_timeout", 120),
             # Cleanup settings
-            cleanup_mode=cfg.get("cleanup", {}).get("mode", "disabled"),
             cleanup_force_close_with_burn=cfg.get("cleanup", {}).get(
                 "force_close_with_burn", False
             ),
@@ -156,6 +155,7 @@ async def start_bot(config_path: str):
             bro_address=cfg["filters"].get("bro_address"),
             marry_mode=cfg["filters"].get("marry_mode", False),
             yolo_mode=cfg["filters"].get("yolo_mode", False),
+            max_active_mints=cfg["trade"].get("max_active_mints", 1),
             # Compute unit configuration
             compute_units=cfg.get("compute_units", {}),
             # Testing configuration

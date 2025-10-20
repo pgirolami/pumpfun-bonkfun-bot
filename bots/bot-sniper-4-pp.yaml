@@ -24,6 +24,7 @@ trade:
   buy_amount: 0.001 # Amount of SOL to spend when buying (in SOL)
   buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.3
+  max_active_mints: 2 # Maximum concurrent active positions (YOLO mode only)
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual"
@@ -62,7 +63,7 @@ filters:
   listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
-  yolo_mode: false # Continuously trade tokens
+  yolo_mode: true # Continuously trade tokens
 
 # Retry and timeout settings
 retries:
@@ -78,7 +79,6 @@ cleanup:
   # "on_fail": only clean up if a buy transaction fails.
   # "after_sell": clean up after selling.
   # "post_session": clean up all empty accounts after a trading session ends.
-  mode: "post_session"
   force_close_with_burn: false # Force burning remaining tokens before closing account
   with_priority_fee: false # Use priority fees for cleanup transactions
 
@@ -88,5 +88,5 @@ node:
 
 # Testing configuration (optional)
 testing:
-  dry_run: false  # Set to true to simulate transactions without sending to blockchain
+  dry_run: true  # Set to true to simulate transactions without sending to blockchain
   dry_run_wait_time_seconds: 2  # Simulate RPC latency in dry-run mode
