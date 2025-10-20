@@ -253,6 +253,7 @@ class UniversalTrader:
 
         # State tracking
         self.active_mints: set[Pubkey] = set()  # Renamed from traded_mints
+        self.reserved_mints: set[Pubkey] = set()  # Track reserved buy slots
         self.token_queue: asyncio.Queue[TokenInfo] = asyncio.Queue[TokenInfo]()
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
@@ -417,9 +418,10 @@ class UniversalTrader:
             logger.info("All position tasks cancelled")
 
         # DO NOT cleanup tokens on interrupt - user can recover manually
-        if self.active_mints:
+        total_interrupted = len(self.active_mints) + len(self.reserved_mints)
+        if total_interrupted > 0:
             logger.warning(
-                f"{len(self.active_mints)} position(s) interrupted. "
+                f"{total_interrupted} position(s) interrupted ({len(self.active_mints)} active, {len(self.reserved_mints)} reserved). "
                 f"Tokens NOT burned - manual recovery possible."
             )
 
@@ -437,19 +439,28 @@ class UniversalTrader:
             logger.debug(f"Token {token_info.symbol} already processed. Skipping...")
             return
 
-        # Enforce max_active_mints globally (including resumed positions)
-        if len(self.active_mints) >= self.max_active_mints:
+        # Check if mint is already reserved or active
+        if token_info.mint in self.reserved_mints or token_info.mint in self.active_mints:
+            logger.debug(f"Token {token_info.symbol} already reserved/active. Skipping...")
+            return
+
+        # Enforce max_active_mints globally (including resumed positions and reserved slots)
+        total_slots = len(self.active_mints) + len(self.reserved_mints)
+        if total_slots >= self.max_active_mints:
             logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({len(self.active_mints)}/{self.max_active_mints})"
+                f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({total_slots}/{self.max_active_mints})"
             )
             return
 
+        # Reserve the buy slot immediately
+        self.reserved_mints.add(token_info.mint)
+        
         # Record timestamp when token was discovered
         self.token_timestamps[token_key] = monotonic()
 
         await self.token_queue.put(token_info)
         logger.info(
-            f"Queued new token: {token_info.symbol} ({token_info.mint}) on {token_info.platform.value}"
+            f"Queued new token: {token_info.symbol} ({token_info.mint}) on {token_info.platform.value} (slot reserved)"
         )
 
     async def _process_token_queue(self) -> None:
@@ -458,9 +469,11 @@ class UniversalTrader:
             try:
                 # Wait for capacity if at limit (YOLO mode only)
                 if self.yolo_mode:
-                    while len(self.active_mints) >= self.max_active_mints:
+                    total_slots = len(self.active_mints) + len(self.reserved_mints)
+                    while total_slots >= self.max_active_mints:
                         self.position_slot_available.clear()
                         await self.position_slot_available.wait()
+                        total_slots = len(self.active_mints) + len(self.reserved_mints)
 
                 # Get next token from queue
                 token_info = await self.token_queue.get()
@@ -497,8 +510,13 @@ class UniversalTrader:
         try:
             await self._handle_token(token_info)
         finally:
-            # Cleanup: Remove from tracking and signal available slot
-            # Only remove if present (buy might have failed)
+            # Cleanup: Remove from both reserved and active tracking
+            # Remove from reserved if still present (may have been cleaned up in failed buy handler)
+            if token_info.mint in self.reserved_mints:
+                self.reserved_mints.remove(token_info.mint)
+                logger.debug(f"[{self._mint_prefix(token_info.mint)}] Released reserved slot in wrapper cleanup")
+            
+            # Only remove from active if present (buy might have failed)
             if token_info.mint in self.active_mints:
                 self.active_mints.remove(token_info.mint)
 
@@ -601,6 +619,9 @@ class UniversalTrader:
         logger.info(
             f"[{self._mint_prefix(token_info.mint)}] buy_result.tx_signature: {buy_result.tx_signature}"
         )
+        # Move from reserved to active (slot was already reserved when queued)
+        if token_info.mint in self.reserved_mints:
+            self.reserved_mints.remove(token_info.mint)
         self.active_mints.add(token_info.mint)
 
         # Persist to database if available
@@ -645,6 +666,11 @@ class UniversalTrader:
         logger.error(
             f"[{self._mint_prefix(token_info.mint)}] Failed to buy {token_info.symbol}: {buy_result.error_message}"
         )
+
+        # Clean up reserved slot since buy failed
+        if token_info.mint in self.reserved_mints:
+            self.reserved_mints.remove(token_info.mint)
+            logger.debug(f"[{self._mint_prefix(token_info.mint)}] Released reserved slot after failed buy")
 
         # Persist failed trade to database if available
         if self.database_manager:
