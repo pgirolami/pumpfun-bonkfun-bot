@@ -32,6 +32,8 @@ class LetsBonkCurveManager(CurveManager):
         self.client = client
         self.address_provider = LetsBonkAddressProvider()
         self._idl_parser = idl_parser
+        self.constants: dict[str, Any] = {}
+        self._constants_loaded = False
 
         logger.info("LetsBonk curve manager initialized with injected IDL parser")
 
@@ -264,3 +266,138 @@ class LetsBonkCurveManager(CurveManager):
         except Exception:
             logger.exception("Pool state validation failed")
             return False
+
+    async def get_platform_constants(self) -> dict[str, Any]:
+        """Get LetsBonk platform constants loaded from the global config account.
+
+        Returns:
+            Dictionary containing LetsBonk constants (fees, limits, etc.)
+        """
+        # Return cached constants if already loaded
+        if self._constants_loaded:
+            return self.constants
+            
+        try:
+            # Fetch global config account data
+            global_config = await self.client.get_account_info(self.address_provider.get_system_addresses()["global_config"])
+            if not global_config.data:
+                raise ValueError("No data in LetsBonk global config account")
+            
+            # Parse global config account data
+            global_data = self._parse_global_config_data(global_config.data)
+            
+            # Convert to human-readable format
+            constants = {
+                "epoch": global_data["epoch"],
+                "curve_type": global_data["curve_type"],
+                "index": global_data["index"],
+                "migrate_fee": global_data["migrate_fee"],
+                "trade_fee_rate": global_data["trade_fee_rate"],
+                "max_share_fee_rate": global_data["max_share_fee_rate"],
+                "min_base_supply": global_data["min_base_supply"],
+                "max_lock_rate": global_data["max_lock_rate"],
+                "min_base_sell_rate": global_data["min_base_sell_rate"],
+                "min_base_migrate_rate": global_data["min_base_migrate_rate"],
+                "min_quote_fund_raising": global_data["min_quote_fund_raising"],
+                "quote_mint": str(global_data["quote_mint"]),
+                "protocol_fee_owner": str(global_data["protocol_fee_owner"]),
+                # Human-readable versions
+                "trade_fee_percentage": global_data["trade_fee_rate"] / 1_000_000,  # Convert from hundredths of a bip
+                "max_share_fee_percentage": global_data["max_share_fee_rate"] / 1_000_000,
+                "max_lock_percentage": global_data["max_lock_rate"] / 1_000_000,
+                "min_base_sell_percentage": global_data["min_base_sell_rate"] / 1_000_000,
+                "min_base_migrate_percentage": global_data["min_base_migrate_rate"] / 1_000_000,
+                "min_quote_fund_raising_sol": global_data["min_quote_fund_raising"] / LAMPORTS_PER_SOL,
+                "min_base_supply_decimal": global_data["min_base_supply"] / 10**TOKEN_DECIMALS,
+                "migrate_fee_sol": global_data["migrate_fee"] / LAMPORTS_PER_SOL,
+            }
+            
+            logger.info(f"Loaded LetsBonk constants: trade_fee={constants['trade_fee_percentage']:.4f}%, min_base_supply={constants['min_base_supply_decimal']:,.0f} tokens")
+            
+            # Store constants for use by other methods and mark as loaded
+            self.constants = constants
+            self._constants_loaded = True
+            
+            return constants
+            
+        except Exception as e:
+            logger.exception("Failed to load LetsBonk platform constants")
+            raise ValueError(f"Failed to load platform constants: {e!s}")
+
+    def _parse_global_config_data(self, data: bytes) -> dict[str, Any]:
+        """Parse the LetsBonk global config account data.
+        
+        Args:
+            data: Raw account data from RPC
+            
+        Returns:
+            Dictionary containing parsed global config fields
+        """
+        import struct
+        
+        if len(data) < 8:
+            raise ValueError("Account data too short")
+        
+        # Expected discriminator for GlobalConfig account (from IDL)
+        expected_discriminator = bytes([149, 8, 156, 202, 160, 252, 176, 217])
+        discriminator = data[:8]
+        if discriminator != expected_discriminator:
+            raise ValueError(f"Invalid discriminator: {discriminator.hex()}")
+        
+        # Parse fields according to IDL structure
+        offset = 8
+        fields = {}
+        
+        # epoch (u64)
+        fields["epoch"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # curve_type (u8)
+        fields["curve_type"] = data[offset]
+        offset += 1
+        
+        # index (u16)
+        fields["index"] = struct.unpack("<H", data[offset:offset + 2])[0]
+        offset += 2
+        
+        # migrate_fee (u64)
+        fields["migrate_fee"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # trade_fee_rate (u64)
+        fields["trade_fee_rate"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # max_share_fee_rate (u64)
+        fields["max_share_fee_rate"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # min_base_supply (u64)
+        fields["min_base_supply"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # max_lock_rate (u64)
+        fields["max_lock_rate"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # min_base_sell_rate (u64)
+        fields["min_base_sell_rate"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # min_base_migrate_rate (u64)
+        fields["min_base_migrate_rate"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # min_quote_fund_raising (u64)
+        fields["min_quote_fund_raising"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # quote_mint (pubkey)
+        fields["quote_mint"] = Pubkey.from_bytes(data[offset:offset + 32])
+        offset += 32
+        
+        # protocol_fee_owner (pubkey)
+        fields["protocol_fee_owner"] = Pubkey.from_bytes(data[offset:offset + 32])
+        offset += 32
+        
+        return fields

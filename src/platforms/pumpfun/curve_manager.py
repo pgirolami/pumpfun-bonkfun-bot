@@ -30,6 +30,8 @@ class PumpFunCurveManager(CurveManager):
         """
         self.client = client
         self._idl_parser = idl_parser
+        self.constants: dict[str, Any] = {}
+        self._constants_loaded = False
 
         logger.info("Pump.Fun curve manager initialized with injected IDL parser")
 
@@ -360,3 +362,125 @@ class PumpFunCurveManager(CurveManager):
         except Exception:
             logger.exception("Curve state validation failed")
             return False
+
+    async def get_platform_constants(self) -> dict[str, Any]:
+        """Get pump.fun platform constants loaded from the global account.
+
+        Returns:
+            Dictionary containing pump.fun constants (initial reserves, fees, etc.)
+        """
+        # Return cached constants if already loaded
+        if self._constants_loaded:
+            return self.constants
+            
+        try:
+            # Fetch global account data
+            from platforms.pumpfun.address_provider import PumpFunAddresses
+            
+            global_account = await self.client.get_account_info(PumpFunAddresses.GLOBAL)
+            if not global_account.data:
+                raise ValueError("No data in pump.fun global account")
+            
+            # Parse global account data
+            global_data = self._parse_global_account_data(global_account.data)
+            
+            # Convert to human-readable format
+            constants = {
+                "initialized": global_data["initialized"],
+                "authority": str(global_data["authority"]),
+                "fee_recipient": str(global_data["fee_recipient"]),
+                "withdraw_authority": str(global_data["withdraw_authority"]),
+                "enable_migrate": global_data["enable_migrate"],
+                "initial_virtual_token_reserves": global_data["initial_virtual_token_reserves"],
+                "initial_virtual_sol_reserves": global_data["initial_virtual_sol_reserves"],
+                "initial_real_token_reserves": global_data["initial_real_token_reserves"],
+                "token_total_supply": global_data["token_total_supply"],
+                "fee_basis_points": global_data["fee_basis_points"],
+                # Human-readable versions
+                "initial_virtual_token_reserves_decimal": global_data["initial_virtual_token_reserves"] / 10**TOKEN_DECIMALS,
+                "initial_virtual_sol_reserves_decimal": global_data["initial_virtual_sol_reserves"] / LAMPORTS_PER_SOL,
+                "initial_real_token_reserves_decimal": global_data["initial_real_token_reserves"] / 10**TOKEN_DECIMALS,
+                "token_total_supply_decimal": global_data["token_total_supply"] / 10**TOKEN_DECIMALS,
+                "fee_percentage": global_data["fee_basis_points"] / 100,
+                # Calculated values
+                "starting_price_sol": (global_data["initial_virtual_sol_reserves"] / LAMPORTS_PER_SOL) / (global_data["initial_virtual_token_reserves"] / 10**TOKEN_DECIMALS),
+                "starting_price_lamports": global_data["initial_virtual_sol_reserves"] / global_data["initial_virtual_token_reserves"],
+            }
+            
+            logger.info(f"Loaded pump.fun constants: {constants['initial_virtual_token_reserves_decimal']:,.0f} tokens, {constants['initial_virtual_sol_reserves_decimal']:,.0f} SOL, {constants['fee_percentage']:.2f}% fee")
+            
+            # Store constants for use by other methods and mark as loaded
+            self.constants = constants
+            self._constants_loaded = True
+            
+            return constants
+            
+        except Exception as e:
+            logger.exception("Failed to load pump.fun platform constants")
+            raise ValueError(f"Failed to load platform constants: {e!s}")
+
+    def _parse_global_account_data(self, data: bytes) -> dict[str, Any]:
+        """Parse the pump.fun global account data.
+        
+        Args:
+            data: Raw account data from RPC
+            
+        Returns:
+            Dictionary containing parsed global account fields
+        """
+        import struct
+        
+        if len(data) < 8:
+            raise ValueError("Account data too short")
+        
+        # Expected discriminator for Global account (from IDL)
+        expected_discriminator = bytes([167, 232, 232, 177, 200, 108, 114, 127])
+        discriminator = data[:8]
+        if discriminator != expected_discriminator:
+            raise ValueError(f"Invalid discriminator: {discriminator.hex()}")
+        
+        # Parse fields according to IDL structure
+        offset = 8
+        fields = {}
+        
+        # initialized (bool)
+        fields["initialized"] = bool(data[offset])
+        offset += 1
+        
+        # authority (pubkey)
+        fields["authority"] = Pubkey.from_bytes(data[offset:offset + 32])
+        offset += 32
+        
+        # fee_recipient (pubkey)
+        fields["fee_recipient"] = Pubkey.from_bytes(data[offset:offset + 32])
+        offset += 32
+        
+        # initial_virtual_token_reserves (u64)
+        fields["initial_virtual_token_reserves"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # initial_virtual_sol_reserves (u64)
+        fields["initial_virtual_sol_reserves"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # initial_real_token_reserves (u64)
+        fields["initial_real_token_reserves"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # token_total_supply (u64)
+        fields["token_total_supply"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # fee_basis_points (u64)
+        fields["fee_basis_points"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # withdraw_authority (pubkey)
+        fields["withdraw_authority"] = Pubkey.from_bytes(data[offset:offset + 32])
+        offset += 32
+        
+        # enable_migrate (bool)
+        fields["enable_migrate"] = bool(data[offset])
+        offset += 1
+        
+        return fields

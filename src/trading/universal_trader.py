@@ -5,6 +5,7 @@ Cleaned up to remove all platform-specific hardcoding.
 
 import asyncio
 from time import monotonic, time
+from typing import Any
 
 import uvloop
 from solders.pubkey import Pubkey
@@ -48,7 +49,6 @@ class UniversalTrader:
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         # Trading configuration
         extreme_fast_mode: bool = False,
-        extreme_fast_token_amount: int = 30,
         # Exit strategy configuration
         exit_strategy: str = "time_based",
         take_profit_percentage: float | None = None,
@@ -104,6 +104,9 @@ class UniversalTrader:
         # Generate run ID for this trader instance
         self.run_id = str(int(time() * 1000))
 
+        # Platform constants (loaded from blockchain at startup)
+        self.platform_constants: dict[str, Any] = {}
+
         # Trading parameters (needed for validation)
         self.buy_amount = buy_amount
 
@@ -158,7 +161,6 @@ class UniversalTrader:
                 buy_amount,
                 buy_slippage,
                 max_retries,
-                extreme_fast_token_amount,
                 extreme_fast_mode,
                 curve_manager=self.platform_implementations.curve_manager,
                 dry_run_wait_time=dry_run_wait_time,
@@ -191,7 +193,6 @@ class UniversalTrader:
                 buy_amount,
                 buy_slippage,
                 max_retries,
-                extreme_fast_token_amount,
                 extreme_fast_mode,
                 compute_units=self.compute_units,
             )
@@ -221,7 +222,6 @@ class UniversalTrader:
         self.sell_slippage = sell_slippage
         self.max_retries = max_retries
         self.extreme_fast_mode = extreme_fast_mode
-        self.extreme_fast_token_amount = extreme_fast_token_amount
 
         # Exit strategy parameters
         self.exit_strategy = exit_strategy.lower()
@@ -298,6 +298,13 @@ class UniversalTrader:
             logger.info(f"RPC warm-up successful (getHealth passed: {health_resp})")
         except Exception as e:
             logger.warning(f"RPC warm-up failed: {e!s}")
+
+        # Load platform-specific constants from blockchain
+        try:
+            await self._load_platform_constants()
+        except Exception as e:
+            logger.exception(f"Failed to load platform constants: {e}")
+            # Continue without constants - some operations may fail but bot can still run
 
         # Resume monitoring of any active positions from database before listening
         try:
@@ -884,6 +891,30 @@ class UniversalTrader:
         else:
             # Fallback to deriving the address using platform provider
             return address_provider.derive_pool_address(token_info.mint)
+
+    async def _load_platform_constants(self) -> None:
+        """Load platform-specific constants from the blockchain."""
+        try:
+            # Get platform implementations
+            implementations = get_platform_implementations(self.platform, self.solana_client)
+            curve_manager = implementations.curve_manager
+            
+            # Load constants from the curve manager
+            self.platform_constants = await curve_manager.get_platform_constants()
+            
+            logger.info(f"Successfully loaded {len(self.platform_constants)} platform constants for {self.platform.value}")
+            
+            # Log key constants for debugging
+            if self.platform == Platform.PUMP_FUN:
+                logger.info(f"Pump.fun starting price: {self.platform_constants.get('starting_price_sol', 'N/A'):.8f} SOL per token")
+                logger.info(f"Pump.fun fee: {self.platform_constants.get('fee_percentage', 'N/A'):.2f}%")
+            elif self.platform == Platform.LETS_BONK:
+                logger.info(f"LetsBonk trade fee: {self.platform_constants.get('trade_fee_percentage', 'N/A'):.4f}%")
+                logger.info(f"LetsBonk min base supply: {self.platform_constants.get('min_base_supply_decimal', 'N/A'):,.0f} tokens")
+                
+        except Exception as e:
+            logger.exception(f"Failed to load platform constants for {self.platform.value}")
+            raise
 
     async def _resume_active_positions(self) -> None:
         """Load active positions from DB and resume monitoring with current config."""

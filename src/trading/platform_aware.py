@@ -30,7 +30,6 @@ class PlatformAwareBuyer(Trader):
         amount: float,
         slippage: float = 0.01,
         max_retries: int = 5,
-        extreme_fast_token_amount: int = 0,
         extreme_fast_mode: bool = False,
         compute_units: dict | None = None,
     ):
@@ -42,7 +41,6 @@ class PlatformAwareBuyer(Trader):
         self.slippage = slippage
         self.max_retries = max_retries
         self.extreme_fast_mode = extreme_fast_mode
-        self.extreme_fast_token_amount = extreme_fast_token_amount
         self.compute_units = compute_units or {}
 
     async def _prepare_buy_order(self, token_info: TokenInfo) -> BuyOrder:
@@ -57,8 +55,14 @@ class PlatformAwareBuyer(Trader):
 
         # Calculate price and token amount
         if self.extreme_fast_mode:
-            order.token_amount_raw = self.extreme_fast_token_amount
-            order.token_price_sol = self.amount / order.token_amount_raw if order.token_amount_raw > 0 else 0
+            # Use platform constants to calculate token amount based on starting price
+            platform_constants = await curve_manager.get_platform_constants()
+            starting_price_sol = platform_constants["starting_price_sol"]
+            
+            # Calculate token amount based on buy amount and starting price
+            order.token_amount_raw = int((self.amount / starting_price_sol) * 10**TOKEN_DECIMALS)
+            order.token_price_sol = starting_price_sol
+            logger.info(f"Extreme fast mode: calculated {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens at starting price {starting_price_sol:.8f} SOL")
         else:
             pool_address = self._get_pool_address(token_info, address_provider)
             order.token_price_sol = await curve_manager.calculate_price(pool_address)

@@ -103,7 +103,6 @@ async def start_bot(config_path: str):
             sell_slippage=cfg["trade"]["sell_slippage"],
             # Extreme fast mode settings
             extreme_fast_mode=cfg["trade"].get("extreme_fast_mode", False),
-            extreme_fast_token_amount=cfg["trade"].get("extreme_fast_token_amount", 30),
             # Exit strategy configuration
             exit_strategy=cfg["trade"].get("exit_strategy", "time_based"),
             take_profit_percentage=cfg["trade"].get("take_profit_percentage"),

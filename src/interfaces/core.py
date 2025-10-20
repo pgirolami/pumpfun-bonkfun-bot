@@ -357,6 +357,15 @@ class CurveManager(ABC):
         """
         pass
 
+    @abstractmethod
+    async def get_platform_constants(self) -> dict[str, Any]:
+        """Get platform-specific constants loaded from the blockchain.
+
+        Returns:
+            Dictionary containing platform constants (e.g., initial reserves, fees, etc.)
+        """
+        pass
+
 
 class EventParser(ABC):
     """Abstract interface for parsing platform-specific token creation events."""
