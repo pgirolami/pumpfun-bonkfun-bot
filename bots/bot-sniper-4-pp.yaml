@@ -37,6 +37,7 @@ trade:
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot calculates token amount based on platform starting price and buy_amount for precision.
   extreme_fast_mode: true
+  max_no_price_change_time: 15 # Maximum time in seconds without price change
 
 # Priority fee configuration
 # Manage transaction speed and cost on the Solana network.
@@ -87,5 +88,5 @@ node:
 
 # Testing configuration (optional)
 testing:
-  dry_run: false  # Set to true to simulate transactions without sending to blockchain
+  dry_run: true  # Set to true to simulate transactions without sending to blockchain
   dry_run_wait_time_seconds: 7  # Simulate RPC latency in dry-run mode

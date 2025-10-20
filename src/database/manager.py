@@ -133,11 +133,11 @@ class DatabaseManager:
                 """
                 INSERT INTO positions 
                 (id, mint, platform, entry_net_price_decimal, token_decimals, total_token_swapin_amount_raw,
-                 total_token_swapout_amount_raw, entry_ts, exit_strategy, highest_price, is_active,
+                 total_token_swapout_amount_raw, entry_ts, exit_strategy, highest_price, max_no_price_change_time, last_price_change_ts, is_active,
                  exit_reason, exit_net_price_decimal, exit_ts, transaction_fee_raw, platform_fee_raw,
                  realized_pnl_sol_decimal, realized_net_pnl_sol_decimal, buy_amount, total_net_sol_swapout_amount_raw, total_net_sol_swapin_amount_raw,
                  created_ts, updated_ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )
@@ -162,6 +162,8 @@ class DatabaseManager:
                 UPDATE positions SET
                     total_token_swapout_amount_raw = ?,
                     highest_price = ?,
+                    max_no_price_change_time = ?,
+                    last_price_change_ts = ?,
                     is_active = ?,
                     exit_reason = ?,
                     exit_net_price_decimal = ?,
@@ -177,6 +179,8 @@ class DatabaseManager:
                 (
                     position.total_token_swapout_amount_raw,
                     position.highest_price,
+                    position.max_no_price_change_time,
+                    position.last_price_change_ts,
                     1 if position.is_active else 0,
                     position.exit_reason.value if position.exit_reason else None,
                     position.exit_net_price_decimal,

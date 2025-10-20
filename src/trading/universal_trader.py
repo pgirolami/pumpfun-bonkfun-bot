@@ -54,6 +54,7 @@ class UniversalTrader:
         take_profit_percentage: float | None = None,
         stop_loss_percentage: float | None = None,
         max_hold_time: int | None = None,
+        max_no_price_change_time: int | None = None,
         price_check_interval: int = 10,
         # Priority fee configuration
         enable_dynamic_priority_fee: bool = False,
@@ -232,6 +233,7 @@ class UniversalTrader:
             # Use stop_loss_percentage input as trailing percentage if provided
             self.trailing_stop_percentage = stop_loss_percentage
         self.max_hold_time = max_hold_time
+        self.max_no_price_change_time = max_no_price_change_time
         self.price_check_interval = price_check_interval
 
         # Timing parameters
@@ -293,6 +295,7 @@ class UniversalTrader:
             )
 
         logger.info(f"Max token age: {self.max_token_age} seconds")
+        logger.info(f"Max no price change time: {self.max_no_price_change_time} seconds")
 
         try:
             health_resp = await self.solana_client.get_health()
@@ -573,6 +576,7 @@ class UniversalTrader:
                     stop_loss_percentage=self.stop_loss_percentage,
                     trailing_stop_percentage=self.trailing_stop_percentage,
                     max_hold_time=self.max_hold_time,
+                    max_no_price_change_time=self.max_no_price_change_time,
                 )
             else:
                 # Failed buy - create inactive position with None values
@@ -774,12 +778,14 @@ class UniversalTrader:
             f"[{self._mint_prefix(token_info.mint)}] Starting position monitoring (check interval: {self.price_check_interval}s)"
         )
 
-        try:
-            # Get pool address for price monitoring using platform-agnostic method
-            pool_address = self._get_pool_address(token_info)
-            curve_manager = self.platform_implementations.curve_manager
+        pool_address = self._get_pool_address(token_info)
+        curve_manager = self.platform_implementations.curve_manager
+        
+        # Track last price for change detection
+        last_price = None
 
-            while position.is_active:
+        while position.is_active:
+            try:
                 # Get current price from pool/curve
                 current_price = await curve_manager.calculate_price(pool_address)
 
@@ -794,21 +800,28 @@ class UniversalTrader:
                     except Exception as e:
                         logger.exception(f"Failed to insert price history: {e}")
 
+                # Update position fields based on current price
                 # Update highest_price if this is a new high
                 if current_price > (position.highest_price or 0):
                     position.highest_price = current_price
+                    logger.debug(f"[{self._mint_prefix(token_info.mint)}] New highest price: {current_price:.8f} SOL")
 
-                    # Update position in database with new highest price
-                    if self.database_manager:
-                        try:
-                            await self.database_manager.update_position(position)
-                            logger.debug(
-                                f"Updated highest_price to {current_price:.8f} SOL in database"
-                            )
-                        except Exception as e:
-                            logger.exception(
-                                f"Failed to update position in database: {e}"
-                            )
+                # Track price changes for max_no_price_change_time exit condition
+                if position.max_no_price_change_time is not None:
+                    price_tolerance = 1e-10  # Very small tolerance for floating point precision
+                    if (last_price is None or 
+                        abs(current_price - last_price) > price_tolerance):
+                        position.last_price_change_ts = time()
+                        logger.debug(f"[{self._mint_prefix(token_info.mint)}] Price changed to {current_price:.8f} SOL, updating timestamp")
+                    last_price = current_price
+
+                # Update position in database on every loop run
+                if self.database_manager:
+                    try:
+                        await self.database_manager.update_position(position)
+                        logger.debug(f"[{self._mint_prefix(token_info.mint)}] Updated position in database")
+                    except Exception as e:
+                        logger.exception(f"Failed to update position in database: {e}")
 
                 # Check if position should be exited
                 should_exit, exit_reason = position.should_exit(current_price)
@@ -896,12 +909,10 @@ class UniversalTrader:
                         f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price:.8f} SOL ({pnl['net_price_change_pct']:+.2f}%)"
                     )
 
-
-        except Exception:
-            logger.exception("Error monitoring position, continuing though")
-
-        # Wait before next price check
-        await asyncio.sleep(self.price_check_interval)
+            except Exception:
+                logger.exception("Error monitoring position, continuing though")
+            # Wait before next price check
+            await asyncio.sleep(self.price_check_interval)
 
     def _get_pool_address(self, token_info: TokenInfo) -> Pubkey:
         """Get the pool/curve address for price monitoring using platform-agnostic method."""
@@ -1018,8 +1029,9 @@ class UniversalTrader:
         if position.highest_price is None and entry_price is not None:
             position.highest_price = entry_price
 
-        # Update max_hold_time from current config
+        # Update max_hold_time and max_no_price_change_time from current config
         position.max_hold_time = self.max_hold_time
+        position.max_no_price_change_time = self.max_no_price_change_time
 
     async def _monitor_resumed_position(
         self, token_info: TokenInfo, position: Position

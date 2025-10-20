@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS positions (
     entry_ts INTEGER,  -- Unix epoch milliseconds
     exit_strategy TEXT,  -- Exit strategy from config
     highest_price REAL,  -- Already net decimal from on-chain calculation
+    max_no_price_change_time INTEGER,  -- Maximum seconds without price change
+    last_price_change_ts REAL,  -- Timestamp of last price change
     is_active INTEGER,  -- 0/1 boolean
     exit_reason TEXT,
     exit_net_price_decimal REAL,  -- Net price from TradeResult.net_price_decimal()

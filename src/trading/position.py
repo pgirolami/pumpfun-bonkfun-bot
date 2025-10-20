@@ -24,6 +24,7 @@ class ExitReason(Enum):
     STOP_LOSS = "stop_loss"
     TRAILING_STOP = "trailing_stop"
     MAX_HOLD_TIME = "max_hold_time"
+    NO_PRICE_CHANGE = "no_price_change"
     MANUAL = "manual"
     FAILED_BUY = "failed_buy"
 
@@ -48,9 +49,11 @@ class Position:
     take_profit_price: float | None = None
     stop_loss_price: float | None = None
     max_hold_time: int | None = None  # seconds
+    max_no_price_change_time: int | None = None  # seconds without price change
     # Trailing stop configuration/state
     trailing_stop_percentage: float | None = None  # fraction (e.g., 0.2 for 20%)
     highest_price: float | None = None  # highest observed price since entry (already net decimal from on-chain)
+    last_price_change_ts: float | None = None  # timestamp of last price change
 
     # Status
     is_active: bool = True
@@ -89,6 +92,7 @@ class Position:
         stop_loss_percentage: float | None,
         trailing_stop_percentage: float | None,
         max_hold_time: int | None,
+        max_no_price_change_time: int | None = None,
     ) -> "Position":
         """Create a position from a successful buy transaction.
 
@@ -108,6 +112,7 @@ class Position:
             stop_loss_percentage: Stop loss percentage (0.2 = 20% loss)
             trailing_stop_percentage: Trailing stop percentage
             max_hold_time: Maximum hold time in seconds
+            max_no_price_change_time: Maximum time without price change in seconds
 
         Returns:
             Position instance
@@ -132,10 +137,12 @@ class Position:
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
             max_hold_time=max_hold_time,
+            max_no_price_change_time=max_no_price_change_time,
             transaction_fee_raw=transaction_fee_raw,
             platform_fee_raw=platform_fee_raw,
             trailing_stop_percentage=trailing_stop_percentage,
             highest_price=entry_net_price_decimal,
+            last_price_change_ts=time(),  # Initialize with current time
             buy_amount=buy_amount,
             total_net_sol_swapout_amount_raw=total_net_sol_swapout_amount_raw,
             total_net_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
@@ -161,11 +168,6 @@ class Position:
         """
         if not self.is_active:
             return False, None
-
-        # Update highest price for trailing stop tracking
-        if self.highest_price is None or current_price > self.highest_price:
-            self.highest_price = current_price
-#            logger.info(f"Highest price updated to {self.highest_price}")
 
         # Check take profit
         if self.take_profit_price and current_price >= self.take_profit_price:
@@ -195,6 +197,17 @@ class Position:
 #                logger.info(f"elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time}")
                 return True, ExitReason.MAX_HOLD_TIME
 #            logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
+
+        # Check max no price change time
+        if self.max_no_price_change_time and self.last_price_change_ts is not None:
+            current_time = time()
+            time_since_price_change = current_time - self.last_price_change_ts
+            if time_since_price_change >= self.max_no_price_change_time:
+                logger.info(f"time_since_price_change {time_since_price_change} >= max_no_price_change_time {self.max_no_price_change_time}")
+                return True, ExitReason.NO_PRICE_CHANGE
+            logger.info(f"time_since_price_change {time_since_price_change} < max_no_price_change_time {self.max_no_price_change_time}")
+        else:
+            logger.info(f"max_no_price_change_time is not set : {self.max_no_price_change_time} and {self.last_price_change_ts}")
 
         return False, None
 
