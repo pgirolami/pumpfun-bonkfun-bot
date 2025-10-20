@@ -24,20 +24,20 @@ trade:
   buy_amount: 0.001 # Amount of SOL to spend when buying (in SOL)
   buy_slippage: 0.3 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.99
-  max_active_mints: 2 # Maximum concurrent active positions (YOLO mode only)
+  max_active_mints: 1 # Maximum concurrent active positions (YOLO mode only)
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual"
   take_profit_percentage: 0.7 # Take profit (0.1 = 10%)
   stop_loss_percentage: 0.25 # Stop loss (0.1 = 10%)
-  max_hold_time: 120 # Maximum hold time in seconds (600 = 10 minutes)
+  max_hold_time: 600 # Maximum hold time in seconds (600 = 10 minutes)
   price_check_interval: 2 # Check price every 2 seconds
 
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot calculates token amount based on platform starting price and buy_amount for precision.
   extreme_fast_mode: true
-  max_no_price_change_time: 15 # Maximum time in seconds without price change
+  max_no_price_change_time: 10 # Maximum time in seconds without price change
 
 # Priority fee configuration
 # Manage transaction speed and cost on the Solana network.
@@ -63,7 +63,7 @@ filters:
   listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
-  yolo_mode: false # Continuously trade tokens
+  yolo_mode: true # Continuously trade tokens
 
 # Retry and timeout settings
 retries:

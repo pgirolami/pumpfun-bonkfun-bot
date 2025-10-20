@@ -205,7 +205,7 @@ class Position:
             if time_since_price_change >= self.max_no_price_change_time:
                 logger.info(f"time_since_price_change {time_since_price_change} >= max_no_price_change_time {self.max_no_price_change_time}")
                 return True, ExitReason.NO_PRICE_CHANGE
-            logger.info(f"time_since_price_change {time_since_price_change} < max_no_price_change_time {self.max_no_price_change_time}")
+            # logger.info(f"time_since_price_change {time_since_price_change} < max_no_price_change_time {self.max_no_price_change_time}")
         else:
             logger.info(f"max_no_price_change_time is not set : {self.max_no_price_change_time} and {self.last_price_change_ts}")
 
