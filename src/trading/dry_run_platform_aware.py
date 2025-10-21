@@ -61,8 +61,15 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         
         # Create a mock balance change result
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
+#        logger.info(f"Analyzing balance changes for buy order {order}")
 
-        sol_swap_amount_raw = - await self.curve_manager.calculate_sell_amount_out(pool_address=self._get_pool_address(order.token_info,None), amount_in=order.token_amount_raw)
+        sol_swap_amount_raw = None
+        while not sol_swap_amount_raw:
+            try:
+                sol_swap_amount_raw = - await self.curve_manager.calculate_sell_amount_out(pool_address=self._get_pool_address(order.token_info,None), amount_in=order.token_amount_raw)
+            except Exception:
+                logger.info("Could not retrieve sell amount, account isn't propagated yet. Sleep for 2s and retrying")
+                asyncio.sleep(2.0)
 
         return BalanceChangeResult(
             token_swap_amount_raw=order.token_amount_raw,
