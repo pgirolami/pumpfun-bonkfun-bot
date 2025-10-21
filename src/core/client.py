@@ -37,27 +37,34 @@ logger = get_logger(__name__)
 class SolanaClient:
     """Abstraction for Solana RPC client operations."""
 
-    def __init__(self, rpc_endpoint: str):
+    def __init__(self, rpc_endpoint: str, blockhash_update_interval: float = 10.0):
         """Initialize Solana client with RPC endpoint.
 
         Args:
             rpc_endpoint: URL of the Solana RPC endpoint
+            blockhash_update_interval: Interval in seconds to update cached blockhash
         """
         self.rpc_endpoint = rpc_endpoint
         self._client = None
         self._cached_blockhash: Hash | None = None
         self._blockhash_lock = asyncio.Lock()
+        self._blockhash_update_interval = blockhash_update_interval
         self._blockhash_updater_task = asyncio.create_task(
             self.start_blockhash_updater()
         )
 
-    async def start_blockhash_updater(self, interval: float = 5.0):
+    async def start_blockhash_updater(self, interval: float | None = None):
         """Start background task to update recent blockhash."""
+        if interval is None:
+            interval = self._blockhash_update_interval
+            
+        logger.info(f"Starting blockhash updater with {interval}s interval")
         while True:
             try:
                 blockhash = await self.get_latest_blockhash()
                 async with self._blockhash_lock:
                     self._cached_blockhash = blockhash
+                logger.debug(f"Updated cached blockhash: {blockhash}")
             except Exception as e:
                 logger.warning(f"Blockhash fetch failed: {e!s}")
             finally:
@@ -67,7 +74,13 @@ class SolanaClient:
         """Return the most recently cached blockhash."""
         async with self._blockhash_lock:
             if self._cached_blockhash is None:
-                raise RuntimeError("No cached blockhash available yet")
+                logger.warning("No cached blockhash available, fetching fresh one...")
+                # Fallback to fresh fetch if cache is empty
+                blockhash = await self.get_latest_blockhash()
+                self._cached_blockhash = blockhash
+                logger.info(f"Fetched fresh blockhash: {blockhash}")
+            else:
+                logger.debug(f"Using cached blockhash: {self._cached_blockhash}")
             return self._cached_blockhash
 
     async def get_client(self) -> AsyncClient:

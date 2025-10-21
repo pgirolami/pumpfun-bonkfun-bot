@@ -162,6 +162,8 @@ async def start_bot(config_path: str):
             testing=cfg.get("testing"),
             # Database configuration
             database_manager=database_manager,
+            # Blockhash caching configuration
+            blockhash_update_interval=cfg.get("blockhash", {}).get("update_interval", 10.0),
         )
 
         await trader.start()

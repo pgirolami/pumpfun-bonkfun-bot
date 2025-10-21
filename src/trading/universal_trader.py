@@ -85,10 +85,12 @@ class UniversalTrader:
         database_manager=None,
         # Parallel position configuration
         max_active_mints: int = 1,
+        # Blockhash caching configuration
+        blockhash_update_interval: float = 10.0,
     ):
         """Initialize the universal trader."""
         # Core components
-        self.solana_client = SolanaClient(rpc_endpoint)
+        self.solana_client = SolanaClient(rpc_endpoint, blockhash_update_interval)
         self.wallet = wallet
         self.priority_fee_manager = PriorityFeeManager(
             client=self.solana_client,
