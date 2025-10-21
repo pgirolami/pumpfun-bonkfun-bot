@@ -87,7 +87,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
                             if not token_info:
                                 continue
 
-                            logger.info(
+                            logger.debug(
                                 f"New token detected: {token_info.name} ({token_info.symbol}) on {token_info.platform.value}"
                             )
 
@@ -96,7 +96,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
                                 match_string.lower() in token_info.name.lower()
                                 or match_string.lower() in token_info.symbol.lower()
                             ):
-                                logger.info(
+                                logger.warning(
                                     f"Token does not match filter '{match_string}'. Skipping..."
                                 )
                                 continue

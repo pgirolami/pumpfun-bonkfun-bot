@@ -43,7 +43,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
     
     async def _confirm_transaction(self, tx_signature: str):
         """Override to simulate transaction confirmation."""
-        logger.info(f"Simulating transaction confirmation: {tx_signature}")
+        logger.debug(f"Simulating transaction confirmation: {tx_signature}")
         await asyncio.sleep(self.dry_run_wait_time)
         
         # Return a mock confirmation result
@@ -108,9 +108,8 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
     
     async def _confirm_transaction(self, tx_signature: str):
         """Override to simulate transaction confirmation."""
-        logger.info(f"Simulating transaction confirmation: {tx_signature} by sleeping for {self.dry_run_wait_time} seconds")
+        logger.debug(f"Simulating transaction confirmation: {tx_signature} by sleeping for {self.dry_run_wait_time} seconds")
         await asyncio.sleep(self.dry_run_wait_time)
-        logger.info(f"Simulating transaction confirmation: {tx_signature} - proceding")
         
         # Return a mock confirmation result
         from core.client import SolanaClient
@@ -124,7 +123,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
     
     async def _analyze_balance_changes(self, order: SellOrder):
         """Override to simulate balance analysis for dry-run."""
-        logger.info(f"Simulating balance analysis for sell order")
+        # logger.info(f"Simulating balance analysis for sell order")
         
         # Create a mock balance change result
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult

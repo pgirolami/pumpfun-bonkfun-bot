@@ -450,9 +450,9 @@ class UniversalTrader:
         # Enforce max_active_mints globally (including resumed positions and reserved slots)
         total_slots = len(self.active_mints) + len(self.reserved_mints)
         if total_slots >= self.max_active_mints:
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({total_slots}/{self.max_active_mints})"
-            )
+            # logger.info(
+            #     f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({total_slots}/{self.max_active_mints})"
+            # )
             return
 
         # Reserve the buy slot immediately
@@ -462,7 +462,7 @@ class UniversalTrader:
         self.token_timestamps[token_key] = monotonic()
 
         await self.token_queue.put(token_info)
-        logger.info(
+        logger.debug(
             f"Queued new token: {token_info.symbol} ({token_info.mint}) on {token_info.platform.value} (slot reserved)"
         )
 
@@ -489,7 +489,7 @@ class UniversalTrader:
                 )
 
                 if token_age > self.max_token_age:
-                    logger.info(
+                    logger.debug(
                         f"[{self._mint_prefix(token_info.mint)}] Skipping - too old ({token_age:.1f}s)"
                     )
                     continue
@@ -552,7 +552,7 @@ class UniversalTrader:
                 f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} on {token_info.platform.value}..."
             )
             buy_result = await self.buyer.execute(token_info)
-            logger.info(
+            logger.debug(
                 f"[{self._mint_prefix(token_info.mint)}] Buy result is {buy_result}"
             )
 
@@ -618,10 +618,7 @@ class UniversalTrader:
     ) -> None:
         """Handle successful token purchase."""
         logger.info(
-            f"[{self._mint_prefix(token_info.mint)}] Successfully bought {token_info.symbol} on {token_info.platform.value}"
-        )
-        logger.info(
-            f"[{self._mint_prefix(token_info.mint)}] buy_result.tx_signature: {buy_result.tx_signature}"
+            f"[{self._mint_prefix(token_info.mint)}] Successfully bought {token_info.symbol} on {token_info.platform.value} in transaction {str(buy_result.tx_signature)}"
         )
         # Move from reserved to active (slot was already reserved when queued)
         if token_info.mint in self.reserved_mints:
@@ -708,17 +705,6 @@ class UniversalTrader:
         self, token_info: TokenInfo, position: Position
     ) -> None:
         """Handle take profit/stop loss exit strategy."""
-        logger.info(
-            f"[{self._mint_prefix(token_info.mint)}] Created position: {position}"
-        )
-        if position.take_profit_price:
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Take profit target: {position.take_profit_price:.8f} SOL"
-            )
-        if position.stop_loss_price:
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Stop loss target: {position.stop_loss_price:.8f} SOL"
-            )
 
         # Monitor position until exit condition is met
         await self._monitor_position_until_exit(token_info, position)
@@ -727,21 +713,6 @@ class UniversalTrader:
         self, token_info: TokenInfo, position: Position
     ) -> None:
         """Handle trailing stop exit strategy (no fixed take profit)."""
-        logger.info(
-            f"[{self._mint_prefix(token_info.mint)}] Created trailing position: {position}"
-        )
-        if position.trailing_stop_percentage is not None:
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Trailing stop: {position.trailing_stop_percentage * 100:.2f}% (updates with highs)"
-            )
-        if position.take_profit_price:
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Take profit target: {position.take_profit_price:.10f} SOL"
-            )
-        if position.stop_loss_price:
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Stop loss target: {position.stop_loss_price:.10f} SOL"
-            )
 
         await self._monitor_position_until_exit(token_info, position)
 
@@ -761,7 +732,7 @@ class UniversalTrader:
 
         if sell_result.success:
             logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Successfully sold {token_info.symbol}"
+                f"[{self._mint_prefix(token_info.mint)}] Successfully sold {token_info.symbol} in transaction {str(sell_result.tx_signature)}"
             )
 
             # Always cleanup ATA after sell
@@ -848,7 +819,7 @@ class UniversalTrader:
 
                     # Execute sell
                     sell_result = await self.seller.execute(token_info, position)
-                    logger.info(
+                    logger.debug(
                         f"[{self._mint_prefix(token_info.mint)}] Sell result: {sell_result}"
                     )
 

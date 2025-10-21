@@ -63,19 +63,19 @@ class PlatformAwareBuyer(Trader):
             # Calculate token amount based on buy amount and starting price
             order.token_amount_raw = int((self.amount / starting_price_sol) * 10**TOKEN_DECIMALS)
             order.token_price_sol = starting_price_sol
-            logger.info(f"Extreme fast mode: calculated {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens at starting price {starting_price_sol:.8f} SOL")
+            # logger.info(f"Extreme fast mode: calculated {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens at starting price {starting_price_sol:.8f} SOL")
         else:
             pool_address = self._get_pool_address(token_info, address_provider)
             order.token_price_sol = await curve_manager.calculate_price(pool_address)
             order.token_amount_raw = int((self.amount / order.token_price_sol) * 10**TOKEN_DECIMALS) if order.token_price_sol > 0 else 0
 
-        logger.info(f"Token price computed on-chain: {order.token_price_sol:.8f} SOL")
+        # logger.info(f"Token price computed on-chain: {order.token_price_sol:.8f} SOL")
 
         # Calculate minimum with slippage
         order.minimum_token_swap_amount_raw = int(order.token_amount_raw * (1 - self.slippage))
 
-        logger.info(f"Amount to spend: {self.amount:.6f} SOL => expected token amount: {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens"
-        f", slippage: {self.slippage:.2f} so expected minimum token amount: {order.minimum_token_swap_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens")
+        # logger.info(f"Amount to spend: {self.amount:.6f} SOL => expected token amount: {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens"
+        # f", slippage: {self.slippage:.2f} so expected minimum token amount: {order.minimum_token_swap_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens")
 
         # Get compute units and priority fee
         order.compute_unit_limit = instruction_builder.get_buy_compute_unit_limit(
@@ -146,12 +146,12 @@ class PlatformAwareBuyer(Trader):
 
             # Confirm and analyze
             confirm_result = await self._confirm_transaction(order.tx_signature)
-            logger.info(f"Confirm result is {confirm_result}")
+            logger.debug(f"Confirm result is {confirm_result}")
 
             balance_changes = None
             try:
                 balance_changes = await self._analyze_balance_changes(order)
-                logger.info(f"Balance analysis resulted in {balance_changes}")
+                # logger.info(f"Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances")
                 logger.exception(e)
@@ -173,7 +173,7 @@ class PlatformAwareBuyer(Trader):
             if not confirm_result.success:
                 result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
 
-            logger.info(f"Buy trade completed in {trade_duration_ms}ms")
+            # logger.info(f"Buy trade completed in {trade_duration_ms}ms")
             return result
 
         except Exception as e:
@@ -251,13 +251,13 @@ class PlatformAwareSeller(Trader):
 
         # Calculate decimal amount for logging
         token_balance_decimal = order.token_amount_raw / 10**TOKEN_DECIMALS
-        logger.info(f"Token balance: {token_balance_decimal}")
+        # logger.info(f"Token balance: {token_balance_decimal}")
 
         # Get pool address and current price
         pool_address = self._get_pool_address(token_info, address_provider)
         order.token_price_sol = await curve_manager.calculate_price(pool_address)
 
-        logger.info(f"Price per Token: {order.token_price_sol:.8f} SOL")
+        # logger.info(f"Price per Token: {order.token_price_sol:.8f} SOL")
 
         # Calculate expected SOL output
         expected_sol_output = token_balance_decimal * order.token_price_sol
@@ -268,11 +268,11 @@ class PlatformAwareSeller(Trader):
             (expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL
         )
 
-        logger.info(f"Selling {token_balance_decimal} tokens on {token_info.platform.value}")
-        logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
-        logger.info(
-            f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {order.minimum_sol_swap_amount_raw / LAMPORTS_PER_SOL:.8f} SOL"
-        )
+        # logger.info(f"Selling {token_balance_decimal} tokens on {token_info.platform.value}")
+        # logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
+        # logger.info(
+        #     f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {order.minimum_sol_swap_amount_raw / LAMPORTS_PER_SOL:.8f} SOL"
+        # )
 
         # Get compute units and priority fee
         order.compute_unit_limit = instruction_builder.get_sell_compute_unit_limit(
@@ -347,7 +347,7 @@ class PlatformAwareSeller(Trader):
             balance_changes = None
             try:
                 balance_changes = await self._analyze_balance_changes(order)
-                logger.info(f"Balance changes ={balance_changes}")
+                # logger.info(f"Balance changes ={balance_changes}")
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances: {e}")
 
@@ -368,7 +368,7 @@ class PlatformAwareSeller(Trader):
             if not confirm_result.success:
                 result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
 
-            logger.info(f"Sell trade completed in {trade_duration_ms}ms")
+            # logger.info(f"Sell trade completed in {trade_duration_ms}ms")
             return result
 
         except Exception as e:

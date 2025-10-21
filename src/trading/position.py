@@ -278,7 +278,7 @@ class Position:
             current_time = time()
             time_since_price_change = current_time - self.last_price_change_ts
             if time_since_price_change >= self.max_no_price_change_time:
-                logger.info(f"time_since_price_change {time_since_price_change} >= max_no_price_change_time {self.max_no_price_change_time}")
+                # logger.info(f"time_since_price_change {time_since_price_change} >= max_no_price_change_time {self.max_no_price_change_time}")
                 return True, ExitReason.NO_PRICE_CHANGE
             # logger.info(f"time_since_price_change {time_since_price_change} < max_no_price_change_time {self.max_no_price_change_time}")
         else:
