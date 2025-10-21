@@ -147,7 +147,77 @@ class Position:
             total_net_sol_swapout_amount_raw=total_net_sol_swapout_amount_raw,
             total_net_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
         )
+        
+        # Apply exit strategy configuration to override raw percentages
+        result._apply_exit_strategy_config(
+            exit_strategy=exit_strategy,
+            take_profit_percentage=take_profit_percentage,
+            stop_loss_percentage=stop_loss_percentage,
+            trailing_stop_percentage=trailing_stop_percentage,
+            max_hold_time=max_hold_time,
+            max_no_price_change_time=max_no_price_change_time,
+        )
+        
         return result
+
+    def _apply_exit_strategy_config(
+        self,
+        exit_strategy: str,
+        take_profit_percentage: float | None,
+        stop_loss_percentage: float | None,
+        trailing_stop_percentage: float | None,
+        max_hold_time: int | None,
+        max_no_price_change_time: int | None,
+    ) -> None:
+        """Apply exit strategy configuration to override raw percentages.
+        
+        This method ensures that the position's exit conditions are set correctly
+        based on the exit strategy, overriding any raw percentage calculations.
+        """
+        self.exit_strategy = exit_strategy
+        entry_price = self.entry_net_price_decimal
+        
+        if entry_price is not None:
+            if exit_strategy == "tp_sl":
+                # Take profit and stop loss strategy
+                self.take_profit_price = (
+                    entry_price * (1 + take_profit_percentage)
+                    if take_profit_percentage is not None
+                    else None
+                )
+                self.stop_loss_price = (
+                    entry_price * (1 - stop_loss_percentage)
+                    if stop_loss_percentage is not None
+                    else None
+                )
+                self.trailing_stop_percentage = None
+            elif exit_strategy == "trailing":
+                # Trailing stop strategy - no fixed stop loss
+                self.take_profit_price = (
+                    entry_price * (1 + take_profit_percentage)
+                    if take_profit_percentage is not None
+                    else None
+                )
+                self.stop_loss_price = None  # No fixed stop loss for trailing
+                self.trailing_stop_percentage = trailing_stop_percentage
+            elif exit_strategy == "time_based":
+                # Time-based strategy - only take profit, no stop loss
+                self.take_profit_price = (
+                    entry_price * (1 + take_profit_percentage)
+                    if take_profit_percentage is not None
+                    else None
+                )
+                self.stop_loss_price = None
+                self.trailing_stop_percentage = None
+            elif exit_strategy == "manual":
+                # Manual strategy - no automatic exits
+                self.take_profit_price = None
+                self.stop_loss_price = None
+                self.trailing_stop_percentage = None
+        
+        # Update timing configuration
+        self.max_hold_time = max_hold_time
+        self.max_no_price_change_time = max_no_price_change_time
 
     def get_current_token_balance_raw(self) -> int:
         """Get current token balance available to sell.

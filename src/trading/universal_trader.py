@@ -885,12 +885,12 @@ class UniversalTrader:
                                 )
                             except Exception as e:
                                 logger.exception(
-                                    f"Failed to persist sell trade to database: {e}"
+                                    f"[{self._mint_prefix(token_info.mint)}] Failed to persist sell trade to database: {e}"
                                 )
 
                         # Log final PnL
                         final_pnl = position._get_pnl()
-                        logger.info(f"Final net PnL: {final_pnl}")
+                        logger.info(f"[{self._mint_prefix(token_info.mint)}] Final net PnL: {final_pnl}")
 
                         # Always cleanup ATA after sell
                         if not self.dry_run:
@@ -994,8 +994,14 @@ class UniversalTrader:
                 continue
 
             # Apply current exit configuration to the loaded position
-            self._apply_current_exit_config(position)
-
+            position._apply_exit_strategy_config(
+                exit_strategy=self.exit_strategy,
+                take_profit_percentage=self.take_profit_percentage,
+                stop_loss_percentage=self.stop_loss_percentage,
+                trailing_stop_percentage=self.trailing_stop_percentage,
+                max_hold_time=self.max_hold_time,
+                max_no_price_change_time=self.max_no_price_change_time,
+            )
             # Track as active and start monitoring task
             self.active_mints.add(position.mint)
             task_key = str(position.mint)
@@ -1006,51 +1012,9 @@ class UniversalTrader:
 
     def _apply_current_exit_config(self, position: Position) -> None:
         """Override exit strategy thresholds using current bot config."""
-        position.exit_strategy = self.exit_strategy
+        # Use the Position's built-in method to avoid code duplication
 
-        entry_price = position.entry_net_price_decimal
-        if entry_price is not None:
-            if self.exit_strategy == "tp_sl":
-                position.take_profit_price = (
-                    entry_price * (1 + self.take_profit_percentage)
-                    if self.take_profit_percentage is not None
-                    else None
-                )
-                position.stop_loss_price = (
-                    entry_price * (1 - self.stop_loss_percentage)
-                    if self.stop_loss_percentage is not None
-                    else None
-                )
-                position.trailing_stop_percentage = None
-            elif self.exit_strategy == "trailing":
-                position.take_profit_price = (
-                    entry_price * (1 + self.take_profit_percentage)
-                    if self.take_profit_percentage is not None
-                    else None
-                )
-                position.stop_loss_price = None
-                position.trailing_stop_percentage = self.trailing_stop_percentage
-            elif self.exit_strategy == "time_based":
-                position.take_profit_price = (
-                    entry_price * (1 + self.take_profit_percentage)
-                    if self.take_profit_percentage is not None
-                    else None
-                )
-                position.stop_loss_price = None
-                position.trailing_stop_percentage = None
-            elif self.exit_strategy == "manual":
-                position.take_profit_price = None
-                position.stop_loss_price = None
-                position.trailing_stop_percentage = None
-
-        # Ensure highest price has a sane default
-        if position.highest_price is None and entry_price is not None:
-            position.highest_price = entry_price
-
-        # Update max_hold_time and max_no_price_change_time from current config
-        position.max_hold_time = self.max_hold_time
-        position.max_no_price_change_time = self.max_no_price_change_time
-
+        
     async def _monitor_resumed_position(
         self, token_info: TokenInfo, position: Position
     ) -> None:
