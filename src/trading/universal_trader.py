@@ -736,6 +736,14 @@ class UniversalTrader:
             logger.info(
                 f"[{self._mint_prefix(token_info.mint)}] Trailing stop: {position.trailing_stop_percentage * 100:.2f}% (updates with highs)"
             )
+        if position.take_profit_price:
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Take profit target: {position.take_profit_price:.8f} SOL"
+            )
+        if position.stop_loss_price:
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Stop loss target: {position.stop_loss_price:.8f} SOL"
+            )
 
         await self._monitor_position_until_exit(token_info, position)
 
@@ -1015,11 +1023,19 @@ class UniversalTrader:
                 )
                 position.trailing_stop_percentage = None
             elif self.exit_strategy == "trailing":
-                position.take_profit_price = None
+                position.take_profit_price = (
+                    entry_price * (1 + self.take_profit_percentage)
+                    if self.take_profit_percentage is not None
+                    else None
+                )
                 position.stop_loss_price = None
                 position.trailing_stop_percentage = self.trailing_stop_percentage
             elif self.exit_strategy == "time_based":
-                position.take_profit_price = None
+                position.take_profit_price = (
+                    entry_price * (1 + self.take_profit_percentage)
+                    if self.take_profit_percentage is not None
+                    else None
+                )
                 position.stop_loss_price = None
                 position.trailing_stop_percentage = None
             elif self.exit_strategy == "manual":
