@@ -192,13 +192,18 @@ class Position:
                 )
                 self.trailing_stop_percentage = None
             elif exit_strategy == "trailing":
-                # Trailing stop strategy - no fixed stop loss
+                # Trailing stop strategy - can have both fixed stop loss and trailing stop
                 self.take_profit_price = (
                     entry_price * (1 + take_profit_percentage)
                     if take_profit_percentage is not None
                     else None
                 )
-                self.stop_loss_price = None  # No fixed stop loss for trailing
+                # Allow fixed stop loss for trailing strategy (protects against immediate drops)
+                self.stop_loss_price = (
+                    entry_price * (1 - stop_loss_percentage)
+                    if stop_loss_percentage is not None
+                    else None
+                )
                 self.trailing_stop_percentage = trailing_stop_percentage
             elif exit_strategy == "time_based":
                 # Time-based strategy - only take profit, no stop loss

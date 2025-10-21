@@ -53,6 +53,7 @@ class UniversalTrader:
         exit_strategy: str = "time_based",
         take_profit_percentage: float | None = None,
         stop_loss_percentage: float | None = None,
+        trailing_stop_percentage: float | None = None,
         max_hold_time: int | None = None,
         max_no_price_change_time: int | None = None,
         price_check_interval: int = 10,
@@ -230,10 +231,7 @@ class UniversalTrader:
         self.exit_strategy = exit_strategy.lower()
         self.take_profit_percentage = take_profit_percentage
         self.stop_loss_percentage = stop_loss_percentage
-        self.trailing_stop_percentage: float | None = None
-        if self.exit_strategy == "trailing":
-            # Use stop_loss_percentage input as trailing percentage if provided
-            self.trailing_stop_percentage = stop_loss_percentage
+        self.trailing_stop_percentage = trailing_stop_percentage
         self.max_hold_time = max_hold_time
         self.max_no_price_change_time = max_no_price_change_time
         self.price_check_interval = price_check_interval

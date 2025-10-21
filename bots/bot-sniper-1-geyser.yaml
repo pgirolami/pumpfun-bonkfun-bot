@@ -29,9 +29,10 @@ trade:
   max_active_mints: 1 # Maximum concurrent active positions (YOLO mode only)
 
   # Exit strategy configuration
-  exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual"
+  exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual", "trailing"
   #take_profit_percentage: 0.1 # Take profit at 10% gain (0.1 = 10%)
   #stop_loss_percentage: 0.1 # Stop loss at 10% loss (0.1 = 10%)
+  #trailing_stop_percentage: 0.2 # Trailing stop at 20% from highest price (0.2 = 20%)
   max_hold_time: 15 # Maximum hold time in seconds
   #price_check_interval: 2 # Check price every 2 seconds
 
@@ -78,6 +79,13 @@ cleanup:
   # Always cleanup ATAs after successful sell (mode removed)
   force_close_with_burn: false # Force burning remaining tokens before closing account
   with_priority_fee: false # Use priority fees for cleanup transactions
+
+# Blockhash caching configuration
+# Optimize RPC calls by caching recent blockhash
+blockhash:
+  update_interval: 15.0 # Update cached blockhash every 15 seconds (default: 10.0)
+  # Note: Solana blockhashes are valid for ~150 slots (~60-90 seconds)
+  # Higher values reduce RPC calls but may use slightly older blockhashes
 
 # Node provider configuration (not implemented)
 node:

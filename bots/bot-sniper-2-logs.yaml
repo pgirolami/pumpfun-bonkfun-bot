@@ -29,9 +29,10 @@ trade:
   max_active_mints: 1 # Maximum concurrent active positions (YOLO mode only)
 
   # Exit strategy configuration
-  exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual"
+  exit_strategy: "time_based" # Options: "time_based", "tp_sl", "manual", "trailing"
   take_profit_percentage: 0.4 # Take profit at 40% gain (0.4 = 40%)
   stop_loss_percentage: 0.4 # Stop loss at 40% loss (0.4 = 40%)
+  #trailing_stop_percentage: 0.2 # Trailing stop at 20% from highest price (0.2 = 20%)
   max_hold_time: 60 # Maximum hold time in seconds
   price_check_interval: 2 # Check price every 2 seconds
 

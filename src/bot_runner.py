@@ -107,6 +107,7 @@ async def start_bot(config_path: str):
             exit_strategy=cfg["trade"].get("exit_strategy", "time_based"),
             take_profit_percentage=cfg["trade"].get("take_profit_percentage"),
             stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),
+            trailing_stop_percentage=cfg["trade"].get("trailing_stop_percentage"),
             max_hold_time=cfg["trade"].get("max_hold_time"),
             max_no_price_change_time=cfg["trade"].get("max_no_price_change_time"),
             price_check_interval=cfg["trade"].get("price_check_interval", 10),
