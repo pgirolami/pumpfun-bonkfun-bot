@@ -69,7 +69,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 sol_swap_amount_raw = - await self.curve_manager.calculate_sell_amount_out(pool_address=self._get_pool_address(order.token_info,None), amount_in=order.token_amount_raw)
             except Exception:
                 logger.info("Could not retrieve sell amount, account isn't propagated yet. Sleep for 2s and retrying")
-                asyncio.sleep(2.0)
+                await asyncio.sleep(2.0)
 
         return BalanceChangeResult(
             token_swap_amount_raw=order.token_amount_raw,
