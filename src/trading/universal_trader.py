@@ -738,11 +738,11 @@ class UniversalTrader:
             )
         if position.take_profit_price:
             logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Take profit target: {position.take_profit_price:.8f} SOL"
+                f"[{self._mint_prefix(token_info.mint)}] Take profit target: {position.take_profit_price:.10f} SOL"
             )
         if position.stop_loss_price:
             logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Stop loss target: {position.stop_loss_price:.8f} SOL"
+                f"[{self._mint_prefix(token_info.mint)}] Stop loss target: {position.stop_loss_price:.10f} SOL"
             )
 
         await self._monitor_position_until_exit(token_info, position)
