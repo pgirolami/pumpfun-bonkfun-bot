@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS trades (
     platform_fee_raw INTEGER,
     price_decimal REAL,  -- calculated from trade result
     net_price_decimal REAL,  -- calculated net price
+    trade_duration_ms INTEGER,  -- Trade execution duration in milliseconds
     run_id TEXT NOT NULL,  -- Bot run identifier (timestamp + git hash)
     PRIMARY KEY (mint, timestamp)
 );

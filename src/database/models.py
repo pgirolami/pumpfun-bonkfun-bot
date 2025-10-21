@@ -217,6 +217,7 @@ class TradeConverter:
             trade_result.platform_fee_raw,
             trade_result.price_sol_decimal(),
             trade_result.net_price_sol_decimal(),
+            trade_result.trade_duration_ms,
             run_id,
         )
 
@@ -248,6 +249,7 @@ class TradeConverter:
             sol_swap_amount_raw=sol_swap_amount_raw,
             transaction_fee_raw=row[10],
             platform_fee_raw=row[11],
+            trade_duration_ms=row[14],  # trade_duration_ms
         )
 
 

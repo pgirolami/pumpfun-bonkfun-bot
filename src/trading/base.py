@@ -30,6 +30,7 @@ class TradeResult:
     sol_swap_amount_raw: int | None = None  # Raw SOL amount from balance change (including transaction fee)
     transaction_fee_raw: int | None = None  # Base + priority transaction fee in lamports (from meta.fee)
     platform_fee_raw: int | None = None  # Platform fee in lamports (includes creator + platform fees)
+    trade_duration_ms: int | None = None  # Trade execution duration in milliseconds
 
     def token_swap_amount_decimal(self) -> float | None:
         """Get token amount in decimal form.

@@ -3,6 +3,7 @@ Platform-aware trader implementations that use the interface system.
 Final cleanup removing all platform-specific hardcoding.
 """
 
+import time
 from solders.pubkey import Pubkey
 
 from core.client import SolanaClient
@@ -135,6 +136,7 @@ class PlatformAwareBuyer(Trader):
 
     async def execute(self, token_info: TokenInfo) -> TradeResult:
         """Execute buy operation using the order pattern."""
+        trade_start_time = time.time()
         try:
             # Prepare order (shared with dry-run)
             order = await self._prepare_buy_order(token_info)
@@ -154,6 +156,9 @@ class PlatformAwareBuyer(Trader):
                 logger.warning(f"Failed to analyze transaction balances")
                 logger.exception(e)
 
+            # Calculate trade duration
+            trade_duration_ms = int((time.time() - trade_start_time) * 1000)
+
             result = TradeResult(
                 success=confirm_result.success,
                 platform=order.token_info.platform,
@@ -163,16 +168,23 @@ class PlatformAwareBuyer(Trader):
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 sol_swap_amount_raw=balance_changes.sol_swap_amount_raw if balance_changes else None,
                 platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
+                trade_duration_ms=trade_duration_ms,
             )
             if not confirm_result.success:
                 result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
 
+            logger.info(f"Buy trade completed in {trade_duration_ms}ms")
             return result
 
         except Exception as e:
+            trade_duration_ms = int((time.time() - trade_start_time) * 1000)
             logger.exception("Buy operation failed")
+            logger.info(f"Failed buy trade took {trade_duration_ms}ms")
             return TradeResult(
-                success=False, platform=token_info.platform, error_message=str(e)
+                success=False, 
+                platform=token_info.platform, 
+                error_message=str(e),
+                trade_duration_ms=trade_duration_ms,
             )
 
     def _get_pool_address(
@@ -321,6 +333,7 @@ class PlatformAwareSeller(Trader):
 
     async def execute(self, token_info: TokenInfo, position: Position) -> TradeResult:
         """Execute sell operation using the order pattern."""
+        trade_start_time = time.time()
         try:
             # Prepare order (shared with dry-run)
             order = await self._prepare_sell_order(token_info, position)
@@ -338,6 +351,9 @@ class PlatformAwareSeller(Trader):
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances: {e}")
 
+            # Calculate trade duration
+            trade_duration_ms = int((time.time() - trade_start_time) * 1000)
+
             result = TradeResult(
                 success=confirm_result.success,
                 platform=order.token_info.platform,
@@ -347,17 +363,24 @@ class PlatformAwareSeller(Trader):
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
                 platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
+                trade_duration_ms=trade_duration_ms,
             )
             if not confirm_result.success:
                 result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
 
+            logger.info(f"Sell trade completed in {trade_duration_ms}ms")
             return result
 
         except Exception as e:
+            trade_duration_ms = int((time.time() - trade_start_time) * 1000)
             logger.exception("Sell operation failed")
             logger.exception(e)
+            logger.info(f"Failed sell trade took {trade_duration_ms}ms")
             return TradeResult(
-                success=False, platform=token_info.platform, error_message=str(e)
+                success=False, 
+                platform=token_info.platform, 
+                error_message=str(e),
+                trade_duration_ms=trade_duration_ms,
             )
 
     def _get_pool_address(
