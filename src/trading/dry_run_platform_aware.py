@@ -24,6 +24,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         super().__init__(*args, **kwargs)
         self.dry_run_wait_time = dry_run_wait_time
         self.curve_manager = curve_manager
+        self.PROPAGATION_SLEEP_TIME = 2.0
     
     async def _execute_transaction(self, order: BuyOrder) -> BuyOrder:
         """Override to simulate instead of actually sending transaction."""
@@ -51,8 +52,8 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 current_price = await self.curve_manager.calculate_price(pool_address)
                 order.token_price_sol = current_price
             except Exception:
-                logger.info("Could not retrieve SOL amount swapped, account isn't propagated yet. Sleep for 1s and retrying")
-                await asyncio.sleep(1.0)
+                logger.info(f"Could not retrieve SOL amount swapped, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
+                await asyncio.sleep(self.PROPAGATION_SLEEP_TIME)
         
         # Check if actual SOL cost exceeds slippage tolerance
         if actual_sol_cost_raw > order.max_sol_amount_raw:
