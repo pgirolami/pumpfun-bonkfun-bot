@@ -549,7 +549,7 @@ class UniversalTrader:
 
             # Buy token
             logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} on {token_info.platform.value}..."
+                f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} ({str(token_info.mint)})on {token_info.platform.value}..."
             )
             buy_result = await self.buyer.execute(token_info)
             logger.debug(
@@ -620,6 +620,7 @@ class UniversalTrader:
         logger.info(
             f"[{self._mint_prefix(token_info.mint)}] Successfully bought {token_info.symbol} on {token_info.platform.value} in transaction {str(buy_result.tx_signature)}"
         )
+        logger.info(f"Position: {position}")
         # Move from reserved to active (slot was already reserved when queued)
         if token_info.mint in self.reserved_mints:
             self.reserved_mints.remove(token_info.mint)
