@@ -71,10 +71,10 @@ class PlatformAwareBuyer(Trader):
 
         # logger.info(f"Token price computed on-chain: {order.token_price_sol:.8f} SOL")
 
-        # Calculate minimum with slippage
+        # Calculate minimum with slippage (for Let's Bonk)
         order.minimum_token_swap_amount_raw = int(order.token_amount_raw * (1 - self.slippage))
         
-        # Calculate maximum SOL cost with slippage tolerance
+        # Calculate maximum SOL cost with slippage tolerance (for PumpFun)
         order.max_sol_amount_raw = int(order.sol_amount_raw * (1 + self.slippage))
 
         # logger.info(f"Amount to spend: {self.amount:.6f} SOL => expected token amount: {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens"

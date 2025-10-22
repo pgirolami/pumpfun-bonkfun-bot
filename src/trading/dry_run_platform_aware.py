@@ -46,29 +46,36 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                     pool_address=pool_address, 
                     amount_in=order.token_amount_raw
                 )
+                
+                # Update the order with current price for accurate entry price calculation
+                current_price = await self.curve_manager.calculate_price(pool_address)
+                order.token_price_sol = current_price
             except Exception:
-                logger.info("Could not retrieve sell amount, account isn't propagated yet. Sleep for 1s and retrying")
+                logger.info("Could not retrieve SOL amount swapped, account isn't propagated yet. Sleep for 1s and retrying")
                 await asyncio.sleep(1.0)
-                
-            # Check if actual SOL cost exceeds slippage tolerance
-            if actual_sol_cost_raw > order.max_sol_amount_raw:
-                # Simulate slippage failure - still charge transaction fees
-                from core.pubkeys import LAMPORTS_PER_SOL
-                logger.warning(f"DRY RUN: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.6f} SOL, actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.6f} SOL")
-                order.tx_signature = f"DRYRUN_BUY_FAILED_{order.token_info.mint}_{int(time()*1000)}"
-                order.slippage_failed = True  # Add flag to indicate slippage failure
-                
-                # Still charge transaction fees even on slippage failure
-                order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
-                order.platform_fee_raw = 0  # No platform fee since no tokens were acquired
-                return order
+        
+        # Check if actual SOL cost exceeds slippage tolerance
+        if actual_sol_cost_raw > order.max_sol_amount_raw:
+            # Simulate slippage failure - still charge transaction fees
+            from core.pubkeys import LAMPORTS_PER_SOL
+            logger.warning(f"DRY RUN: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.6f} SOL, actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.6f} SOL")
+            order.tx_signature = f"DRYRUN_BUY_FAILED_{order.token_info.mint}_{int(time()*1000)}"
+            order.slippage_failed = True  # Add flag to indicate slippage failure
+            
+            # Still charge transaction fees even on slippage failure
+            order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
+            order.platform_fee_raw = 0  # No platform fee since no tokens were acquired
+            return order
         else:
             from core.pubkeys import LAMPORTS_PER_SOL
             logger.info(f"DRY RUN: Slippage check passed - actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.6f} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.6f} SOL)")
                     
         
         
-        order.platform_fee_raw = int(order.sol_amount_raw * 0.008)  # 0.8% estimate
+        # Get platform fee percentage from curve manager
+        platform_constants = await self.curve_manager.get_platform_constants()
+        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95))/100  # Default to 0.8% if not available
+        order.platform_fee_raw = int(order.sol_amount_raw * platform_fee_percentage)
         
         logger.info(f"Buy transaction simulated: {order.tx_signature}")
         return order
@@ -134,7 +141,10 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         
         # Calculate fees
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
-        order.platform_fee_raw = int(order.minimum_sol_swap_amount_raw * 0.008)  # 0.8% estimate
+        # Get platform fee percentage from curve manager
+        platform_constants = await self.curve_manager.get_platform_constants()
+        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95))/100  # Default to 0.8% if not available
+        order.platform_fee_raw = int(order.minimum_sol_swap_amount_raw * platform_fee_percentage)
         
         logger.info(f"Sell transaction simulated: {order.tx_signature}")
         return order
