@@ -36,6 +36,18 @@ trade:
   max_hold_time: 15 # Maximum hold time in seconds
   #price_check_interval: 2 # Check price every 2 seconds
 
+  # Volatility-based take profit adjustments (NEW FEATURE)
+  enable_volatility_adjustment: false # Enable volatility-based TP adjustments
+  volatility_window_seconds: 5.0 # Time window for volatility calculation
+  volatility_thresholds:
+    low: 0.05    # < 5% volatility per window = low
+    medium: 0.1  # 5-10% volatility per window = medium
+    # > 10% volatility per window = high
+  volatility_tp_adjustments:
+    low: 0.0      # No adjustment for low volatility
+    medium: 0.25  # Reduce TP by 25% for medium volatility
+    high: 0.45    # Reduce TP by 45% for high volatility
+
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot calculates token amount based on platform starting price and buy_amount for precision.

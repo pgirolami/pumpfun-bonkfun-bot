@@ -24,7 +24,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         super().__init__(*args, **kwargs)
         self.dry_run_wait_time = dry_run_wait_time
         self.curve_manager = curve_manager
-        self.PROPAGATION_SLEEP_TIME = 2.0
+        self.PROPAGATION_SLEEP_TIME = 3.0
     
     async def _execute_transaction(self, order: BuyOrder) -> BuyOrder:
         """Override to simulate instead of actually sending transaction."""

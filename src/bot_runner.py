@@ -165,6 +165,11 @@ async def start_bot(config_path: str):
             database_manager=database_manager,
             # Blockhash caching configuration
             blockhash_update_interval=cfg.get("blockhash", {}).get("update_interval", 10.0),
+            # Volatility-based adjustments
+            enable_volatility_adjustment=cfg.get("trade", {}).get("enable_volatility_adjustment", False),
+            volatility_window_seconds=cfg.get("trade", {}).get("volatility_window_seconds", 5.0),
+            volatility_thresholds=cfg.get("trade", {}).get("volatility_thresholds"),
+            volatility_tp_adjustments=cfg.get("trade", {}).get("volatility_tp_adjustments"),
         )
 
         await trader.start()

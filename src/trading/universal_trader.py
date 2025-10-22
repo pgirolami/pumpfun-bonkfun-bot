@@ -22,6 +22,7 @@ from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position import ExitReason, Position
 from utils.logger import get_logger
+from utils.volatility import VolatilityCalculator, calculate_take_profit_adjustment
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
@@ -88,6 +89,11 @@ class UniversalTrader:
         max_active_mints: int = 1,
         # Blockhash caching configuration
         blockhash_update_interval: float = 10.0,
+        # Volatility-based adjustments
+        enable_volatility_adjustment: bool = False,
+        volatility_window_seconds: float = 5.0,
+        volatility_thresholds: dict | None = None,
+        volatility_tp_adjustments: dict | None = None,
     ):
         """Initialize the universal trader."""
         # Core components
@@ -235,6 +241,19 @@ class UniversalTrader:
         self.max_hold_time = max_hold_time
         self.max_no_price_change_time = max_no_price_change_time
         self.price_check_interval = price_check_interval
+
+        # Volatility-based adjustments
+        self.enable_volatility_adjustment = enable_volatility_adjustment
+        self.volatility_window_seconds = volatility_window_seconds
+        self.volatility_thresholds = volatility_thresholds or {
+            'low': 0.05,    # < 5% per window
+            'medium': 0.1,  # 5-10% per window
+        }
+        self.volatility_tp_adjustments = volatility_tp_adjustments or {
+            'low': 0.0,      # No adjustment
+            'medium': 0.25,  # Reduce by 25%
+            'high': 0.45,    # Reduce by 45%
+        }
 
         # Timing parameters
         self.wait_time_after_creation = wait_time_after_creation
@@ -774,11 +793,20 @@ class UniversalTrader:
         
         # Track last price for change detection
         last_price = None
+        
+        # Initialize volatility calculator if enabled
+        volatility_calculator = None
+        if self.enable_volatility_adjustment:
+            volatility_calculator = VolatilityCalculator(self.volatility_window_seconds)
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Volatility adjustment enabled (window: {self.volatility_window_seconds}s)"
+            )
 
         while position.is_active:
             try:
                 # Get current price from pool/curve
                 current_price = await curve_manager.calculate_price(pool_address)
+                current_timestamp = time()
 
                 # Store price in database if available
                 if self.database_manager:
@@ -790,6 +818,37 @@ class UniversalTrader:
                         )
                     except Exception as e:
                         logger.exception(f"Failed to insert price history: {e}")
+
+                # Calculate volatility and adjust take profit if enabled
+                if volatility_calculator:
+                    volatility_calculator.add_price(current_price,current_timestamp)
+                    
+                    if volatility_calculator.has_sufficient_data(current_timestamp):
+                        previous_value = volatility_calculator._last_volatility
+                        volatility_level = volatility_calculator.get_volatility_level(current_timestamp)
+                        volatility_value = volatility_calculator.get_cached_volatility()
+                        
+                        if volatility_value is not None:
+                            
+                            # Adjust take profit based on volatility
+                            if position.take_profit_price and self.take_profit_percentage:
+                                original_tp_price = position.entry_net_price_decimal * (1 + self.take_profit_percentage)
+                                volatility_adjusted_take_profit_percentage = calculate_take_profit_adjustment(
+                                    self.take_profit_percentage,
+                                    volatility_level,
+                                    self.volatility_tp_adjustments
+                                )
+                                volatility_adjusted_take_profit_price = position.entry_net_price_decimal * (1 + volatility_adjusted_take_profit_percentage)
+                                
+                                # Only adjust if the new TP is more conservative (lower)
+                                if volatility_adjusted_take_profit_price != position.take_profit_price:
+                                    old_tp_price = position.take_profit_price
+                                    position.take_profit_price = volatility_adjusted_take_profit_price
+                                    logger.info(
+                                        f"[{self._mint_prefix(token_info.mint)}] TP adjusted due to {volatility_level} volatility: "
+                                        f"{old_tp_price:.8f} -> {volatility_adjusted_take_profit_price:.8f} SOL "
+                                        f"(reduction: {((old_tp_price - volatility_adjusted_take_profit_price) / old_tp_price * 100):.1f}%)"
+                                    )
 
                 # Update position fields based on current price
                 # Update highest_price if this is a new high
