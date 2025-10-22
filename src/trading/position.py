@@ -330,6 +330,25 @@ class Position:
         if self.is_active and current_price is None:
             raise ValueError("current_price required for active position")
 
+        # Special case for failed buys - only calculate loss from fees
+        if self.exit_reason == ExitReason.FAILED_BUY:
+            transaction_fee_raw = int(self.transaction_fee_raw or 0)
+            platform_fee_raw = int(self.platform_fee_raw or 0)
+            total_fees_raw = transaction_fee_raw + platform_fee_raw
+            total_fees_sol = float(total_fees_raw) / LAMPORTS_PER_SOL
+            
+            return {
+                "current_price": 0.0,
+                "net_price_change_decimal": 0.0,
+                "net_price_change_pct": 0.0,
+                "realized_pnl_sol_decimal": -total_fees_sol,  # Loss from fees only
+                "realized_net_pnl_sol_decimal": 0.0,  # No net PnL since no tokens were acquired
+                "quantity": 0.0,
+                "transaction_fee_raw": transaction_fee_raw,
+                "platform_fee_raw": platform_fee_raw,
+                "total_fees_raw": total_fees_raw,
+            }
+
         price_to_use = self.exit_net_price_decimal if not self.is_active else current_price
         if price_to_use is None:
             raise ValueError("No price available for PnL calculation")

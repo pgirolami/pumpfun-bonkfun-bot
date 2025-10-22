@@ -669,6 +669,17 @@ class UniversalTrader:
             f"[{self._mint_prefix(token_info.mint)}] Failed to buy {token_info.symbol}: {buy_result.error_message}"
         )
 
+        # Calculate realized PnL for failed buy (loss from fees only)
+        pnl_dict = position._get_pnl()
+        position.realized_pnl_sol_decimal = pnl_dict["realized_pnl_sol_decimal"]
+        position.realized_net_pnl_sol_decimal = pnl_dict["realized_net_pnl_sol_decimal"]
+        
+        from core.pubkeys import LAMPORTS_PER_SOL
+        logger.info(
+            f"[{self._mint_prefix(token_info.mint)}] Failed buy PnL: {position.realized_pnl_sol_decimal:.6f} SOL "
+            f"(fees: {pnl_dict['total_fees_raw'] / LAMPORTS_PER_SOL:.6f} SOL)"
+        )
+
         # Clean up reserved slot since buy failed
         if token_info.mint in self.reserved_mints:
             self.reserved_mints.remove(token_info.mint)
