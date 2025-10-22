@@ -56,9 +56,9 @@ def test_position_resuming_with_config():
     print(f"Entry time: {db_row[7]} (5 seconds ago)")
     print()
     
-    # Test 1: Resume with min_gain_percentage = 0.1 (10%)
-    print("Test 1: Resume with min_gain_percentage = 0.1 (10%)")
-    position_with_gain = PositionConverter.from_row(db_row, min_gain_percentage=0.1)
+    # Test 1: Resume with min_gain_percentage = 0.1 (10%) and time window = 2 seconds
+    print("Test 1: Resume with min_gain_percentage = 0.1 (10%) and time window = 2 seconds")
+    position_with_gain = PositionConverter.from_row(db_row, min_gain_percentage=0.1, min_gain_time_window=2)
     
     print(f"  Position min_gain_percentage: {position_with_gain.min_gain_percentage}")
     print(f"  Position min_gain_time_window: {position_with_gain.min_gain_time_window}")
@@ -73,7 +73,7 @@ def test_position_resuming_with_config():
     
     # Test 2: Resume with min_gain_percentage = None (disabled)
     print("Test 2: Resume with min_gain_percentage = None (disabled)")
-    position_disabled = PositionConverter.from_row(db_row, min_gain_percentage=None)
+    position_disabled = PositionConverter.from_row(db_row, min_gain_percentage=None, min_gain_time_window=2)
     
     print(f"  Position min_gain_percentage: {position_disabled.min_gain_percentage}")
     print(f"  Position min_gain_time_window: {position_disabled.min_gain_time_window}")
@@ -84,9 +84,9 @@ def test_position_resuming_with_config():
     print(f"  Should exit: {should_exit}, Reason: {reason}")
     print()
     
-    # Test 3: Resume with different min_gain_percentage = 0.05 (5%)
-    print("Test 3: Resume with min_gain_percentage = 0.05 (5%)")
-    position_low_gain = PositionConverter.from_row(db_row, min_gain_percentage=0.05)
+    # Test 3: Resume with different min_gain_percentage = 0.05 (5%) and time window = 3 seconds
+    print("Test 3: Resume with min_gain_percentage = 0.05 (5%) and time window = 3 seconds")
+    position_low_gain = PositionConverter.from_row(db_row, min_gain_percentage=0.05, min_gain_time_window=3)
     
     print(f"  Position min_gain_percentage: {position_low_gain.min_gain_percentage}")
     
@@ -140,7 +140,7 @@ def test_backward_compatibility():
     print()
     
     # Resume with current configuration
-    position = PositionConverter.from_row(old_db_row, min_gain_percentage=0.15)
+    position = PositionConverter.from_row(old_db_row, min_gain_percentage=0.15, min_gain_time_window=2)
     
     print(f"Resumed position with min_gain_percentage: {position.min_gain_percentage}")
     print(f"Entry time: {position.entry_ts} (10 seconds ago)")

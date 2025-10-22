@@ -172,6 +172,7 @@ async def start_bot(config_path: str):
             volatility_tp_adjustments=cfg.get("trade", {}).get("volatility_tp_adjustments"),
             # Insufficient gain exit condition
             min_gain_percentage=cfg.get("trade", {}).get("min_gain_percentage"),
+            min_gain_time_window=cfg.get("trade", {}).get("min_gain_time_window", 2),
         )
 
         await trader.start()

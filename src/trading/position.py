@@ -58,7 +58,7 @@ class Position:
     
     # Insufficient gain exit condition
     min_gain_percentage: float | None = None  # minimum gain required within time window
-    min_gain_time_window: int = 5  # seconds to check for minimum gain (hard-coded constant)
+    min_gain_time_window: int = 2  # seconds to check for minimum gain (configurable)
 
     # Status
     is_active: bool = True
@@ -99,6 +99,7 @@ class Position:
         max_hold_time: int | None,
         max_no_price_change_time: int | None = None,
         min_gain_percentage: float | None = None,
+        min_gain_time_window: int = 2,
     ) -> "Position":
         """Create a position from a successful buy transaction.
 
@@ -120,6 +121,7 @@ class Position:
             max_hold_time: Maximum hold time in seconds
             max_no_price_change_time: Maximum time without price change in seconds
             min_gain_percentage: Minimum gain percentage required within time window (0.1 = 10%)
+            min_gain_time_window: Time window in seconds to check for minimum gain (default: 2)
 
         Returns:
             Position instance
@@ -151,6 +153,7 @@ class Position:
             highest_price=entry_net_price_decimal,
             last_price_change_ts=time(),  # Initialize with current time
             min_gain_percentage=min_gain_percentage,
+            min_gain_time_window=min_gain_time_window,
             buy_amount=buy_amount,
             total_net_sol_swapout_amount_raw=total_net_sol_swapout_amount_raw,
             total_net_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells

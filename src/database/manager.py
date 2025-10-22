@@ -199,12 +199,13 @@ class DatabaseManager:
 
         logger.debug(f"Position updated: {position_id}")
 
-    async def get_position(self, position_id: str, min_gain_percentage: float | None = None) -> Position | None:
+    async def get_position(self, position_id: str, min_gain_percentage: float | None = None, min_gain_time_window: int = 2) -> Position | None:
         """Get position by ID.
 
         Args:
             position_id: Position ID
             min_gain_percentage: Current min_gain_percentage from bot configuration
+            min_gain_time_window: Current min_gain_time_window from bot configuration
 
         Returns:
             Position if found, None otherwise
@@ -216,14 +217,15 @@ class DatabaseManager:
             row = cursor.fetchone()
 
             if row:
-                return PositionConverter.from_row(tuple(row), min_gain_percentage)
+                return PositionConverter.from_row(tuple(row), min_gain_percentage, min_gain_time_window)
             return None
 
-    async def get_active_positions(self, min_gain_percentage: float | None = None) -> list[Position]:
+    async def get_active_positions(self, min_gain_percentage: float | None = None, min_gain_time_window: int = 2) -> list[Position]:
         """Get all active positions.
 
         Args:
             min_gain_percentage: Current min_gain_percentage from bot configuration
+            min_gain_time_window: Current min_gain_time_window from bot configuration
 
         Returns:
             List of active positions
@@ -232,7 +234,7 @@ class DatabaseManager:
             cursor = conn.execute("SELECT * FROM positions WHERE is_active = 1")
             rows = cursor.fetchall()
 
-            return [PositionConverter.from_row(tuple(row), min_gain_percentage) for row in rows]
+            return [PositionConverter.from_row(tuple(row), min_gain_percentage, min_gain_time_window) for row in rows]
 
     # Trade Operations
     async def insert_trade(

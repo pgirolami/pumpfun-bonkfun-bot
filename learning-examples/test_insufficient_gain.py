@@ -46,6 +46,7 @@ def test_insufficient_gain_exit():
         max_hold_time=60,
         max_no_price_change_time=None,
         min_gain_percentage=0.1,  # 10% minimum gain required
+        min_gain_time_window=2,  # 2 second time window
     )
     
     print(f"Position created with min_gain_percentage: {position.min_gain_percentage}")
@@ -124,6 +125,7 @@ def test_edge_cases():
         max_hold_time=60,
         max_no_price_change_time=None,
         min_gain_percentage=None,  # No minimum gain check
+        min_gain_time_window=2,  # 2 second time window (not used when disabled)
     )
     
     print(f"Position with min_gain_percentage: {position.min_gain_percentage}")

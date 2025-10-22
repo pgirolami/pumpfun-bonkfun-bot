@@ -139,12 +139,13 @@ class PositionConverter:
         )
 
     @staticmethod
-    def from_row(row: tuple, min_gain_percentage: float | None = None) -> Position:
+    def from_row(row: tuple, min_gain_percentage: float | None = None, min_gain_time_window: int = 2) -> Position:
         """Convert database row to Position instance.
 
         Args:
             row: Database row tuple
             min_gain_percentage: Current min_gain_percentage from bot configuration
+            min_gain_time_window: Current min_gain_time_window from bot configuration
 
         Returns:
             Position instance
@@ -176,6 +177,7 @@ class PositionConverter:
             total_net_sol_swapout_amount_raw=row[21],
             total_net_sol_swapin_amount_raw=row[22],
             min_gain_percentage=min_gain_percentage,  # Set from current configuration
+            min_gain_time_window=min_gain_time_window,  # Set from current configuration
         )
 
 

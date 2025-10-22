@@ -28,7 +28,7 @@ trade:
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual", "trailing"
-  take_profit_percentage: 1 # Take profit (0.1 = 10%)
+  take_profit_percentage: 0.8 # Take profit (0.1 = 10%)
   stop_loss_percentage: 0.01 # Stop loss (0.1 = 10%)
   trailing_stop_percentage: 0.1 # Trailing stop at 20% from highest price (0.2 = 20%)
   max_hold_time: 6000 # Maximum hold time in seconds (600 = 10 minutes)
@@ -36,7 +36,7 @@ trade:
 
   # Volatility-based take profit adjustments (NEW FEATURE)
   enable_volatility_adjustment: true # Enable volatility-based TP adjustments
-  volatility_window_seconds: 4.0 # Time window for volatility calculation
+  volatility_window_seconds: 3.0 # Time window for volatility calculation
   volatility_thresholds:
     low: 0.05    # < 5% volatility per window = low
     medium: 0.1  # 5-10% volatility per window = medium
@@ -47,7 +47,8 @@ trade:
     high: 0.45    # Reduce TP by 45% for high volatility
 
   # Insufficient gain exit condition (NEW FEATURE)
-  min_gain_percentage: 0.02 # Exit if not at least 10% gain within 2 seconds (0.1 = 10%)
+  min_gain_percentage: 0.02 # Exit if not at least 2% gain within time window (0.02 = 2%)
+  min_gain_time_window: 2 # Time window in seconds to check for minimum gain (default: 2)
 
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.

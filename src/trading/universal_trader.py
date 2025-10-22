@@ -96,6 +96,7 @@ class UniversalTrader:
         volatility_tp_adjustments: dict | None = None,
         # Insufficient gain exit condition
         min_gain_percentage: float | None = None,
+        min_gain_time_window: int = 2,
     ):
         """Initialize the universal trader."""
         # Core components
@@ -259,6 +260,7 @@ class UniversalTrader:
 
         # Insufficient gain exit condition
         self.min_gain_percentage = min_gain_percentage
+        self.min_gain_time_window = min_gain_time_window
 
         # Timing parameters
         self.wait_time_after_creation = wait_time_after_creation
@@ -602,6 +604,7 @@ class UniversalTrader:
                     max_hold_time=self.max_hold_time,
                     max_no_price_change_time=self.max_no_price_change_time,
                     min_gain_percentage=self.min_gain_percentage,
+                    min_gain_time_window=self.min_gain_time_window,
                 )
             else:
                 # Failed buy - create inactive position with None values
@@ -1014,7 +1017,8 @@ class UniversalTrader:
 
         try:
             positions = await self.database_manager.get_active_positions(
-                min_gain_percentage=self.min_gain_percentage
+                min_gain_percentage=self.min_gain_percentage,
+                min_gain_time_window=self.min_gain_time_window
             )
         except Exception as e:
             logger.exception(f"Error loading active positions: {e}")
