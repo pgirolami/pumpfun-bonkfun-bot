@@ -49,10 +49,14 @@ class BuyOrder(Order):
     
     # Input
     sol_amount_raw: int = 0  # SOL to spend in lamports
+    max_sol_amount_raw: int | None = None  # Max SOL cost with slippage tolerance
     
     # Calculated during preparation
     token_amount_raw: int | None = None  # Expected tokens (before slippage)
     minimum_token_swap_amount_raw: int | None = None  # Min tokens with slippage
+    
+    # Execution state
+    slippage_failed: bool = False  # Flag for dry-run slippage simulation
     
     @property
     def trade_type(self) -> str:

@@ -30,12 +30,41 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         # Simulate network latency
         logger.info(f"Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
-        
-        # Generate fake signature
-        order.tx_signature = f"DRYRUN_BUY_{order.token_info.mint}_{int(time()*1000)}"
-        
-        # Calculate fees
+
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
+
+        # Generate fake signature for successful transaction
+        order.tx_signature = f"DRYRUN_BUY_{order.token_info.mint}_{int(time()*1000)}"
+
+        # Simulate slippage validation - calculate actual SOL cost for fixed token amount
+        actual_sol_cost_raw = None
+        while not actual_sol_cost_raw:
+            try:
+                # Calculate actual SOL cost for the fixed token amount using curve manager
+                pool_address = self._get_pool_address(order.token_info, None)
+                actual_sol_cost_raw = await self.curve_manager.calculate_sell_amount_out(
+                    pool_address=pool_address, 
+                    amount_in=order.token_amount_raw
+                )
+            except Exception:
+                logger.info("Could not retrieve sell amount, account isn't propagated yet. Sleep for 1s and retrying")
+                await asyncio.sleep(1.0)
+                
+        # Check if actual SOL cost exceeds slippage tolerance
+        if actual_sol_cost_raw > order.max_sol_amount_raw:
+            # Simulate slippage failure
+            from core.pubkeys import LAMPORTS_PER_SOL
+            logger.warning(f"DRY RUN: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.6f} SOL, actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.6f} SOL")
+            order.tx_signature = f"DRYRUN_BUY_FAILED_{order.token_info.mint}_{int(time()*1000)}"
+            order.slippage_failed = True  # Add flag to indicate slippage failure
+            order.platform_fee_raw = 0
+            return order
+        else:
+            from core.pubkeys import LAMPORTS_PER_SOL
+            logger.info(f"DRY RUN: Slippage check passed - actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.6f} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.6f} SOL)")
+                    
+        
+        
         order.platform_fee_raw = int(order.sol_amount_raw * 0.008)  # 0.8% estimate
         
         logger.info(f"Buy transaction simulated: {order.tx_signature}")
@@ -43,16 +72,17 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
     
     async def _confirm_transaction(self, tx_signature: str):
         """Override to simulate transaction confirmation."""
-        logger.debug(f"Simulating transaction confirmation: {tx_signature}")
-        await asyncio.sleep(self.dry_run_wait_time)
+        
+        # Check if this was a slippage failure
+        is_slippage_failure = tx_signature.startswith("DRYRUN_BUY_FAILED_")
         
         # Return a mock confirmation result
         from core.client import SolanaClient
 
         return SolanaClient.ConfirmationResult(
-            success=True,
+            success=not is_slippage_failure,
             tx=tx_signature,
-            error_message=None,
+            error_message=f"Slippage tolerance exceeded" if is_slippage_failure else None,
             block_ts=int(time() * 1000),  # Current time for dry run
         )
     
@@ -68,7 +98,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             try:
                 sol_swap_amount_raw = - await self.curve_manager.calculate_sell_amount_out(pool_address=self._get_pool_address(order.token_info,None), amount_in=order.token_amount_raw)
             except Exception:
-                logger.info("Could not retrieve sell amount, account isn't propagated yet. Sleep for 2s and retrying")
+                logger.info("Could not retrieve SOL amount swapped, account isn't propagated yet. Sleep for 2s and retrying")
                 await asyncio.sleep(2.0)
 
         return BalanceChangeResult(
@@ -108,8 +138,6 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
     
     async def _confirm_transaction(self, tx_signature: str):
         """Override to simulate transaction confirmation."""
-        logger.debug(f"Simulating transaction confirmation: {tx_signature} by sleeping for {self.dry_run_wait_time} seconds")
-        await asyncio.sleep(self.dry_run_wait_time)
         
         # Return a mock confirmation result
         from core.client import SolanaClient

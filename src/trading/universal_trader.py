@@ -605,7 +605,7 @@ class UniversalTrader:
 
             # Only wait for next token in yolo mode
             if self.yolo_mode:
-                logger.info(
+                logger.debug(
                     f"YOLO mode enabled. Waiting {self.wait_time_before_new_token} seconds before looking for next token..."
                 )
                 await asyncio.sleep(self.wait_time_before_new_token)
