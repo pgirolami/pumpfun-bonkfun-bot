@@ -48,6 +48,9 @@ trade:
     medium: 0.25  # Reduce TP by 25% for medium volatility
     high: 0.45    # Reduce TP by 45% for high volatility
 
+  # Insufficient gain exit condition (NEW FEATURE)
+  # min_gain_percentage: 0.1 # Exit if not at least 10% gain within 2 seconds (0.1 = 10%)
+
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot calculates token amount based on platform starting price and buy_amount for precision.

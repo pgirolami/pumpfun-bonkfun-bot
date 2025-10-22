@@ -65,10 +65,10 @@ class SolanaClient:
                 async with self._blockhash_lock:
                     self._cached_blockhash = blockhash
                 logger.debug(f"Updated cached blockhash: {blockhash}")
+                await asyncio.sleep(interval)
             except Exception as e:
                 logger.warning(f"Blockhash fetch failed: {e!s}")
-            finally:
-                await asyncio.sleep(interval)
+                await asyncio.sleep(2.0)
 
     async def get_cached_blockhash(self) -> Hash:
         """Return the most recently cached blockhash."""

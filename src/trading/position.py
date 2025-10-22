@@ -25,6 +25,7 @@ class ExitReason(Enum):
     TRAILING_STOP = "trailing_stop"
     MAX_HOLD_TIME = "max_hold_time"
     NO_PRICE_CHANGE = "no_price_change"
+    INSUFFICIENT_GAIN = "insufficient_gain"
     MANUAL = "manual"
     FAILED_BUY = "failed_buy"
 
@@ -54,6 +55,10 @@ class Position:
     trailing_stop_percentage: float | None = None  # fraction (e.g., 0.2 for 20%)
     highest_price: float | None = None  # highest observed price since entry (already net decimal from on-chain)
     last_price_change_ts: float | None = None  # timestamp of last price change
+    
+    # Insufficient gain exit condition
+    min_gain_percentage: float | None = None  # minimum gain required within time window
+    min_gain_time_window: int = 5  # seconds to check for minimum gain (hard-coded constant)
 
     # Status
     is_active: bool = True
@@ -93,6 +98,7 @@ class Position:
         trailing_stop_percentage: float | None,
         max_hold_time: int | None,
         max_no_price_change_time: int | None = None,
+        min_gain_percentage: float | None = None,
     ) -> "Position":
         """Create a position from a successful buy transaction.
 
@@ -113,6 +119,7 @@ class Position:
             trailing_stop_percentage: Trailing stop percentage
             max_hold_time: Maximum hold time in seconds
             max_no_price_change_time: Maximum time without price change in seconds
+            min_gain_percentage: Minimum gain percentage required within time window (0.1 = 10%)
 
         Returns:
             Position instance
@@ -143,6 +150,7 @@ class Position:
             trailing_stop_percentage=trailing_stop_percentage,
             highest_price=entry_net_price_decimal,
             last_price_change_ts=time(),  # Initialize with current time
+            min_gain_percentage=min_gain_percentage,
             buy_amount=buy_amount,
             total_net_sol_swapout_amount_raw=total_net_sol_swapout_amount_raw,
             total_net_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
@@ -283,6 +291,20 @@ class Position:
             # logger.info(f"time_since_price_change {time_since_price_change} < max_no_price_change_time {self.max_no_price_change_time}")
         else:
             logger.info(f"max_no_price_change_time is not set : {self.max_no_price_change_time} and {self.last_price_change_ts}")
+
+        # Check insufficient gain within time window
+        if self.min_gain_percentage is not None:
+            current_ts = int(time() * 1000)
+            elapsed_time = (current_ts - self.entry_ts) / 1000  # Convert to seconds
+            
+            # Only check if we're within the time window
+            if elapsed_time >= self.min_gain_time_window:
+                # Calculate current gain percentage
+                current_gain = (current_price - self.entry_net_price_decimal) / self.entry_net_price_decimal
+                
+                if current_gain < self.min_gain_percentage:
+                    logger.info(f"current_gain {current_gain:.4f} < min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s")
+                    return True, ExitReason.INSUFFICIENT_GAIN
 
         return False, None
 
