@@ -20,13 +20,13 @@ from database.manager import DatabaseManager
 from core.wallet import Wallet
 
 
-def setup_logging(bot_name: str):
+def setup_logging(bot_name: str, mode: str):
     """Set up logging to file for a specific bot instance."""
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
 
     timestamp = ""#datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = log_dir / f"{bot_name}_{timestamp}.log"
+    log_filename = log_dir / f"{bot_name}_{timestamp}-{mode.upper()}.log"
 
     setup_file_logging(str(log_filename))
 
@@ -34,7 +34,12 @@ def setup_logging(bot_name: str):
 async def start_bot(config_path: str):
     """Start a trading bot with the configuration from the specified path."""
     cfg = load_bot_config(config_path)
-    setup_logging(cfg["name"])
+
+    # Determine mode (dryrun or live)
+    testing = cfg.get("testing", {})
+    mode = "dryrun" if testing.get("dry_run", False) else "live"
+
+    setup_logging(cfg["name"],mode)
     print_config_summary(cfg)
 
     # Get and validate platform from configuration
@@ -74,11 +79,7 @@ async def start_bot(config_path: str):
         # Derive wallet pubkey for database naming
         wallet = Wallet(cfg["private_key"])
         wallet_pubkey_short = str(wallet.pubkey)[:8]
-        
-        # Determine mode (dryrun or live)
-        testing = cfg.get("testing", {})
-        mode = "dryrun" if testing.get("dry_run", False) else "live"
-        
+                
         # Create database path
         db_path = f"data/{cfg['name']}_{wallet_pubkey_short}_{mode}.db"
         database_manager = DatabaseManager(db_path)

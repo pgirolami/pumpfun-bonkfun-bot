@@ -31,6 +31,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         # Simulate network latency
         logger.info(f"Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
+        order.block_ts=int(time() * 1000)
 
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
 
@@ -81,20 +82,20 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         logger.info(f"Buy transaction simulated: {order.tx_signature}")
         return order
     
-    async def _confirm_transaction(self, tx_signature: str):
+    async def _confirm_transaction(self, order: BuyOrder):
         """Override to simulate transaction confirmation."""
         
         # Check if this was a slippage failure
-        is_slippage_failure = tx_signature.startswith("DRYRUN_BUY_FAILED_")
+        is_slippage_failure = order.tx_signature.startswith("DRYRUN_BUY_FAILED_")
         
         # Return a mock confirmation result
         from core.client import SolanaClient
 
         return SolanaClient.ConfirmationResult(
             success=not is_slippage_failure,
-            tx=tx_signature,
+            tx=order.tx_signature,
+            block_ts=order.block_ts,
             error_message=f"Slippage tolerance exceeded" if is_slippage_failure else None,
-            block_ts=int(time() * 1000),  # Current time for dry run
         )
     
     async def _analyze_balance_changes(self, order: BuyOrder):
@@ -136,6 +137,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         # Simulate network latency
         logger.info(f"Simulating sell transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
+        order.block_ts=int(time() * 1000)
         
         # Generate fake signature
         order.tx_signature = f"DRYRUN_SELL_{order.token_info.mint}_{int(time()*1000)}"
@@ -150,7 +152,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         logger.info(f"Sell transaction simulated: {order.tx_signature}")
         return order
     
-    async def _confirm_transaction(self, tx_signature: str):
+    async def _confirm_transaction(self, order: SellOrder):
         """Override to simulate transaction confirmation."""
         
         # Return a mock confirmation result
@@ -158,9 +160,9 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         from time import time
         return SolanaClient.ConfirmationResult(
             success=True,
-            tx=tx_signature,
+            tx=order.tx_signature,
             error_message=None,
-            block_ts=int(time() * 1000),  # Current time for dry run
+            block_ts=order.block_ts,  # Current time for dry run
         )
     
     async def _analyze_balance_changes(self, order: SellOrder):

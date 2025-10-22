@@ -118,9 +118,9 @@ class PlatformAwareBuyer(Trader):
 
         return order
 
-    async def _confirm_transaction(self, tx_signature: str):
+    async def _confirm_transaction(self, order: BuyOrder):
         """Confirm transaction (overridden in dry-run)."""
-        return await self.client.confirm_transaction(tx_signature)
+        return await self.client.confirm_transaction(order.tx_signature)
 
     async def _analyze_balance_changes(self, order: BuyOrder):
         """Analyze balance changes (overridden in dry-run)."""
@@ -148,7 +148,7 @@ class PlatformAwareBuyer(Trader):
             order = await self._execute_transaction(order)
 
             # Confirm and analyze
-            confirm_result = await self._confirm_transaction(order.tx_signature)
+            confirm_result = await self._confirm_transaction(order)
             logger.debug(f"Confirm result is {confirm_result}")
 
             balance_changes = None
@@ -315,9 +315,9 @@ class PlatformAwareSeller(Trader):
 
         return order
 
-    async def _confirm_transaction(self, tx_signature: str):
+    async def _confirm_transaction(self, order: SellOrder):
         """Confirm transaction (overridden in dry-run)."""
-        return await self.client.confirm_transaction(tx_signature)
+        return await self.client.confirm_transaction(order.tx_signature)
 
     async def _analyze_balance_changes(self, order: SellOrder):
         """Analyze balance changes (overridden in dry-run)."""
@@ -345,7 +345,7 @@ class PlatformAwareSeller(Trader):
             order = await self._execute_transaction(order)
 
             # Confirm and analyze
-            confirm_result = await self._confirm_transaction(order.tx_signature)
+            confirm_result = await self._confirm_transaction(order)
 
             balance_changes = None
             try:
