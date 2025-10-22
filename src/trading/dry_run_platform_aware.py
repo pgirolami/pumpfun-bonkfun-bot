@@ -53,7 +53,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 current_price = await self.curve_manager.calculate_price(pool_address)
                 order.token_price_sol = current_price
             except Exception:
-                logger.info(f"Could not retrieve SOL amount swapped, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
+                logger.info(f"Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
                 await asyncio.sleep(self.PROPAGATION_SLEEP_TIME)
         
         # Check if actual SOL cost exceeds slippage tolerance
@@ -76,7 +76,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         
         # Get platform fee percentage from curve manager
         platform_constants = await self.curve_manager.get_platform_constants()
-        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95))/100  # Default to 0.8% if not available
+        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
         order.platform_fee_raw = int(order.sol_amount_raw * platform_fee_percentage)
         
         logger.info(f"Buy transaction simulated: {order.tx_signature}")
@@ -146,7 +146,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
         # Get platform fee percentage from curve manager
         platform_constants = await self.curve_manager.get_platform_constants()
-        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95))/100  # Default to 0.8% if not available
+        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
         order.platform_fee_raw = int(order.minimum_sol_swap_amount_raw * platform_fee_percentage)
         
         logger.info(f"Sell transaction simulated: {order.tx_signature}")
