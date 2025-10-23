@@ -47,6 +47,8 @@ class TokenInfoConverter:
             json.dumps(token_info.additional_data)
             if token_info.additional_data
             else None,
+            token_info.initial_buy_token_amount_decimal,
+            token_info.initial_buy_sol_amount_decimal,
         )
 
     @staticmethod
@@ -75,6 +77,8 @@ class TokenInfoConverter:
             creator_vault=Pubkey.from_string(row[12]) if row[12] else None,
             creation_timestamp=None,
             additional_data=json.loads(row[13]) if row[13] else None,
+            initial_buy_token_amount_decimal=row[14] if len(row) > 14 else None,
+            initial_buy_sol_amount_decimal=row[15] if len(row) > 15 else None,
         )
 
 

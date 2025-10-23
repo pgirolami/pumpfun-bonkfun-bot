@@ -91,6 +91,10 @@ class TokenInfo:
     # Metadata
     creation_timestamp: float | None = None
     additional_data: dict[str, Any] | None = None
+    
+    # PumpPortal-specific initial buy data
+    initial_buy_token_amount_decimal: float | None = None  # Decimal token amount from PumpPortal's initialBuy
+    initial_buy_sol_amount_decimal: float | None = None  # SOL amount from PumpPortal's solAmount
 
 
 class AddressProvider(ABC):

@@ -58,6 +58,10 @@ class LetsBonkPumpPortalProcessor:
             creator_str = token_data.get("traderPublicKey")
             uri = token_data.get("uri", "")
 
+            # Extract PumpPortal-specific initial buy data
+            initial_buy = token_data.get("initialBuy")  # Decimal token amount
+            sol_amount = token_data.get("solAmount")  # SOL decimal amount
+
             # Note: LetsBonk tokens from PumpPortal might have different field mappings
             # This would need to be adjusted based on actual PumpPortal data for LetsBonk tokens
 
@@ -113,6 +117,8 @@ class LetsBonkPumpPortalProcessor:
                 quote_vault=quote_vault,
                 user=user,
                 creator=creator,
+                initial_buy_token_amount_decimal=initial_buy,
+                initial_buy_sol_amount_decimal=sol_amount,
             )
 
         except Exception:

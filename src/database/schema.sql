@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS token_info (
     creator TEXT,
     creator_vault TEXT,
     additional_data TEXT,  -- JSON serialized dict
+    initial_buy_token_amount_decimal REAL,  -- PumpPortal initial buy token amount (decimal)
+    initial_buy_sol_amount_decimal REAL,  -- PumpPortal initial buy SOL amount (decimal)
     PRIMARY KEY (mint, platform)
 );
 

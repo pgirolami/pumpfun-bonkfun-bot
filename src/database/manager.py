@@ -83,8 +83,9 @@ class DatabaseManager:
                 """
                 INSERT OR IGNORE INTO token_info 
                 (mint, platform, name, symbol, uri, bonding_curve, associated_bonding_curve,
-                 pool_state, base_vault, quote_vault, user, creator, creator_vault, additional_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 pool_state, base_vault, quote_vault, user, creator, creator_vault, additional_data,
+                 initial_buy_token_amount_decimal, initial_buy_sol_amount_decimal)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )
