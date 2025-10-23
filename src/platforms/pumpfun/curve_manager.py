@@ -88,7 +88,7 @@ class PumpFunCurveManager(CurveManager):
             tracker = self.listener.get_trade_tracker_by_mint(str(mint))
             if tracker and not tracker.is_stale(self.trade_staleness_threshold):
                 try:
-                    price = tracker.get_current_price()
+                    price = tracker.calculate_price()
                     logger.debug(f"Using trade tracker price: {price:.10f} SOL")
                     return price
                 except RuntimeError:
@@ -161,13 +161,13 @@ class PumpFunCurveManager(CurveManager):
 
         # Use virtual reserves for bonding curve calculation
         # Formula: sol_out = (amount_in * virtual_sol_reserves) / (virtual_token_reserves + amount_in)
-        numerator = amount_in * virtual_sol_reserves
-        denominator = virtual_token_reserves + amount_in
+        numerator = (amount_in / 10**TOKEN_DECIMALS) * (virtual_sol_reserves/LAMPORTS_PER_SOL)
+        denominator = (virtual_token_reserves + amount_in) / 10**TOKEN_DECIMALS
 
         if denominator == 0:
             return 0
 
-        sol_out = numerator // denominator
+        sol_out = int(numerator // denominator)
         return sol_out
 
     async def get_reserves(self, mint: Pubkey, pool_address: Pubkey) -> tuple[int, int]:

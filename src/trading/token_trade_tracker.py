@@ -16,26 +16,19 @@ class TokenTradeTracker:
     real-time price calculations without RPC delays.
     """
     
-    def __init__(self, mint: str, initial_data: dict[str, Any] | None = None):
+    def __init__(self, mint: str):
         """Initialize tracker for a token.
         
         Args:
             mint: Token mint address (used as identifier)
-            initial_data: Optional initial reserves from token creation message
         """
         self.mint = mint
         
-        # Initialize from creation data if provided
-        if initial_data:
-            self.virtual_sol_reserves = initial_data.get("vSolInBondingCurve")
-            self.virtual_token_reserves = initial_data.get("vTokensInBondingCurve")
-            self.last_update_timestamp = time.time()
-            logger.debug(f"[{str(self.mint)[:8]}] Initialized tracker for {self.mint} with reserves: {self.virtual_sol_reserves} SOL, {self.virtual_token_reserves} tokens")
-        else:
-            self.virtual_sol_reserves = None
-            self.virtual_token_reserves = None
-            self.last_update_timestamp = None
-            logger.debug(f"[{str(self.mint)[:8]}] Created tracker for {self.mint} (lazy initialization)")
+        # Initialize with default values (lazy initialization)
+        self.virtual_sol_reserves = None
+        self.virtual_token_reserves = None
+        self.last_update_timestamp = None
+        logger.debug(f"[{str(self.mint)[:8]}] Created tracker for {self.mint} (lazy initialization)")
     
     def apply_trade(self, trade_data: dict[str, Any]) -> None:
         """Update reserves from PumpPortal trade message.
@@ -58,7 +51,7 @@ class TokenTradeTracker:
         
         logger.info(f"[{str(self.mint)[:8]}] (Trades) Virtual token reserves: {v_tokens}, Virtual sol reserves: {v_sol}")
     
-    def get_current_price(self) -> float:
+    def calculate_price(self) -> float:
         """Get current price from cached reserves.
         
         Returns:
@@ -74,7 +67,8 @@ class TokenTradeTracker:
             logger.warning(f"[{str(self.mint)[:8]}] Zero token reserves for {self.mint}, returning 0 price")
             return 0.0
         
-        price = self.virtual_sol_reserves / self.virtual_token_reserves
+        price_lamports = self.virtual_sol_reserves / self.virtual_token_reserves
+        price = price_lamports * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
         age = time.time() - self.last_update_timestamp
         logger.info(f"[{str(self.mint)[:8]}] Current price {price:.10f} SOL age: {age:.2f}s")
         return price
@@ -122,7 +116,6 @@ class TokenTradeTracker:
             Tuple of (virtual_sol_reserves, virtual_token_reserves) or (None, None) if not initialized
         """
         result= (int(self.virtual_token_reserves*10**TOKEN_DECIMALS),int(self.virtual_sol_reserves*LAMPORTS_PER_SOL))    
-        # return int(self.virtual_token_reserves),int(self.virtual_sol_reserves)    
         logger.info(f"[{str(self.mint)[:8]}] Reserves: {result}")
         return result
 

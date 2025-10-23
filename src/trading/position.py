@@ -265,6 +265,9 @@ class Position:
         Returns:
             Tuple of (should_exit, exit_reason)
         """
+
+        return False, None
+        
         if not self.is_active:
             return False, None
 

@@ -81,45 +81,56 @@ class UniversalPumpPortalListener(BaseTokenListener):
             match_string: Optional string to match in token name/symbol
             creator_address: Optional creator address to filter by
         """
-        while True:
+        async for websocket in websockets.connect(self.pumpportal_url):
+            self._websocket = websocket
+            logger.info("Connected to PumpPortal WebSocket")
+            
+            # Always resubscribe to new tokens
+            await self._subscribe_to_new_tokens()
+            
+            # Resubscribe to all existing trade tracking
+            # await self._resubscribe_to_trades()
+            
+            # Start ping loop in background
+            # ping_task = asyncio.create_task(self._ping_loop())
+
             try:
-                async with websockets.connect(self.pumpportal_url) as self._websocket:
-                    await self._subscribe_to_new_tokens()
-                    # Resubscribe to any previously subscribed bonding curves
-                    await self._resubscribe_to_trades()
-                    ping_task = asyncio.create_task(self._ping_loop())
-
+                async for message in websocket:
                     try:
-                        while True:
-                            message = await self._wait_for_message()
-                            if not message:
-                                continue
+                        data = json.loads(message)
+                        logger.info(f"Received message: {json.dumps(data, indent=2)}")
+                        
+                        # Check if it's a token creation or trade message
+                        if data.get("txType") == "create":
+                            token_info = await self._process_token_creation(data, match_string, creator_address)
+                            if token_info:
+                                await token_callback(token_info)
+                        elif data.get("txType") in ["buy", "sell"]:
+                            # Process trade message
+                            self._handle_trade_message(data)
+                        elif data.get("message"):
+                            # Handle acknowledgement messages
+                            logger.info(f"Received acknowledgement: {data['message']}")
+                            continue
+                        else:
+                            logger.debug(f"Unknown message type: {data}")
+                            
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse message as JSON: {message}")
+                        continue
+                    except Exception:
+                        logger.exception("Error processing PumpPortal WebSocket message")
+                        continue
 
-                            # Check if it's a token creation or trade message
-                            if message.get("txType") == "create":
-                                token_info = await self._process_token_creation(message, match_string, creator_address)
-                                if token_info:
-                                    await token_callback(token_info)
-                            elif message.get("txType") in ["buy", "sell"]:
-                                # Process trade message
-                                self._handle_trade_message(message)
-
-                    except websockets.exceptions.ConnectionClosed:
-                        logger.warning(
-                            "PumpPortal WebSocket connection closed. Reconnecting..."
-                        )
-                        asyncio.sleep(0.5)
-                    finally:
-                        ping_task.cancel()
-                        try:
-                            await ping_task
-                        except asyncio.CancelledError:
-                            pass
-
-            except Exception:
-                logger.exception("PumpPortal WebSocket connection error")
-                logger.info("Reconnecting in 5 seconds...")
-                await asyncio.sleep(5)
+            except websockets.exceptions.ConnectionClosed:
+                logger.warning("PumpPortal WebSocket connection closed. Reconnecting...")
+            finally:
+                # ping_task.cancel()
+                # try:
+                #     await ping_task
+                # except asyncio.CancelledError:
+                #     pass
+                pass
 
     async def _subscribe_to_new_tokens(self) -> None:
         """Subscribe to new token events from PumpPortal."""
@@ -216,47 +227,6 @@ class UniversalPumpPortalListener(BaseTokenListener):
         logger.debug(f"No processor could handle token data from pool {pool_name}")
         return None
     
-    async def _wait_for_message(self) -> dict | None:
-        """Wait for any message from PumpPortal WebSocket.
-        
-        Returns:
-            Message dict if received, None otherwise
-        """
-        try:
-            response = await asyncio.wait_for(self._websocket.recv(), timeout=30)
-            data = json.loads(response)
-            
-            # Log all received messages for debugging
-            logger.debug(f"Raw WebSocket message: {response}")
-            logger.debug(f"Parsed message: {json.dumps(data, indent=2)}")
-
-            # Handle different message formats from PumpPortal
-            message = None
-            if "method" in data and data["method"] == "newToken":
-                # Standard newToken method format
-                params = data.get("params", [])
-                if params and len(params) > 0:
-                    message = params[0]
-            elif "signature" in data and "mint" in data and "pool" in data:
-                # Direct message format
-                message = data
-            elif "message" in data:
-                # Handle subscription acknowledgements
-                return None  # Don't process acknowledgements as token messages
-
-            return message
-
-        except TimeoutError:
-            logger.debug("No data received from PumpPortal for 30 seconds")
-        except websockets.exceptions.ConnectionClosed:
-            logger.warning("PumpPortal WebSocket connection closed")
-            raise
-        except json.JSONDecodeError:
-            logger.exception("Failed to decode PumpPortal message")
-        except Exception:
-            logger.exception("Error processing PumpPortal WebSocket message")
-
-        return None
     
     async def _send_trade_subscription(self, mint: str) -> None:
         """Send WebSocket subscription for token trades.
@@ -281,13 +251,22 @@ class UniversalPumpPortalListener(BaseTokenListener):
         Args:
             mint: Token mint address to subscribe to
         """
+        if not self._websocket:
+            logger.warning(f"WebSocket not available, cannot subscribe to {mint}")
+            return
+            
         subscribe_msg = {
             "method": "subscribeTokenTrade",
             "keys": [mint]
         }
 
-        await self._websocket.send(json.dumps(subscribe_msg))
-        logger.debug(f"Sent trade subscription for mint: {mint} -> {json.dumps(subscribe_msg, indent=2)}")
+        try:
+            await self._websocket.send(json.dumps(subscribe_msg))
+            logger.info(f"Sent trade subscription for mint: {mint}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning(f"WebSocket closed while subscribing to {mint}")
+        except Exception as e:
+            logger.exception(f"Failed to send trade subscription for {mint}: {e}")
     
     async def _send_trade_unsubscription(self, mint: str) -> None:
         """Send WebSocket unsubscription for token trades.
@@ -295,14 +274,20 @@ class UniversalPumpPortalListener(BaseTokenListener):
         Args:
             mint: Token mint address to unsubscribe from
         """
-        if self._websocket:
+        if not self._websocket:
+            logger.debug(f"WebSocket not available, cannot unsubscribe from mint: {mint}")
+            return
+            
+        try:
             unsubscribe_msg = {
                 "method": "unsubscribeTokenTrade",
                 "keys": [mint]
             }
             await self._websocket.send(json.dumps(unsubscribe_msg))
             logger.debug(f"Sent trade unsubscription for mint: {mint}")
-        else:
-            logger.debug(f"WebSocket not available, cannot unsubscribe from mint: {mint}")
+        except websockets.exceptions.ConnectionClosed:
+            logger.debug(f"WebSocket closed while unsubscribing from {mint}")
+        except Exception as e:
+            logger.exception(f"Failed to send trade unsubscription for {mint}: {e}")
     
     

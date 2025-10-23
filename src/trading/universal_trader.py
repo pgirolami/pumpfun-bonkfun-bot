@@ -597,13 +597,9 @@ class UniversalTrader:
                     )
                 else:
                     try:
-                        # Use pump.fun default values (account not yet visible to RPC)
+                        # Subscribe to trade tracking
                         await self.token_listener.subscribe_token_trades(
-                            mint=str(token_info.mint),  # Use mint as the identifier
-                            initial_data={
-                                "vSolInBondingCurve": 30.0,  # Pump.fun default virtual SOL reserves
-                                "vTokensInBondingCurve": 1073000000.0,  # Pump.fun default virtual token reserves
-                            }
+                            mint=str(token_info.mint)  # Use mint as the identifier
                         )
                         logger.debug(
                             f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
@@ -697,13 +693,9 @@ class UniversalTrader:
         # Subscribe to trade tracking if enabled
         if self.enable_trade_tracking and self.token_listener:
             try:
-                # Use pump.fun default values (account not yet visible to RPC)
+                # Subscribe to trade tracking
                 await self.token_listener.subscribe_token_trades(
-                    mint=str(token_info.mint),  # Use mint as the identifier
-                    initial_data={
-                        "vSolInBondingCurve": 30.0,  # Pump.fun default virtual SOL reserves
-                        "vTokensInBondingCurve": 1073000000.0,  # Pump.fun default virtual token reserves
-                    }
+                    mint=str(token_info.mint)  # Use mint as the identifier
                 )
                 logger.debug(
                     f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"

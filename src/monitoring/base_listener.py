@@ -3,6 +3,7 @@ Base class for WebSocket token listeners - now platform-agnostic.
 """
 
 from abc import ABC, abstractmethod
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -57,19 +58,14 @@ class BaseTokenListener(ABC):
             return True  # Process all platforms
         return token_info.platform == self.platform
     
-    async def subscribe_token_trades(
-        self, 
-        mint: str, 
-        initial_data: dict[str, Any] | None = None
-    ) -> None:
+    async def subscribe_token_trades(self, mint: str) -> None:
         """Subscribe to trade tracking for a token.
         
         Args:
             mint: Token mint address (used for WebSocket subscription and indexing)
-            initial_data: Optional initial reserves from token creation
         """
         # Create tracker using mint as identifier
-        tracker = TokenTradeTracker(mint, initial_data)
+        tracker = TokenTradeTracker(mint)
         self._trade_trackers[mint] = tracker  # Index by mint
         
         # Subclasses should override to send WebSocket subscription
