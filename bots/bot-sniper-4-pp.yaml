@@ -18,6 +18,12 @@ platform: "pump_fun"
 pumpportal:
   url: "wss://pumpportal.fun/api/data" # Default PumpPortal WebSocket URL
 
+# Testing configuration (optional)
+testing:
+  dry_run: true  # Set to true to simulate transactions without sending to blockchain
+  dry_run_wait_time_seconds: 1.5  # Simulate RPC latency in dry-run mode
+
+
 # Trading parameters
 # Control trade execution: amount of SOL per trade and acceptable price deviation
 trade:
@@ -30,9 +36,9 @@ trade:
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual", "trailing"
   take_profit_percentage: 0.8 # Take profit (0.1 = 10%)
   stop_loss_percentage: 0.01 # Stop loss (0.1 = 10%)
-  trailing_stop_percentage: 0.1 # Trailing stop at 20% from highest price (0.2 = 20%)
+  trailing_stop_percentage: 0.05 # Trailing stop at 20% from highest price (0.2 = 20%)
   max_hold_time: 6000 # Maximum hold time in seconds (600 = 10 minutes)
-  price_check_interval: 0.5 # Check price every 2 seconds
+  price_check_interval: 1 # Check price every 2 seconds
 
   # Volatility-based take profit adjustments (NEW FEATURE)
   enable_volatility_adjustment: true # Enable volatility-based TP adjustments
@@ -80,7 +86,7 @@ filters:
   listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
-  yolo_mode: false # Continuously trade tokens
+  yolo_mode: true # Continuously trade tokens
 
 # Retry and timeout settings
 retries:
@@ -102,8 +108,3 @@ cleanup:
 # Node provider configuration (not implemented)
 node:
   max_rps: 25 # Maximum requests per second
-
-# Testing configuration (optional)
-testing:
-  dry_run: true  # Set to true to simulate transactions without sending to blockchain
-  dry_run_wait_time_seconds: 1.5  # Simulate RPC latency in dry-run mode

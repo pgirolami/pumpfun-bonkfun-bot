@@ -803,12 +803,12 @@ class UniversalTrader:
         # Track last price for change detection
         last_price = None
         
-        # Initialize volatility calculator if enabled
+        # Initialize volatility calculator if enabled (will be created when first price is available)
         volatility_calculator = None
+        volatility_monitoring_started = False
         if self.enable_volatility_adjustment:
-            volatility_calculator = VolatilityCalculator(self.volatility_window_seconds)
             logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Volatility adjustment enabled (window: {self.volatility_window_seconds}s)"
+                f"[{self._mint_prefix(token_info.mint)}] Volatility adjustment enabled (window: {self.volatility_window_seconds}s) - waiting for first price"
             )
 
         while position.is_active:
@@ -816,6 +816,11 @@ class UniversalTrader:
                 # Get current price from pool/curve
                 current_price = await curve_manager.calculate_price(pool_address)
                 current_timestamp = time()
+                current_timestamp_ms = int(current_timestamp * 1000)
+
+                # Set monitoring start time on first price (for time-based exit conditions)
+                if position.monitoring_start_ts is None:
+                    position.set_monitoring_start_time(current_timestamp_ms)
 
                 # Store price in database if available
                 if self.database_manager:
@@ -829,8 +834,17 @@ class UniversalTrader:
                         logger.exception(f"Failed to insert price history: {e}")
 
                 # Calculate volatility and adjust take profit if enabled
-                if volatility_calculator:
-                    volatility_calculator.add_price(current_price,current_timestamp)
+                if self.enable_volatility_adjustment:
+                    # Initialize volatility calculator on first valid price
+                    if not volatility_monitoring_started:
+                        volatility_calculator = VolatilityCalculator(self.volatility_window_seconds)
+                        volatility_monitoring_started = True
+                        logger.info(
+                            f"[{self._mint_prefix(token_info.mint)}] Started volatility monitoring with first price: {current_price:.8f} SOL"
+                        )
+                    
+                    # Add current price to volatility calculator
+                    volatility_calculator.add_price(current_price, current_timestamp)
                     
                     if volatility_calculator.has_sufficient_data(current_timestamp):
                         previous_value = volatility_calculator._last_volatility
@@ -838,6 +852,9 @@ class UniversalTrader:
                         volatility_value = volatility_calculator.get_cached_volatility()
                         
                         if volatility_value is not None:
+                            logger.debug(
+                                f"[{self._mint_prefix(token_info.mint)}] Volatility: {volatility_value:.4f} ({volatility_level})"
+                            )
                             
                             # Adjust take profit based on volatility
                             if position.take_profit_price and self.take_profit_percentage:
@@ -855,7 +872,7 @@ class UniversalTrader:
                                     position.take_profit_price = volatility_adjusted_take_profit_price
                                     logger.info(
                                         f"[{self._mint_prefix(token_info.mint)}] TP adjusted due to {volatility_level} volatility: "
-                                        f"{old_tp_price:.8f} -> {volatility_adjusted_take_profit_price:.8f} SOL "
+                                        f"{old_tp_price:.10f} -> {volatility_adjusted_take_profit_price:.10f} SOL "
                                         f"(reduction: {((old_tp_price - volatility_adjusted_take_profit_price) / old_tp_price * 100):.1f}%)"
                                     )
 
@@ -890,7 +907,7 @@ class UniversalTrader:
                         f"[{self._mint_prefix(token_info.mint)}] Exit condition met: {exit_reason.value}"
                     )
                     logger.info(
-                        f"[{self._mint_prefix(token_info.mint)}] Current onchain price: {current_price:.8f} SOL"
+                        f"[{self._mint_prefix(token_info.mint)}] Current onchain price: {current_price:.10f} SOL"
                     )
 
                     # Log PnL before exit
@@ -965,7 +982,7 @@ class UniversalTrader:
                     # Log current status
                     pnl = position._get_pnl(current_price)
                     logger.info(
-                        f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price:.8f} SOL ({pnl['net_price_change_pct']:+.2f}%)"
+                        f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price:.10f} SOL ({pnl['net_price_change_pct']:+.2f}%)"
                     )
 
             except Exception:
@@ -997,15 +1014,7 @@ class UniversalTrader:
             self.platform_constants = await curve_manager.get_platform_constants()
             
             logger.info(f"Successfully loaded {len(self.platform_constants)} platform constants for {self.platform.value}")
-            
-            # Log key constants for debugging
-            if self.platform == Platform.PUMP_FUN:
-                logger.info(f"Pump.fun starting price: {self.platform_constants.get('starting_price_sol', 'N/A'):.8f} SOL per token")
-                logger.info(f"Pump.fun fee: {self.platform_constants.get('fee_percentage', 'N/A'):.2f}%")
-            elif self.platform == Platform.LETS_BONK:
-                logger.info(f"LetsBonk trade fee: {self.platform_constants.get('trade_fee_percentage', 'N/A'):.4f}%")
-                logger.info(f"LetsBonk min base supply: {self.platform_constants.get('min_base_supply_decimal', 'N/A'):,.0f} tokens")
-                
+                            
         except Exception as e:
             logger.exception(f"Failed to load platform constants for {self.platform.value}")
             raise

@@ -64,21 +64,11 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             order.tx_signature = f"DRYRUN_BUY_FAILED_{order.token_info.mint}_{int(time()*1000)}"
             order.slippage_failed = True  # Add flag to indicate slippage failure
             
-            # Still charge transaction fees even on slippage failure
-            order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
-            order.platform_fee_raw = 0  # No platform fee since no tokens were acquired
             return order
         else:
             from core.pubkeys import LAMPORTS_PER_SOL
             logger.info(f"DRY RUN: Slippage check passed - actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.6f} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.6f} SOL)")
-                    
-        
-        
-        # Get platform fee percentage from curve manager
-        platform_constants = await self.curve_manager.get_platform_constants()
-        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
-        order.platform_fee_raw = int(order.sol_amount_raw * platform_fee_percentage)
-        
+                            
         logger.info(f"Buy transaction simulated: {order.tx_signature}")
         return order
     
@@ -113,9 +103,17 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 logger.info("Could not retrieve SOL amount swapped, account isn't propagated yet. Sleep for 2s and retrying")
                 await asyncio.sleep(2.0)
 
+        # Get platform fee percentage from curve manager
+        platform_constants = await self.curve_manager.get_platform_constants()
+        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
+        # Still charge transaction fees even on slippage failure
+        order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
+        order.platform_fee_raw = -int(sol_swap_amount_raw * platform_fee_percentage)
+        order.sol_amount_raw = sol_swap_amount_raw-(order.platform_fee_raw+order.transaction_fee_raw)
+
         return BalanceChangeResult(
             token_swap_amount_raw=order.token_amount_raw,
-            sol_amount_raw=sol_swap_amount_raw-(order.platform_fee_raw+order.transaction_fee_raw),
+            sol_amount_raw=order.sol_amount_raw,
             platform_fee_raw=order.platform_fee_raw,
             transaction_fee_raw=order.transaction_fee_raw,
             rent_exemption_amount_raw=0,
@@ -142,12 +140,6 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         # Generate fake signature
         order.tx_signature = f"DRYRUN_SELL_{order.token_info.mint}_{int(time()*1000)}"
         
-        # Calculate fees
-        order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
-        # Get platform fee percentage from curve manager
-        platform_constants = await self.curve_manager.get_platform_constants()
-        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
-        order.platform_fee_raw = int(order.minimum_sol_swap_amount_raw * platform_fee_percentage)
         
         logger.info(f"Sell transaction simulated: {order.tx_signature}")
         return order
@@ -173,6 +165,12 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
         
         sol_swap_amount_raw = await self.curve_manager.calculate_sell_amount_out(pool_address=self._get_pool_address(order.token_info,None), amount_in=order.token_amount_raw)
+        # Calculate fees
+        order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
+        # Get platform fee percentage from curve manager
+        platform_constants = await self.curve_manager.get_platform_constants()
+        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
+        order.platform_fee_raw = int(sol_swap_amount_raw * platform_fee_percentage)
 
         return BalanceChangeResult(
             token_swap_amount_raw=-order.token_amount_raw,

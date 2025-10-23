@@ -59,6 +59,9 @@ class Position:
     # Insufficient gain exit condition
     min_gain_percentage: float | None = None  # minimum gain required within time window
     min_gain_time_window: int = 2  # seconds to check for minimum gain (configurable)
+    
+    # Monitoring timing
+    monitoring_start_ts: int | None = None  # when position monitoring actually started (Unix epoch milliseconds)
 
     # Status
     is_active: bool = True
@@ -243,6 +246,16 @@ class Position:
         """
         return (self.total_token_swapin_amount_raw or 0) - (self.total_token_swapout_amount_raw or 0)
 
+    def set_monitoring_start_time(self, timestamp: int) -> None:
+        """Set the monitoring start time (when first price was received).
+        
+        Args:
+            timestamp: Unix epoch milliseconds when monitoring started
+        """
+        if self.monitoring_start_ts is None:
+            self.monitoring_start_ts = timestamp
+            logger.info(f"Position monitoring started at {timestamp} (entry was at {self.entry_ts})")
+
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
         """Check if position should be exited based on current conditions.
 
@@ -271,13 +284,14 @@ class Position:
         if self.trailing_stop_percentage is not None and self.highest_price is not None:
             trailing_limit = self.highest_price * (1 - self.trailing_stop_percentage)
             if current_price <= trailing_limit:
-#                logger.info(f"current_price {current_price} <= trailing_limit {trailing_limit}")
+                logger.info(f"current_price {current_price} <= trailing_limit {trailing_limit}")
                 return True, ExitReason.TRAILING_STOP
-#            logger.info(f"current_price {current_price} > trailing_limit {trailing_limit}")
+            logger.info(f"current_price {current_price} > trailing_limit {trailing_limit}")
 
         # Check max hold time
         if self.max_hold_time:
             current_ts = int(time() * 1000)
+            # Max hold time is based on entry time (total time position has been open)
             elapsed_time = (current_ts - self.entry_ts) / 1000  # Convert to seconds
             if elapsed_time >= self.max_hold_time:
 #                logger.info(f"elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time}")
@@ -298,16 +312,18 @@ class Position:
         # Check insufficient gain within time window
         if self.min_gain_percentage is not None:
             current_ts = int(time() * 1000)
-            elapsed_time = (current_ts - self.entry_ts) / 1000  # Convert to seconds
-            
-            # Only check if we're within the time window
-            if elapsed_time >= self.min_gain_time_window:
-                # Calculate current gain percentage
-                current_gain = (current_price - self.entry_net_price_decimal) / self.entry_net_price_decimal
+            # Only check if monitoring has started (don't use entry time)
+            if self.monitoring_start_ts is not None:
+                elapsed_time = (current_ts - self.monitoring_start_ts) / 1000  # Convert to seconds
                 
-                if current_gain < self.min_gain_percentage:
-                    logger.info(f"current_gain {current_gain:.4f} < min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s")
-                    return True, ExitReason.INSUFFICIENT_GAIN
+                # Only check if we're within the time window
+                if elapsed_time >= self.min_gain_time_window:
+                    # Calculate current gain percentage
+                    current_gain = (current_price - self.entry_net_price_decimal) / self.entry_net_price_decimal
+                    
+                    if current_gain < self.min_gain_percentage:
+                        logger.info(f"current_gain {current_gain:.4f} < min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s")
+                        return True, ExitReason.INSUFFICIENT_GAIN
 
         return False, None
 
