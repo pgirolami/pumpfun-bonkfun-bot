@@ -102,6 +102,8 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
 #        logger.info(f"Analyzing balance changes for buy order {order}")
 
+        is_slippage_failure = order.tx_signature.startswith("DRYRUN_BUY_FAILED_")
+        
         sol_swap_amount_raw = None
         while not sol_swap_amount_raw:
             try:
@@ -123,11 +125,11 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
 
         # Get platform fee percentage from curve manager
         platform_constants = await self.curve_manager.get_platform_constants()
-        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
+        platform_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
         # Still charge transaction fees even on slippage failure
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
         order.platform_fee_raw = -int(sol_swap_amount_raw * platform_fee_percentage)
-        order.sol_amount_raw = sol_swap_amount_raw-(order.platform_fee_raw+order.transaction_fee_raw)
+        order.sol_amount_raw = 0 if is_slippage_failure else sol_swap_amount_raw-(order.platform_fee_raw+order.transaction_fee_raw)
 
         return BalanceChangeResult(
             token_swap_amount_raw=order.token_amount_raw,

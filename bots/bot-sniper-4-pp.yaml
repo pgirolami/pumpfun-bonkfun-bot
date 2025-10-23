@@ -28,9 +28,9 @@ testing:
 # Control trade execution: amount of SOL per trade and acceptable price deviation
 trade:
   buy_amount: 0.01 # Amount of SOL to spend when buying (in SOL)
-  buy_slippage: 0.75 # Maximum acceptable price deviation (0.3 = 30%)
+  buy_slippage: 0.5 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.99
-  max_active_mints: 1 # Maximum concurrent active positions (YOLO mode only)
+  max_active_mints: 2 # Maximum concurrent active positions (YOLO mode only)
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual", "trailing"
@@ -53,8 +53,8 @@ trade:
     high: 0.45    # Reduce TP by 45% for high volatility
 
   # Insufficient gain exit condition (NEW FEATURE)
-  min_gain_percentage: 0.01 # Exit if not at least 2% gain within time window (0.02 = 2%)
-  min_gain_time_window: 1 # Time window in seconds to check for minimum gain (default: 2)
+  min_gain_percentage: 0.02 # Exit if not at least 2% gain within time window (0.02 = 2%)
+  min_gain_time_window: 3 # Time window in seconds to check for minimum gain (default: 2)
 
   # Trade tracking configuration (NEW FEATURE)
   enable_trade_tracking: true # Enable PumpPortal trade-based pricing for real-time updates

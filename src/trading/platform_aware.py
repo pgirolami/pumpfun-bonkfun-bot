@@ -153,7 +153,7 @@ class PlatformAwareBuyer(Trader):
             balance_changes = None
             try:
                 balance_changes = await self._analyze_balance_changes(order)
-                logger.info(f"Balance analysis resulted in {balance_changes}")
+                logger.debug(f"Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances")
                 logger.exception(e)
