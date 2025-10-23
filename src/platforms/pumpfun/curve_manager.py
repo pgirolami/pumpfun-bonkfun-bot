@@ -157,17 +157,16 @@ class PumpFunCurveManager(CurveManager):
         Returns:
             Expected amount of SOL to receive (in lamports)
         """
-        virtual_sol_reserves, virtual_token_reserves = await self.get_reserves(mint, pool_address)
+        virtual_token_reserves, virtual_sol_reserves = await self.get_reserves(mint, pool_address)
 
         # Use virtual reserves for bonding curve calculation
         # Formula: sol_out = (amount_in * virtual_sol_reserves) / (virtual_token_reserves + amount_in)
-        numerator = (amount_in / 10**TOKEN_DECIMALS) * (virtual_sol_reserves/LAMPORTS_PER_SOL)
-        denominator = (virtual_token_reserves + amount_in) / 10**TOKEN_DECIMALS
+        # numerator = (float(amount_in) / 10**TOKEN_DECIMALS) * (float(virtual_sol_reserves)/LAMPORTS_PER_SOL)
+        # denominator = float(virtual_token_reserves + amount_in) / 10**TOKEN_DECIMALS
+        numerator = amount_in * virtual_sol_reserves
+        denominator = virtual_token_reserves + amount_in
 
-        if denominator == 0:
-            return 0
-
-        sol_out = int(numerator // denominator)
+        sol_out = numerator // denominator
         return sol_out
 
     async def get_reserves(self, mint: Pubkey, pool_address: Pubkey) -> tuple[int, int]:

@@ -58,14 +58,25 @@ class BaseTokenListener(ABC):
             return True  # Process all platforms
         return token_info.platform == self.platform
     
-    async def subscribe_token_trades(self, mint: str) -> None:
+    async def subscribe_token_trades(
+        self, 
+        mint: str,
+        initial_virtual_sol_reserves: int,
+        initial_virtual_token_reserves: int
+    ) -> None:
         """Subscribe to trade tracking for a token.
         
         Args:
             mint: Token mint address (used for WebSocket subscription and indexing)
+            initial_virtual_sol_reserves: Virtual SOL reserves in lamports (from token creation)
+            initial_virtual_token_reserves: Virtual token reserves in raw units (from token creation)
         """
-        # Create tracker using mint as identifier
-        tracker = TokenTradeTracker(mint)
+        # Create tracker with initial reserves from token creation
+        tracker = TokenTradeTracker(
+            mint=mint,
+            initial_virtual_sol_reserves=initial_virtual_sol_reserves,
+            initial_virtual_token_reserves=initial_virtual_token_reserves
+        )
         self._trade_trackers[mint] = tracker  # Index by mint
         
         # Subclasses should override to send WebSocket subscription

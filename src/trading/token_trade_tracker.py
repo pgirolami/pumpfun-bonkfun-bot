@@ -15,20 +15,26 @@ class TokenTradeTracker:
     Tracks virtual reserves from PumpPortal trade messages and provides
     real-time price calculations without RPC delays.
     """
-    
-    def __init__(self, mint: str):
-        """Initialize tracker for a token.
+
+    def __init__(
+        self, 
+        mint: str,
+        initial_virtual_sol_reserves: int,
+        initial_virtual_token_reserves: int
+    ):
+        """Initialize tracker with reserves from token creation.
         
         Args:
             mint: Token mint address (used as identifier)
+            initial_virtual_sol_reserves: Virtual SOL reserves in lamports (from vSolInBondingCurve)
+            initial_virtual_token_reserves: Virtual token reserves in raw units (from vTokensInBondingCurve)
         """
         self.mint = mint
-        
-        # Initialize with default values (lazy initialization)
-        self.virtual_sol_reserves = None
-        self.virtual_token_reserves = None
-        self.last_update_timestamp = None
-        logger.debug(f"[{str(self.mint)[:8]}] Created tracker for {self.mint} (lazy initialization)")
+        self.virtual_sol_reserves = initial_virtual_sol_reserves
+        self.virtual_token_reserves = initial_virtual_token_reserves
+        self.last_update_timestamp = time.time()
+
+        logger.debug(f"[{str(self.mint)[:8]}] __init()__ -> (Init) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} => price={self.calculate_price():.10f} SOL")
     
     def apply_trade(self, trade_data: dict[str, Any]) -> None:
         """Update reserves from PumpPortal trade message.
@@ -37,19 +43,13 @@ class TokenTradeTracker:
             trade_data: Trade message from PumpPortal containing updated reserves
         """
         # Extract updated reserves from trade message
-        v_sol = trade_data.get("vSolInBondingCurve")
-        v_tokens = trade_data.get("vTokensInBondingCurve")
-        
-        if v_sol is None or v_tokens is None:
-            logger.warning(f"[{str(self.mint)[:8]}] Trade message missing reserve data for {self.mint}: {trade_data}")
-            return
+        self.virtual_sol_reserves = int(trade_data.get("vSolInBondingCurve")*LAMPORTS_PER_SOL)
+        self.virtual_token_reserves = int(trade_data.get("vTokensInBondingCurve")*10**TOKEN_DECIMALS)
         
         # Update reserves
-        self.virtual_sol_reserves = v_sol
-        self.virtual_token_reserves = v_tokens
         self.last_update_timestamp = time.time()
         
-        logger.info(f"[{str(self.mint)[:8]}] (Trades) Virtual token reserves: {v_tokens}, Virtual sol reserves: {v_sol}")
+        logger.debug(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves}")
     
     def calculate_price(self) -> float:
         """Get current price from cached reserves.
@@ -70,23 +70,19 @@ class TokenTradeTracker:
         price_lamports = self.virtual_sol_reserves / self.virtual_token_reserves
         price = price_lamports * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
         age = time.time() - self.last_update_timestamp
-        logger.info(f"[{str(self.mint)[:8]}] Current price {price:.10f} SOL age: {age:.2f}s")
+        logger.debug(f"[{str(self.mint)[:8]}] calculate_price() -> current price {price:.10f} SOL. Last trade {age:.2f}s ago")
         return price
     
     def is_stale(self, max_age_seconds: float) -> bool:
         """Check if tracker data is stale or not initialized.
         
         Args:
-            max_age_seconds: Maximum age in seconds before considered stale
+            max_age_seconds: Maximum age in seconds before considered stale (unused)
             
         Returns:
-            True if stale or not initialized
+            True if not initialized, False if initialized (reserves are always current via PumpPortal)
         """
-        if not self.is_initialized():
-            return True
-        
-        age = time.time() - self.last_update_timestamp
-        return age > max_age_seconds
+        return not self.is_initialized()
     
     def is_initialized(self) -> bool:
         """Check if tracker has received at least one update.
@@ -96,8 +92,7 @@ class TokenTradeTracker:
         """
         return (
             self.virtual_sol_reserves is not None and 
-            self.virtual_token_reserves is not None and
-            self.last_update_timestamp is not None
+            self.virtual_token_reserves is not None 
         )
     
     def get_mint(self) -> str:
@@ -115,8 +110,8 @@ class TokenTradeTracker:
         Returns:
             Tuple of (virtual_sol_reserves, virtual_token_reserves) or (None, None) if not initialized
         """
-        result= (int(self.virtual_token_reserves*10**TOKEN_DECIMALS),int(self.virtual_sol_reserves*LAMPORTS_PER_SOL))    
-        logger.info(f"[{str(self.mint)[:8]}] Reserves: {result}")
+        result= (self.virtual_token_reserves,self.virtual_sol_reserves)    
+        logger.debug(f"[{str(self.mint)[:8]}] get_reserves() -> {result}")
         return result
 
     def get_last_update_time(self) -> float | None:

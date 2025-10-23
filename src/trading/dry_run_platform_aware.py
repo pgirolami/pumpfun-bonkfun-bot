@@ -40,11 +40,11 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
 
         # Simulate slippage validation - calculate actual SOL cost for fixed token amount
         actual_sol_cost_raw = None
-        while not actual_sol_cost_raw:
+        while actual_sol_cost_raw is None:
             try:
                 # Calculate actual SOL cost for the fixed token amount using curve manager
                 pool_address = self._get_pool_address(order.token_info, None)
-                actual_sol_cost_raw = -await self.curve_manager.calculate_sell_amount_out(
+                actual_sol_cost_raw = await self.curve_manager.calculate_sell_amount_out(
                     mint=order.token_info.mint,
                     pool_address=pool_address, 
                     amount_in=order.token_amount_raw
@@ -67,14 +67,14 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         if actual_sol_cost_raw > order.max_sol_amount_raw:
             # Simulate slippage failure - still charge transaction fees
             from core.pubkeys import LAMPORTS_PER_SOL
-            logger.warning(f"DRY RUN: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.6f} SOL, actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.6f} SOL")
+            logger.warning(f"DRY RUN: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.10f} SOL, actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.10f} SOL")
             order.tx_signature = f"DRYRUN_BUY_FAILED_{order.token_info.mint}_{int(time()*1000)}"
             order.slippage_failed = True  # Add flag to indicate slippage failure
             
             return order
         else:
             from core.pubkeys import LAMPORTS_PER_SOL
-            logger.info(f"DRY RUN: Slippage check passed - actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.6f} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.6f} SOL)")
+            logger.info(f"DRY RUN: Slippage check passed - actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.10f} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.10f} SOL)")
                             
         logger.info(f"Buy transaction simulated: {order.tx_signature}")
         return order

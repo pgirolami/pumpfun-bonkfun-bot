@@ -5,6 +5,7 @@ File: src/platforms/pumpfun/pumpportal_processor.py
 
 from solders.pubkey import Pubkey
 
+from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from interfaces.core import Platform, TokenInfo
 from platforms.pumpfun.address_provider import PumpFunAddressProvider
 from utils.logger import get_logger
@@ -63,9 +64,15 @@ class PumpFunPumpPortalProcessor:
             initial_buy = token_data.get("initialBuy")  # Decimal token amount
             sol_amount = token_data.get("solAmount")  # SOL decimal amount
 
+            # Extract virtual reserves (state after creator's first buy)
+            v_sol_in_curve = token_data.get("vSolInBondingCurve")  # Decimal SOL
+            v_tokens_in_curve = token_data.get("vTokensInBondingCurve")  # Decimal tokens
+            
+            # Convert to raw units for trade tracking
+            virtual_sol_reserves = int(v_sol_in_curve * LAMPORTS_PER_SOL) if v_sol_in_curve is not None else None
+            virtual_token_reserves = int(v_tokens_in_curve * 10**TOKEN_DECIMALS) if v_tokens_in_curve is not None else None
+
             # Additional fields available from PumpPortal but not currently used:
-            # - vSolInBondingCurve: Virtual SOL in bonding curve
-            # - vTokensInBondingCurve: Virtual tokens in bonding curve
             # - marketCapSol: Market cap in SOL
             # - signature: Transaction signature
 
@@ -103,6 +110,8 @@ class PumpFunPumpPortalProcessor:
                 creator_vault=creator_vault,
                 initial_buy_token_amount_decimal=initial_buy,
                 initial_buy_sol_amount_decimal=sol_amount,
+                virtual_sol_reserves=virtual_sol_reserves,
+                virtual_token_reserves=virtual_token_reserves,
             )
 
         except Exception:

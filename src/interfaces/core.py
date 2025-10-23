@@ -95,6 +95,10 @@ class TokenInfo:
     # PumpPortal-specific initial buy data
     initial_buy_token_amount_decimal: float | None = None  # Decimal token amount from PumpPortal's initialBuy
     initial_buy_sol_amount_decimal: float | None = None  # SOL amount from PumpPortal's solAmount
+    
+    # Virtual reserves for trade tracking (from token creation)
+    virtual_sol_reserves: int | None = None  # Virtual SOL reserves in lamports
+    virtual_token_reserves: int | None = None  # Virtual token reserves in raw units
 
 
 class AddressProvider(ABC):

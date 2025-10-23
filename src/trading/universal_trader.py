@@ -78,7 +78,7 @@ class UniversalTrader:
         match_string: str | None = None,
         bro_address: str | None = None,
         marry_mode: bool = False,
-        yolo_mode: bool = False,
+        max_buys: int | None = None,
         # Compute unit configuration
         compute_units: dict | None = None,
         # Testing configuration
@@ -293,7 +293,8 @@ class UniversalTrader:
         self.match_string = match_string
         self.bro_address = bro_address
         self.marry_mode = marry_mode
-        self.yolo_mode = yolo_mode
+        self.max_buys = max_buys
+        self.buy_count = 0  # Counter for number of successful buys
 
         # State tracking
         self.active_mints: set[Pubkey] = set()  # Renamed from traded_mints
@@ -302,6 +303,9 @@ class UniversalTrader:
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
+        self._stop_event = asyncio.Event()  # Event to signal stopping
+        self._main_stop_event = asyncio.Event()  # Event to signal main loop stopping
+        self._max_buys_reached = False  # Flag to track if max_buys limit reached
 
         # Parallel position tracking
         self.max_active_mints = max_active_mints
@@ -322,7 +326,7 @@ class UniversalTrader:
             f"Creator filter: {self.bro_address if self.bro_address else 'None'}"
         )
         logger.info(f"Marry mode: {self.marry_mode}")
-        logger.info(f"YOLO mode: {self.yolo_mode}")
+        logger.info(f"Max buys: {self.max_buys if self.max_buys else 'unlimited'}")
         logger.info(f"Exit strategy: {self.exit_strategy}")
 
         if self.exit_strategy == "tp_sl":
@@ -359,41 +363,42 @@ class UniversalTrader:
             logger.exception("Failed to resume active positions from database")
 
         try:
-            # Choose operating mode based on yolo_mode
-            if not self.yolo_mode:
-                # Single token mode: process one token and exit
-                logger.info(
-                    "Running in single token mode - will process one token and exit"
-                )
-                token_info = await self._wait_for_token()
-                if token_info:
-                    await self._handle_token(token_info)
-                    logger.info("Finished processing single token. Exiting...")
-                else:
-                    logger.info(
-                        f"No suitable token found within timeout period ({self.token_wait_timeout}s). Exiting..."
-                    )
-            else:
-                # Continuous mode: process tokens until interrupted
-                logger.info(
-                    "Running in continuous mode - will process tokens until interrupted"
-                )
-                processor_task = asyncio.create_task(self._process_token_queue())
+            # Start continuous trading with max_buys limit
+            logger.info(f"Starting continuous trading (max_buys: {self.max_buys})")
+            processor_task = asyncio.create_task(self._process_token_queue())
 
-                try:
-                    await self.token_listener.listen_for_messages(
+            try:
+                # Create a task for the listener
+                listener_task = asyncio.create_task(
+                    self.token_listener.listen_for_messages(
                         lambda token: self._queue_token(token),
                         self.match_string,
                         self.bro_address,
                     )
-                except Exception:
-                    logger.exception("Token listening stopped due to error")
-                finally:
-                    processor_task.cancel()
+                )
+                
+                # Wait for either the listener to stop or the main stop event
+                done, pending = await asyncio.wait(
+                    [listener_task, asyncio.create_task(self._main_stop_event.wait())],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                # Cancel the remaining task
+                for task in pending:
+                    task.cancel()
                     try:
-                        await processor_task
+                        await task
                     except asyncio.CancelledError:
                         pass
+                        
+            except Exception:
+                logger.exception("Token listening stopped due to error")
+            finally:
+                processor_task.cancel()
+                try:
+                    await processor_task
+                except asyncio.CancelledError:
+                    pass
 
         except Exception:
             logger.exception("Trading stopped due to error")
@@ -402,51 +407,6 @@ class UniversalTrader:
             await self._cleanup_resources()
             logger.info("Universal Trader has shut down")
 
-    async def _wait_for_token(self) -> TokenInfo | None:
-        """Wait for a single token to be detected."""
-        # Create a one-time event to signal when a token is found
-        token_found = asyncio.Event()
-        found_token = None
-
-        async def token_callback(token: TokenInfo) -> None:
-            nonlocal found_token
-            token_key = str(token.mint)
-
-            # Only process if not already processed and fresh
-            if token_key not in self.processed_tokens:
-                # Record when the token was discovered
-                self.token_timestamps[token_key] = monotonic()
-                found_token = token
-                self.processed_tokens.add(token_key)
-                token_found.set()
-
-        listener_task = asyncio.create_task(
-            self.token_listener.listen_for_messages(
-                token_callback,
-                self.match_string,
-                self.bro_address,
-            )
-        )
-
-        # Wait for a token with a timeout
-        try:
-            logger.info(
-                f"Waiting for a suitable token (timeout: {self.token_wait_timeout}s)..."
-            )
-            await asyncio.wait_for(token_found.wait(), timeout=self.token_wait_timeout)
-            logger.info(f"Found token: {found_token.symbol} ({found_token.mint})")
-            return found_token
-        except TimeoutError:
-            logger.info(
-                f"Timed out after waiting {self.token_wait_timeout}s for a token"
-            )
-            return None
-        finally:
-            listener_task.cancel()
-            try:
-                await listener_task
-            except asyncio.CancelledError:
-                pass
 
     async def _cleanup_resources(self) -> None:
         """Perform cleanup operations before shutting down."""
@@ -478,6 +438,11 @@ class UniversalTrader:
 
     async def _queue_token(self, token_info: TokenInfo) -> None:
         """Queue a token for processing if not already processed."""
+        # Check if we should stop
+        if self._stop_event.is_set():
+            logger.info("Stop event set, ignoring new tokens")
+            return
+            
         token_key = str(token_info.mint)
 
         if token_key in self.processed_tokens:
@@ -512,13 +477,12 @@ class UniversalTrader:
         """Process tokens concurrently up to max_active_mints limit."""
         while True:
             try:
-                # Wait for capacity if at limit (YOLO mode only)
-                if self.yolo_mode:
+                # Wait for capacity if at limit
+                total_slots = len(self.active_mints) + len(self.reserved_mints)
+                while total_slots >= self.max_active_mints:
+                    self.position_slot_available.clear()
+                    await self.position_slot_available.wait()
                     total_slots = len(self.active_mints) + len(self.reserved_mints)
-                    while total_slots >= self.max_active_mints:
-                        self.position_slot_available.clear()
-                        await self.position_slot_available.wait()
-                        total_slots = len(self.active_mints) + len(self.reserved_mints)
 
                 # Get next token from queue
                 token_info = await self.token_queue.get()
@@ -569,8 +533,7 @@ class UniversalTrader:
                 del self.position_tasks[mint_key]
 
             # Signal that a slot is available for next token
-            if self.yolo_mode:
-                self.position_slot_available.set()
+            self.position_slot_available.set()
 
     async def _handle_token(self, token_info: TokenInfo) -> None:
         """Handle a new token creation event."""
@@ -596,18 +559,24 @@ class UniversalTrader:
                         f"[{self._mint_prefix(token_info.mint)}] Trade tracking enabled but token_listener is None"
                     )
                 else:
-                    try:
-                        # Subscribe to trade tracking
-                        await self.token_listener.subscribe_token_trades(
-                            mint=str(token_info.mint)  # Use mint as the identifier
-                        )
-                        logger.debug(
-                            f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
-                        )
-                    except Exception as e:
-                        logger.exception(
-                            f"[{self._mint_prefix(token_info.mint)}] Failed to subscribe to trade tracking: {e}"
-                        )
+                    # Validate that we have virtual reserves for trade tracking
+                    if token_info.virtual_sol_reserves is None or token_info.virtual_token_reserves is None:
+                        logger.error(f"Cannot subscribe to trade tracking: missing virtual reserves for {token_info.symbol}")
+                    else:
+                        try:
+                            # Subscribe to trade tracking
+                            await self.token_listener.subscribe_token_trades(
+                                mint=str(token_info.mint),
+                                initial_virtual_sol_reserves=token_info.virtual_sol_reserves,
+                                initial_virtual_token_reserves=token_info.virtual_token_reserves
+                            )
+                            logger.debug(
+                                f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
+                            )
+                        except Exception as e:
+                            logger.exception(
+                                f"[{self._mint_prefix(token_info.mint)}] Failed to subscribe to trade tracking: {e}"
+                            )
 
             # Buy token
             logger.info(
@@ -662,17 +631,29 @@ class UniversalTrader:
                     total_net_sol_swapin_amount_raw=0,  # No SOL received
                 )
 
+            # Increment buy counter regardless of success/failure
+            self.buy_count += 1
+            logger.info(f"Buy count: {self.buy_count}/{self.max_buys if self.max_buys else 'unlimited'}")
+            
+            # Check if we've reached max_buys
+            if self.max_buys and self.buy_count >= self.max_buys:
+                logger.info(f"Reached max_buys limit ({self.max_buys}). Will stop after all positions close...")
+                self._max_buys_reached = True
+                self._stop_event.set()  # Stop accepting new tokens
+
             if buy_result.success:
                 await self._handle_successful_buy(token_info, buy_result, position)
             else:
                 await self._handle_failed_buy(token_info, buy_result, position)
 
-            # Only wait for next token in yolo mode
-            if self.yolo_mode:
-                logger.debug(
-                    f"YOLO mode enabled. Waiting {self.wait_time_before_new_token} seconds before looking for next token..."
-                )
-                await asyncio.sleep(self.wait_time_before_new_token)
+            if self._stop_event.is_set():
+                return
+
+            # Wait before looking for next token
+            logger.debug(
+                f"Waiting {self.wait_time_before_new_token} seconds before looking for next token..."
+            )
+            await asyncio.sleep(self.wait_time_before_new_token)
 
         except Exception:
             logger.exception(f"Error handling token {token_info.symbol}")
@@ -685,25 +666,12 @@ class UniversalTrader:
             f"[{self._mint_prefix(token_info.mint)}] Successfully bought {token_info.symbol} on {token_info.platform.value} in transaction {str(buy_result.tx_signature)}"
         )
         logger.info(f"Position: {position}")
+        
         # Move from reserved to active (slot was already reserved when queued)
         if token_info.mint in self.reserved_mints:
             self.reserved_mints.remove(token_info.mint)
         self.active_mints.add(token_info.mint)
 
-        # Subscribe to trade tracking if enabled
-        if self.enable_trade_tracking and self.token_listener:
-            try:
-                # Subscribe to trade tracking
-                await self.token_listener.subscribe_token_trades(
-                    mint=str(token_info.mint)  # Use mint as the identifier
-                )
-                logger.debug(
-                    f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
-                )
-            except Exception as e:
-                logger.exception(
-                    f"[{self._mint_prefix(token_info.mint)}] Failed to subscribe to trade tracking: {e}"
-                )
 
         # Persist to database if available
         if self.database_manager:
@@ -914,8 +882,8 @@ class UniversalTrader:
                     if not volatility_monitoring_started:
                         volatility_calculator = VolatilityCalculator(self.volatility_window_seconds)
                         volatility_monitoring_started = True
-                        logger.info(
-                            f"[{self._mint_prefix(token_info.mint)}] Started volatility monitoring with first price: {current_price:.8f} SOL"
+                        logger.debug(
+                            f"[{self._mint_prefix(token_info.mint)}] Started volatility monitoring with first price: {current_price:.10f} SOL"
                         )
                     
                     # Add current price to volatility calculator
@@ -1189,6 +1157,12 @@ class UniversalTrader:
             if mint_key in self.position_tasks:
                 del self.position_tasks[mint_key]
             self.position_slot_available.set()
+            
+            # Check if we should stop the trader after all positions close
+            if self._max_buys_reached and len(self.active_mints) == 0:
+                logger.info("All positions have closed after reaching max_buys limit. Stopping trader...")
+                # This will cause the main loop to exit
+                self._main_stop_event.set()
 
 
 # Backward compatibility alias

@@ -98,7 +98,6 @@ class UniversalPumpPortalListener(BaseTokenListener):
                 async for message in websocket:
                     try:
                         data = json.loads(message)
-                        logger.info(f"Received message: {json.dumps(data, indent=2)}")
                         
                         # Check if it's a token creation or trade message
                         if data.get("txType") == "create":
@@ -110,7 +109,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
                             self._handle_trade_message(data)
                         elif data.get("message"):
                             # Handle acknowledgement messages
-                            logger.info(f"Received acknowledgement: {data['message']}")
+                            logger.debug(f"Received acknowledgement: {data['message']}")
                             continue
                         else:
                             logger.debug(f"Unknown message type: {data}")
