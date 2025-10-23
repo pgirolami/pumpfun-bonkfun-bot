@@ -65,8 +65,7 @@ class PlatformAwareBuyer(Trader):
             order.token_price_sol = starting_price_sol
             # logger.info(f"Extreme fast mode: calculated {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens at starting price {starting_price_sol:.8f} SOL")
         else:
-            pool_address = self._get_pool_address(token_info, address_provider)
-            order.token_price_sol = await curve_manager.calculate_price(pool_address)
+            order.token_price_sol = await curve_manager.calculate_price(order.token_info.mint)
             order.token_amount_raw = int((self.amount / order.token_price_sol) * 10**TOKEN_DECIMALS) if order.token_price_sol > 0 else 0
 
         # logger.info(f"Token price computed on-chain: {order.token_price_sol:.8f} SOL")
@@ -154,7 +153,7 @@ class PlatformAwareBuyer(Trader):
             balance_changes = None
             try:
                 balance_changes = await self._analyze_balance_changes(order)
-                # logger.info(f"Balance analysis resulted in {balance_changes}")
+                logger.info(f"Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances")
                 logger.exception(e)
@@ -256,9 +255,7 @@ class PlatformAwareSeller(Trader):
         token_balance_decimal = order.token_amount_raw / 10**TOKEN_DECIMALS
         # logger.info(f"Token balance: {token_balance_decimal}")
 
-        # Get pool address and current price
-        pool_address = self._get_pool_address(token_info, address_provider)
-        order.token_price_sol = await curve_manager.calculate_price(pool_address)
+        order.token_price_sol = await curve_manager.calculate_price(order.token_info.mint, token_info.bonding_curve)
 
         # logger.info(f"Price per Token: {order.token_price_sol:.8f} SOL")
 

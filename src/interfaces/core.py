@@ -296,11 +296,11 @@ class CurveManager(ABC):
         pass
 
     @abstractmethod
-    async def calculate_price(self, pool_address: Pubkey) -> float:
+    async def calculate_price(self, mint: Pubkey, pool_address: Pubkey) -> float:
         """Calculate current token price from pool state.
 
         Args:
-            pool_address: Address of the pool/curve
+            mint: Address of the token
 
         Returns:
             Current token price in quote token units
@@ -324,7 +324,7 @@ class CurveManager(ABC):
 
     @abstractmethod
     async def calculate_sell_amount_out(
-        self, pool_address: Pubkey, amount_in: int
+        self, mint:Pubkey, pool_address: Pubkey, amount_in: int
     ) -> int:
         """Calculate expected quote tokens received for a sell operation.
 
@@ -338,7 +338,7 @@ class CurveManager(ABC):
         pass
 
     @abstractmethod
-    async def get_reserves(self, pool_address: Pubkey) -> tuple[int, int]:
+    async def get_reserves(self, mint: Pubkey, pool_address: Pubkey) -> tuple[int, int]:
         """Get current pool reserves.
 
         Args:
@@ -346,18 +346,6 @@ class CurveManager(ABC):
 
         Returns:
             Tuple of (base_reserves, quote_reserves)
-        """
-        pass
-
-    @abstractmethod
-    async def calculate_market_cap(self, pool_address: Pubkey) -> float:
-        """Calculate fully diluted market cap in SOL.
-
-        Args:
-            pool_address: Address of the pool/curve
-
-        Returns:
-            Market cap in SOL (price × total supply)
         """
         pass
 

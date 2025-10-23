@@ -284,9 +284,9 @@ class Position:
         if self.trailing_stop_percentage is not None and self.highest_price is not None:
             trailing_limit = self.highest_price * (1 - self.trailing_stop_percentage)
             if current_price <= trailing_limit:
-                logger.info(f"current_price {current_price} <= trailing_limit {trailing_limit}")
+                # logger.info(f"current_price {current_price} <= trailing_limit {trailing_limit}")
                 return True, ExitReason.TRAILING_STOP
-            logger.info(f"current_price {current_price} > trailing_limit {trailing_limit}")
+            # logger.info(f"current_price {current_price} > trailing_limit {trailing_limit}")
 
         # Check max hold time
         if self.max_hold_time:

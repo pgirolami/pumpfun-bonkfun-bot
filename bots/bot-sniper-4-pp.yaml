@@ -56,6 +56,10 @@ trade:
   min_gain_percentage: 0.01 # Exit if not at least 2% gain within time window (0.02 = 2%)
   min_gain_time_window: 1 # Time window in seconds to check for minimum gain (default: 2)
 
+  # Trade tracking configuration (NEW FEATURE)
+  enable_trade_tracking: true # Enable PumpPortal trade-based pricing for real-time updates
+  trade_staleness_threshold: 12.0 # Seconds before falling back to RPC pricing
+
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot calculates token amount based on platform starting price and buy_amount for precision.
@@ -86,7 +90,7 @@ filters:
   listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
-  yolo_mode: true # Continuously trade tokens
+  yolo_mode: false # Continuously trade tokens
 
 # Retry and timeout settings
 retries:

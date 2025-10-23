@@ -97,6 +97,9 @@ class UniversalTrader:
         # Insufficient gain exit condition
         min_gain_percentage: float | None = None,
         min_gain_time_window: int = 2,
+        # Trade tracking configuration
+        enable_trade_tracking: bool = False,
+        trade_staleness_threshold: float = 30.0,
     ):
         """Initialize the universal trader."""
         # Core components
@@ -143,11 +146,6 @@ class UniversalTrader:
             logger.exception("Platform validation failed")
             raise
 
-        # Get platform-specific implementations
-        self.platform_implementations = get_platform_implementations(
-            self.platform, self.solana_client
-        )
-
         # Store compute unit configuration
         self.compute_units = compute_units or {}
 
@@ -157,6 +155,33 @@ class UniversalTrader:
         if testing:
             self.dry_run = testing.get("dry_run", False)
             dry_run_wait_time = testing.get("dry_run_wait_time_seconds", 0.5)
+
+        # Trade tracking configuration
+        self.enable_trade_tracking = enable_trade_tracking
+        self.trade_staleness_threshold = trade_staleness_threshold
+
+        # Initialize the appropriate listener only if trade tracking is enabled
+        logger.info(f"Creating token listener for trade tracking (type: {listener_type})")
+        self.token_listener = ListenerFactory.create_listener(
+            listener_type=listener_type,
+            wss_endpoint=wss_endpoint,
+            geyser_endpoint=geyser_endpoint,
+            geyser_api_token=geyser_api_token,
+            geyser_auth_type=geyser_auth_type,
+            pumpportal_url=pumpportal_url,
+            platforms=[self.platform],  # Only listen for our platform
+        )
+        if self.token_listener is None:
+            logger.error(f"Failed to create token listener for type: {listener_type}")
+        else:
+            logger.info(f"Successfully created token listener: {type(self.token_listener).__name__}")
+
+        # Get platform-specific implementations (after token_listener is created)
+        self.platform_implementations = get_platform_implementations(
+            self.platform, self.solana_client, 
+            listener=self.token_listener if self.enable_trade_tracking else None,
+            trade_staleness_threshold=self.trade_staleness_threshold
+        )
 
         # Create platform-aware traders based on mode
         if self.dry_run:
@@ -219,16 +244,6 @@ class UniversalTrader:
                 compute_units=self.compute_units,
             )
 
-        # Initialize the appropriate listener with platform filtering
-        self.token_listener = ListenerFactory.create_listener(
-            listener_type=listener_type,
-            wss_endpoint=wss_endpoint,
-            geyser_endpoint=geyser_endpoint,
-            geyser_api_token=geyser_api_token,
-            geyser_auth_type=geyser_auth_type,
-            pumpportal_url=pumpportal_url,
-            platforms=[self.platform],  # Only listen for our platform
-        )
 
         # Trading parameters
         self.buy_slippage = buy_slippage
@@ -261,6 +276,7 @@ class UniversalTrader:
         # Insufficient gain exit condition
         self.min_gain_percentage = min_gain_percentage
         self.min_gain_time_window = min_gain_time_window
+        
 
         # Timing parameters
         self.wait_time_after_creation = wait_time_after_creation
@@ -365,7 +381,7 @@ class UniversalTrader:
                 processor_task = asyncio.create_task(self._process_token_queue())
 
                 try:
-                    await self.token_listener.listen_for_tokens(
+                    await self.token_listener.listen_for_messages(
                         lambda token: self._queue_token(token),
                         self.match_string,
                         self.bro_address,
@@ -405,7 +421,7 @@ class UniversalTrader:
                 token_found.set()
 
         listener_task = asyncio.create_task(
-            self.token_listener.listen_for_tokens(
+            self.token_listener.listen_for_messages(
                 token_callback,
                 self.match_string,
                 self.bro_address,
@@ -573,6 +589,30 @@ class UniversalTrader:
                 )
                 await asyncio.sleep(self.wait_time_after_creation)
 
+            # Subscribe to trade tracking if enabled (before buying)
+            if self.enable_trade_tracking:
+                if self.token_listener is None:
+                    logger.error(
+                        f"[{self._mint_prefix(token_info.mint)}] Trade tracking enabled but token_listener is None"
+                    )
+                else:
+                    try:
+                        # Use pump.fun default values (account not yet visible to RPC)
+                        await self.token_listener.subscribe_token_trades(
+                            mint=str(token_info.mint),  # Use mint as the identifier
+                            initial_data={
+                                "vSolInBondingCurve": 30.0,  # Pump.fun default virtual SOL reserves
+                                "vTokensInBondingCurve": 1073000000.0,  # Pump.fun default virtual token reserves
+                            }
+                        )
+                        logger.debug(
+                            f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            f"[{self._mint_prefix(token_info.mint)}] Failed to subscribe to trade tracking: {e}"
+                        )
+
             # Buy token
             logger.info(
                 f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} ({str(token_info.mint)})on {token_info.platform.value}..."
@@ -654,6 +694,25 @@ class UniversalTrader:
             self.reserved_mints.remove(token_info.mint)
         self.active_mints.add(token_info.mint)
 
+        # Subscribe to trade tracking if enabled
+        if self.enable_trade_tracking and self.token_listener:
+            try:
+                # Use pump.fun default values (account not yet visible to RPC)
+                await self.token_listener.subscribe_token_trades(
+                    mint=str(token_info.mint),  # Use mint as the identifier
+                    initial_data={
+                        "vSolInBondingCurve": 30.0,  # Pump.fun default virtual SOL reserves
+                        "vTokensInBondingCurve": 1073000000.0,  # Pump.fun default virtual token reserves
+                    }
+                )
+                logger.debug(
+                    f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
+                )
+            except Exception as e:
+                logger.exception(
+                    f"[{self._mint_prefix(token_info.mint)}] Failed to subscribe to trade tracking: {e}"
+                )
+
         # Persist to database if available
         if self.database_manager:
             try:
@@ -712,6 +771,18 @@ class UniversalTrader:
         if token_info.mint in self.reserved_mints:
             self.reserved_mints.remove(token_info.mint)
             logger.debug(f"[{self._mint_prefix(token_info.mint)}] Released reserved slot after failed buy")
+
+        # Unsubscribe from trade tracking if enabled (buy failed)
+        if self.enable_trade_tracking and self.token_listener:
+            try:
+                await self.token_listener.unsubscribe_token_trades(mint=str(token_info.mint))
+                logger.info(
+                    f"[{self._mint_prefix(token_info.mint)}] Unsubscribed from trade tracking after failed buy"
+                )
+            except Exception as e:
+                logger.exception(
+                    f"[{self._mint_prefix(token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
+                )
 
         # Persist failed trade to database if available
         if self.database_manager:
@@ -789,11 +860,23 @@ class UniversalTrader:
                 f"[{self._mint_prefix(token_info.mint)}] Failed to sell {token_info.symbol}: {sell_result.error_message}"
             )
 
+        # Unsubscribe from trade tracking when time-based exit completes
+        if self.enable_trade_tracking and self.token_listener:
+            try:
+                await self.token_listener.unsubscribe_token_trades(mint=str(token_info.mint))
+                logger.info(
+                    f"[{self._mint_prefix(token_info.mint)}] Unsubscribed from trade tracking after time-based exit"
+                )
+            except Exception as e:
+                logger.exception(
+                    f"[{self._mint_prefix(token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
+                )
+
     async def _monitor_position_until_exit(
         self, token_info: TokenInfo, position: Position
     ) -> None:
         """Monitor a position until exit conditions are met."""
-        logger.info(
+        logger.debug(
             f"[{self._mint_prefix(token_info.mint)}] Starting position monitoring (check interval: {self.price_check_interval}s)"
         )
 
@@ -807,14 +890,14 @@ class UniversalTrader:
         volatility_calculator = None
         volatility_monitoring_started = False
         if self.enable_volatility_adjustment:
-            logger.info(
+            logger.debug(
                 f"[{self._mint_prefix(token_info.mint)}] Volatility adjustment enabled (window: {self.volatility_window_seconds}s) - waiting for first price"
             )
 
         while position.is_active:
             try:
                 # Get current price from pool/curve
-                current_price = await curve_manager.calculate_price(pool_address)
+                current_price = await curve_manager.calculate_price(token_info.mint,token_info.bonding_curve)
                 current_timestamp = time()
                 current_timestamp_ms = int(current_timestamp * 1000)
 
@@ -989,6 +1072,18 @@ class UniversalTrader:
                 logger.exception("Error monitoring position, continuing though")
             # Wait before next price check
             await asyncio.sleep(self.price_check_interval)
+
+        # Unsubscribe from trade tracking when monitoring ends
+        if self.enable_trade_tracking and self.token_listener:
+            try:
+                await self.token_listener.unsubscribe_token_trades(mint=str(token_info.mint))
+                logger.debug(
+                    f"[{self._mint_prefix(token_info.mint)}] Unsubscribed from trade tracking after position monitoring ended"
+                )
+            except Exception as e:
+                logger.exception(
+                    f"[{self._mint_prefix(token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
+                )
 
     def _get_pool_address(self, token_info: TokenInfo) -> Pubkey:
         """Get the pool/curve address for price monitoring using platform-agnostic method."""

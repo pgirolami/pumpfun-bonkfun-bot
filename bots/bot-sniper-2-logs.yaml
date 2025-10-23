@@ -52,6 +52,10 @@ trade:
   # min_gain_percentage: 0.1 # Exit if not at least 10% gain within time window (0.1 = 10%)
   # min_gain_time_window: 2 # Time window in seconds to check for minimum gain (default: 2)
 
+  # Trade tracking configuration (NEW FEATURE)
+  enable_trade_tracking: false # Enable PumpPortal trade-based pricing for real-time updates
+  trade_staleness_threshold: 30.0 # Seconds before falling back to RPC pricing
+
   # EXTREME FAST mode configuration
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot calculates token amount based on platform starting price and buy_amount for precision.

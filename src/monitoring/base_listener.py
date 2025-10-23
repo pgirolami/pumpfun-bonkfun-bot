@@ -4,8 +4,13 @@ Base class for WebSocket token listeners - now platform-agnostic.
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from interfaces.core import Platform, TokenInfo
+from trading.token_trade_tracker import TokenTradeTracker
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class BaseTokenListener(ABC):
@@ -18,16 +23,19 @@ class BaseTokenListener(ABC):
             platform: Platform to monitor (if None, monitor all platforms)
         """
         self.platform = platform
+        
+        # Trade tracking state - index by mint
+        self._trade_trackers: dict[str, TokenTradeTracker] = {}  # mint -> tracker
 
     @abstractmethod
-    async def listen_for_tokens(
+    async def listen_for_messages(
         self,
         token_callback: Callable[[TokenInfo], Awaitable[None]],
         match_string: str | None = None,
         creator_address: str | None = None,
     ) -> None:
         """
-        Listen for new token creations.
+        Listen for new token creations and trade messages.
 
         Args:
             token_callback: Callback function for new tokens
@@ -48,3 +56,83 @@ class BaseTokenListener(ABC):
         if self.platform is None:
             return True  # Process all platforms
         return token_info.platform == self.platform
+    
+    async def subscribe_token_trades(
+        self, 
+        mint: str, 
+        initial_data: dict[str, Any] | None = None
+    ) -> None:
+        """Subscribe to trade tracking for a token.
+        
+        Args:
+            mint: Token mint address (used for WebSocket subscription and indexing)
+            initial_data: Optional initial reserves from token creation
+        """
+        # Create tracker using mint as identifier
+        tracker = TokenTradeTracker(mint, initial_data)
+        self._trade_trackers[mint] = tracker  # Index by mint
+        
+        # Subclasses should override to send WebSocket subscription
+        logger.debug(f"Calling _send_trade_subscription() for {mint}")
+        await self._send_trade_subscription(mint)
+    
+    async def unsubscribe_token_trades(self, mint: str) -> None:
+        """Unsubscribe from trade tracking for a token.
+        
+        Args:
+            mint: Token mint address
+        """
+        if mint in self._trade_trackers:
+            # Remove from mappings
+            del self._trade_trackers[mint]
+            
+            # Send unsubscribe message to WebSocket
+            await self._send_trade_unsubscription(mint)
+    
+    
+    def get_trade_tracker_by_mint(self, mint: str) -> TokenTradeTracker | None:
+        """Get trade tracker by mint address.
+        
+        Args:
+            mint: Token mint address
+            
+        Returns:
+            TokenTradeTracker if found, None otherwise
+        """
+        return self._trade_trackers.get(mint)
+    
+    def _handle_trade_message(self, trade_data: dict[str, Any]) -> None:
+        """Process trade message and update tracker.
+        
+        Args:
+            trade_data: Trade message from PumpPortal
+        """
+        mint = trade_data.get("mint")
+        if not mint:
+            return
+        
+        tracker = self._trade_trackers.get(mint)
+        if tracker:
+            tracker.apply_trade(trade_data)
+    
+    async def _send_trade_subscription(self, mint: str) -> None:
+        """Send WebSocket subscription for token trades.
+        
+        Subclasses should override to implement platform-specific subscription.
+        
+        Args:
+            mint: Token mint address to subscribe to
+        """
+        # Default implementation - subclasses should override
+        pass
+    
+    async def _send_trade_unsubscription(self, mint: str) -> None:
+        """Send WebSocket unsubscription for token trades.
+        
+        Subclasses should override to implement platform-specific unsubscription.
+        
+        Args:
+            mint: Token mint address to unsubscribe from
+        """
+        # Default implementation - subclasses should override
+        pass

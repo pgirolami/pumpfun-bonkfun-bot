@@ -69,7 +69,7 @@ class PlatformRegistry:
         }
 
     def create_platform_implementations(
-        self, platform: Platform, client: SolanaClient, **kwargs: Any
+        self, platform: Platform, client: SolanaClient, listener=None, **kwargs: Any
     ) -> PlatformImplementations:
         """Create platform implementation instances with IDL support.
 
@@ -119,7 +119,21 @@ class PlatformRegistry:
             instruction_builder = impl_classes["instruction_builder"](
                 idl_parser=idl_parser
             )
-            curve_manager = impl_classes["curve_manager"](client, idl_parser=idl_parser)
+            # Pass listener and trade staleness threshold to curve manager if available
+            if listener and hasattr(impl_classes["curve_manager"], '__init__'):
+                # Check if curve manager accepts listener parameter
+                import inspect
+                sig = inspect.signature(impl_classes["curve_manager"].__init__)
+                if 'listener' in sig.parameters:
+                    trade_staleness_threshold = kwargs.get('trade_staleness_threshold', 30.0)
+                    curve_manager = impl_classes["curve_manager"](
+                        client, idl_parser=idl_parser, listener=listener, 
+                        trade_staleness_threshold=trade_staleness_threshold
+                    )
+                else:
+                    curve_manager = impl_classes["curve_manager"](client, idl_parser=idl_parser)
+            else:
+                curve_manager = impl_classes["curve_manager"](client, idl_parser=idl_parser)
             event_parser = impl_classes["event_parser"](idl_parser=idl_parser)
         else:
             # Fallback for platforms without IDL support
@@ -246,19 +260,20 @@ class PlatformFactory:
             print(f"Warning: Could not register LetsBonk platform: {e}")
 
     def create_for_platform(
-        self, platform: Platform, client: SolanaClient, **config: Any
+        self, platform: Platform, client: SolanaClient, listener=None, **config: Any
     ) -> PlatformImplementations:
         """Create all implementations for a specific platform.
 
         Args:
             platform: Platform to create implementations for
             client: Solana RPC client
+            listener: Optional listener for trade tracking
             **config: Platform-specific configuration (including verbose_idl)
 
         Returns:
             PlatformImplementations containing all interface implementations
         """
-        return self.registry.create_platform_implementations(platform, client, **config)
+        return self.registry.create_platform_implementations(platform, client, listener=listener, **config)
 
     def get_address_provider(
         self, platform: Platform, client: SolanaClient
@@ -353,18 +368,20 @@ platform_factory = PlatformFactory()
 
 
 def get_platform_implementations(
-    platform: Platform, client: SolanaClient
+    platform: Platform, client: SolanaClient, listener=None, **kwargs
 ) -> PlatformImplementations:
     """Convenience function to get platform implementations.
 
     Args:
         platform: Platform to get implementations for
         client: Solana RPC client
+        listener: Optional listener for trade tracking
+        **kwargs: Additional configuration parameters
 
     Returns:
         PlatformImplementations containing all interface implementations
     """
-    return platform_factory.create_for_platform(platform, client)
+    return platform_factory.create_for_platform(platform, client, listener=listener, **kwargs)
 
 
 def register_platform_implementations(

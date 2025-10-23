@@ -27,7 +27,7 @@ async def test_trade_subscription():
     print("=" * 40)
     
     # Use a known token mint (you can replace this with any pump.fun token)
-    test_token_mint_str = "11111111111111111111111111111112"  # System program as example
+    test_token_mint_str = "Y85iiskMQm38dZNzb1CUL1sHWcTQ7t1qfbK9QpVpump"  # System program as example
     
     try:
         # Get bonding curve address

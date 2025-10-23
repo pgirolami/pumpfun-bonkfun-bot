@@ -12,6 +12,7 @@ from solders.pubkey import Pubkey
 from core.client import SolanaClient
 from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from interfaces.core import CurveManager, Platform
+from monitoring.base_listener import BaseTokenListener
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
 
@@ -21,15 +22,25 @@ logger = get_logger(__name__)
 class PumpFunCurveManager(CurveManager):
     """Pump.Fun implementation of CurveManager interface using IDL-based decoding."""
 
-    def __init__(self, client: SolanaClient, idl_parser: IDLParser):
+    def __init__(
+        self, 
+        client: SolanaClient, 
+        idl_parser: IDLParser,
+        listener: BaseTokenListener | None = None,
+        trade_staleness_threshold: float = 30.0
+    ):
         """Initialize pump.fun curve manager with injected IDL parser.
 
         Args:
             client: Solana RPC client
             idl_parser: Pre-loaded IDL parser for pump.fun platform
+            listener: Optional listener for trade tracking
+            trade_staleness_threshold: Seconds before trade data is considered stale
         """
         self.client = client
         self._idl_parser = idl_parser
+        self.listener = listener
+        self.trade_staleness_threshold = trade_staleness_threshold
         self.constants: dict[str, Any] = {}
         self._constants_loaded = False
 
@@ -63,7 +74,7 @@ class PumpFunCurveManager(CurveManager):
             # logger.exception("Failed to get curve state")
             raise ValueError(f"Invalid bonding curve state: {e!s}")
 
-    async def calculate_price(self, pool_address: Pubkey) -> float:
+    async def calculate_price(self, mint:Pubkey, pool_address: Pubkey) -> float:
         """Calculate current token price from bonding curve state.
 
         Args:
@@ -72,39 +83,35 @@ class PumpFunCurveManager(CurveManager):
         Returns:
             Current token price in SOL
         """
+        # Check if we have trade tracking available
+        if self.listener:
+            tracker = self.listener.get_trade_tracker_by_mint(str(mint))
+            if tracker and not tracker.is_stale(self.trade_staleness_threshold):
+                try:
+                    price = tracker.get_current_price()
+                    logger.debug(f"Using trade tracker price: {price:.10f} SOL")
+                    return price
+                except RuntimeError:
+                    logger.debug("Trade tracker not initialized, falling back to RPC")
+            else:
+                logger.info("Trade tracker is stale, using RPC")
+
+        
+        # Fallback to RPC-based calculation
+        logger.info("Trade tracker not available or stale, using RPC")
         pool_state = await self.get_pool_state(pool_address)
 
         # Use virtual reserves for price calculation
         virtual_token_reserves = pool_state["virtual_token_reserves"]
         virtual_sol_reserves = pool_state["virtual_sol_reserves"]
 
+        logger.info(f"[{str(mint)[:8]}] (RPC) Virtual token reserves: {virtual_token_reserves}, Virtual sol reserves: {virtual_sol_reserves}")
         if virtual_token_reserves <= 0:
             return 0.0
 
         # Price = sol_reserves / token_reserves
         price_lamports = virtual_sol_reserves / virtual_token_reserves
         return price_lamports * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
-
-    async def calculate_market_cap(self, pool_address: Pubkey) -> float:
-        """Calculate fully diluted market cap in SOL.
-
-        Args:
-            pool_address: Address of the bonding curve
-
-        Returns:
-            Market cap in SOL (price × total supply)
-        """
-        pool_state = await self.get_pool_state(pool_address)
-        price_per_token = await self.calculate_price(pool_address)
-
-        # Get total supply and convert from raw units to decimal
-        token_total_supply = pool_state["token_total_supply"]
-        total_supply_decimal = token_total_supply / 10**TOKEN_DECIMALS
-
-        # Market cap = price × total supply
-        market_cap_sol = price_per_token * total_supply_decimal
-
-        return market_cap_sol
 
     async def calculate_buy_amount_out(
         self, pool_address: Pubkey, amount_in: int
@@ -121,7 +128,7 @@ class PumpFunCurveManager(CurveManager):
             Expected amount of tokens to receive (in raw token units)
         """
         pool_state = await self.get_pool_state(pool_address)
-
+        
         virtual_token_reserves = pool_state["virtual_token_reserves"]
         virtual_sol_reserves = pool_state["virtual_sol_reserves"]
 
@@ -137,7 +144,7 @@ class PumpFunCurveManager(CurveManager):
         return tokens_out
 
     async def calculate_sell_amount_out(
-        self, pool_address: Pubkey, amount_in: int
+        self, mint:Pubkey, pool_address: Pubkey, amount_in: int
     ) -> int:
         """Calculate expected SOL received for a sell operation.
 
@@ -150,10 +157,7 @@ class PumpFunCurveManager(CurveManager):
         Returns:
             Expected amount of SOL to receive (in lamports)
         """
-        pool_state = await self.get_pool_state(pool_address)
-
-        virtual_token_reserves = pool_state["virtual_token_reserves"]
-        virtual_sol_reserves = pool_state["virtual_sol_reserves"]
+        virtual_sol_reserves, virtual_token_reserves = await self.get_reserves(mint, pool_address)
 
         # Use virtual reserves for bonding curve calculation
         # Formula: sol_out = (amount_in * virtual_sol_reserves) / (virtual_token_reserves + amount_in)
@@ -166,7 +170,7 @@ class PumpFunCurveManager(CurveManager):
         sol_out = numerator // denominator
         return sol_out
 
-    async def get_reserves(self, pool_address: Pubkey) -> tuple[int, int]:
+    async def get_reserves(self, mint: Pubkey, pool_address: Pubkey) -> tuple[int, int]:
         """Get current bonding curve reserves.
 
         Args:
@@ -175,11 +179,23 @@ class PumpFunCurveManager(CurveManager):
         Returns:
             Tuple of (token_reserves, sol_reserves) in raw units
         """
-        pool_state = await self.get_pool_state(pool_address)
-        return (
-            pool_state["virtual_token_reserves"],
-            pool_state["virtual_sol_reserves"],
-        )
+        virtual_sol_reserves, virtual_token_reserves = (None,None)
+        if self.listener:
+            tracker = self.listener.get_trade_tracker_by_mint(str(mint))
+            if tracker and not tracker.is_stale(self.trade_staleness_threshold):
+                try:
+                    return tracker.get_reserves()
+                except RuntimeError:
+                    logger.debug("Trade tracker not initialized, falling back to RPC")
+            else:
+                logger.info("Trade tracker is stale, using RPC")
+
+        if virtual_sol_reserves is None or virtual_token_reserves is None:
+            pool_state = await self.get_pool_state(pool_address)
+            return (
+                pool_state["virtual_token_reserves"],
+                pool_state["virtual_sol_reserves"],
+            )
 
     def _decode_curve_state_with_idl(self, data: bytes) -> dict[str, Any]:
         """Decode bonding curve state data using injected IDL parser.
