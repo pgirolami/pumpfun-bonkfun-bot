@@ -31,7 +31,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
         """
         super().__init__()
         self.pumpportal_url = pumpportal_url
-        self.ping_interval = 20  # seconds
+        self.ping_interval = 3  # seconds - faster connection loss detection
         
         # Track subscribed mints for reconnection
         self._subscribed_mints: set[str] = set()
@@ -92,7 +92,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
             await self._resubscribe_to_trades()
             
             # Start ping loop in background
-            # ping_task = asyncio.create_task(self._ping_loop())
+            ping_task = asyncio.create_task(self._ping_loop())
 
             try:
                 async for message in websocket:
@@ -124,12 +124,11 @@ class UniversalPumpPortalListener(BaseTokenListener):
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("PumpPortal WebSocket connection closed. Reconnecting...")
             finally:
-                # ping_task.cancel()
-                # try:
-                #     await ping_task
-                # except asyncio.CancelledError:
-                #     pass
-                pass
+                ping_task.cancel()
+                try:
+                    await ping_task
+                except asyncio.CancelledError:
+                    pass
 
     async def _subscribe_to_new_tokens(self) -> None:
         """Subscribe to new token events from PumpPortal."""
@@ -145,7 +144,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
                 await asyncio.sleep(self.ping_interval)
                 try:
                     pong_waiter = await self._websocket.ping()
-                    await asyncio.wait_for(pong_waiter, timeout=10)
+                    await asyncio.wait_for(pong_waiter, timeout=2)
                 except TimeoutError:
                     logger.warning("Ping timeout - PumpPortal server not responding")
                     # Force reconnection
