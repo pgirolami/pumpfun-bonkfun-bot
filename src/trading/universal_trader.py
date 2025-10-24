@@ -565,11 +565,7 @@ class UniversalTrader:
                     else:
                         try:
                             # Subscribe to trade tracking
-                            await self.token_listener.subscribe_token_trades(
-                                mint=str(token_info.mint),
-                                initial_virtual_sol_reserves=token_info.virtual_sol_reserves,
-                                initial_virtual_token_reserves=token_info.virtual_token_reserves
-                            )
+                            await self.token_listener.subscribe_token_trades(token_info)
                             logger.debug(
                                 f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
                             )
@@ -934,6 +930,15 @@ class UniversalTrader:
                         logger.debug(f"[{self._mint_prefix(token_info.mint)}] Price changed to {current_price:.8f} SOL, updating timestamp")
                     last_price = current_price
 
+                # Update creator tracking from trade tracker if available
+                if self.enable_trade_tracking and self.token_listener:
+                    tracker = self.token_listener.get_trade_tracker_by_mint(str(token_info.mint))
+                    creator_swaps = tracker.get_creator_swaps()
+                    position.update_creator_tracking(
+                        creator_swaps[0], 
+                        creator_swaps[1]
+                    )
+ 
                 # Update position in database on every loop run
                 if self.database_manager:
                     try:
@@ -1118,6 +1123,21 @@ class UniversalTrader:
                 max_hold_time=self.max_hold_time,
                 max_no_price_change_time=self.max_no_price_change_time,
             )
+            
+            # Subscribe to trade tracking for resumed positions if enabled
+            if (self.enable_trade_tracking and self.token_listener and 
+                token_info.virtual_sol_reserves is not None and 
+                token_info.virtual_token_reserves is not None):
+                try:
+                    await self.token_listener.subscribe_token_trades(token_info)
+                    logger.debug(
+                        f"[{self._mint_prefix(position.mint)}] Subscribed to trade tracking for resumed position {token_info.symbol}"
+                    )
+                except Exception as e:
+                    logger.exception(
+                        f"[{self._mint_prefix(position.mint)}] Failed to subscribe to trade tracking for resumed position: {e}"
+                    )
+            
             # Track as active and start monitoring task
             self.active_mints.add(position.mint)
             task_key = str(position.mint)
@@ -1151,6 +1171,14 @@ class UniversalTrader:
                     "Marry mode enabled. Skipping sell operation for resumed position."
                 )
         finally:
+            # Unsubscribe from trade tracking if enabled
+            if self.enable_trade_tracking and self.token_listener:
+                try:
+                    await self.token_listener.unsubscribe_token_trades(mint=str(position.mint))
+                    logger.debug(f"[{self._mint_prefix(position.mint)}] Unsubscribed from trade tracking for resumed position")
+                except Exception as e:
+                    logger.debug(f"[{self._mint_prefix(position.mint)}] Failed to unsubscribe from trade tracking: {e}")
+            
             # Remove from active tracking when monitoring ends or task is cancelled
             if position.mint in self.active_mints:
                 self.active_mints.remove(position.mint)

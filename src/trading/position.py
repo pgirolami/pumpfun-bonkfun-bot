@@ -28,6 +28,7 @@ class ExitReason(Enum):
     INSUFFICIENT_GAIN = "insufficient_gain"
     MANUAL = "manual"
     FAILED_BUY = "failed_buy"
+    CREATOR_SOLD = "creator_sold"
 
 
 @dataclass
@@ -62,6 +63,10 @@ class Position:
     
     # Monitoring timing
     monitoring_start_ts: int | None = None  # when position monitoring actually started (Unix epoch milliseconds)
+    
+    # Creator tracking (raw token units)
+    creator_token_swap_in: int = 0    # Tokens bought by creator
+    creator_token_swap_out: int = 0    # Tokens sold by creator (negative)
 
     # Status
     is_active: bool = True
@@ -254,7 +259,7 @@ class Position:
         """
         if self.monitoring_start_ts is None:
             self.monitoring_start_ts = timestamp
-            logger.info(f"Position monitoring started at {timestamp} (entry was at {self.entry_ts})")
+            logger.debug(f"Position monitoring started at {timestamp} (entry was at {self.entry_ts})")
 
     def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
         """Check if position should be exited based on current conditions.
@@ -268,6 +273,10 @@ class Position:
 
         if not self.is_active:
             return False, None
+
+        if self.creator_token_swap_out!=0:
+            logger.info(f"Creator has sold tokens: {self.creator_token_swap_out}")
+            return True, ExitReason.CREATOR_SOLD
 
         # Check take profit
         if self.take_profit_price and current_price >= self.take_profit_price:
@@ -441,6 +450,24 @@ class Position:
                 "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
             }
 
+    def update_creator_tracking(self, creator_swap_in: int, creator_swap_out: int) -> None:
+        """Update creator token swap tracking from trade tracker.
+        
+        Args:
+            creator_swap_in: Total tokens bought by creator (raw units)
+            creator_swap_out: Total tokens sold by creator (raw units, negative)
+        """
+        self.creator_token_swap_in = creator_swap_in
+        self.creator_token_swap_out = creator_swap_out
+        logger.info(f"[{str(self.mint)[:8]}] Updated creator tracking: swap_in={creator_swap_in}, swap_out={creator_swap_out}")
+
+    def get_creator_net_position(self) -> int:
+        """Get creator's net token position (bought - sold).
+        
+        Returns:
+            Net position in raw token units (positive = net buyer, negative = net seller)
+        """
+        return self.creator_token_swap_in + self.creator_token_swap_out
 
     def __str__(self) -> str:
         """String representation of position."""

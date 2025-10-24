@@ -58,30 +58,19 @@ class BaseTokenListener(ABC):
             return True  # Process all platforms
         return token_info.platform == self.platform
     
-    async def subscribe_token_trades(
-        self, 
-        mint: str,
-        initial_virtual_sol_reserves: int,
-        initial_virtual_token_reserves: int
-    ) -> None:
+    async def subscribe_token_trades(self, token_info: TokenInfo) -> None:
         """Subscribe to trade tracking for a token.
         
         Args:
-            mint: Token mint address (used for WebSocket subscription and indexing)
-            initial_virtual_sol_reserves: Virtual SOL reserves in lamports (from token creation)
-            initial_virtual_token_reserves: Virtual token reserves in raw units (from token creation)
+            token_info: Token information containing reserves and creator data
         """
-        # Create tracker with initial reserves from token creation
-        tracker = TokenTradeTracker(
-            mint=mint,
-            initial_virtual_sol_reserves=initial_virtual_sol_reserves,
-            initial_virtual_token_reserves=initial_virtual_token_reserves
-        )
-        self._trade_trackers[mint] = tracker  # Index by mint
+        # Create tracker with token information from creation
+        tracker = TokenTradeTracker(token_info)
+        self._trade_trackers[str(token_info.mint)] = tracker  # Index by mint
         
         # Subclasses should override to send WebSocket subscription
-        logger.debug(f"Calling _send_trade_subscription() for {mint}")
-        await self._send_trade_subscription(mint)
+        logger.debug(f"Calling _send_trade_subscription() for {token_info.mint}")
+        await self._send_trade_subscription(str(token_info.mint))
     
     async def unsubscribe_token_trades(self, mint: str) -> None:
         """Unsubscribe from trade tracking for a token.
@@ -143,3 +132,17 @@ class BaseTokenListener(ABC):
         """
         # Default implementation - subclasses should override
         pass
+    
+    def get_trade_tracker_by_mint(self, mint: str) -> TokenTradeTracker | None:
+        """Get trade tracker for a specific mint.
+        
+        Args:
+            mint: Token mint address
+            
+        Returns:
+            TokenTradeTracker instance or None if not found
+        """
+        result = self._trade_trackers.get(mint)
+        if result is None:
+            logger.info(f"No trade tracker found for {mint}. We have {self._trade_trackers.keys()}")
+        return result

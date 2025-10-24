@@ -30,7 +30,7 @@ trade:
   buy_amount: 0.01 # Amount of SOL to spend when buying (in SOL)
   buy_slippage: 0.5 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.99
-  max_active_mints: 2 # Maximum concurrent active positions (YOLO mode only)
+  max_active_mints: 1 # Maximum concurrent active positions (YOLO mode only)
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual", "trailing"
@@ -38,7 +38,7 @@ trade:
   stop_loss_percentage: 0.01 # Stop loss (0.1 = 10%)
   trailing_stop_percentage: 0.1 # Trailing stop at 20% from highest price (0.2 = 20%)
   max_hold_time: 6000 # Maximum hold time in seconds (600 = 10 minutes)
-  price_check_interval: 1 # Check price every 2 seconds
+  price_check_interval: 0.5 # Check price every 2 seconds
 
   # Volatility-based take profit adjustments (NEW FEATURE)
   enable_volatility_adjustment: true # Enable volatility-based TP adjustments

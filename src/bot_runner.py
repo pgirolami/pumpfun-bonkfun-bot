@@ -282,10 +282,8 @@ def run_all_bots():
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    # File logging is set up per bot instance in setup_logging()
+    # No console output needed
 
     # Log supported platforms and listeners
     try:
