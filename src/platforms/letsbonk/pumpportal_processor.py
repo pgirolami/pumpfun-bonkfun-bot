@@ -67,7 +67,7 @@ class LetsBonkPumpPortalProcessor:
 
             if not all([name, symbol, mint_str, creator_str]):
                 logger.warning(
-                    "Missing required fields in PumpPortal LetsBonk token data"
+                    f"Missing required fields in PumpPortal LetsBonk token data: {token_data}"
                 )
                 return None
 

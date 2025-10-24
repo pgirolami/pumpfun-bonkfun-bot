@@ -942,6 +942,12 @@ class UniversalTrader:
                     except Exception as e:
                         logger.exception(f"Failed to update position in database: {e}")
 
+                # Log current status
+                pnl = position._get_pnl(current_price)
+                logger.info(
+                    f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price:.10f} SOL ({pnl['net_price_change_pct']:+.2f}%)"
+                )
+
                 # Check if position should be exited
                 should_exit, exit_reason = position.should_exit(current_price)
 
@@ -1021,12 +1027,6 @@ class UniversalTrader:
                     if sell_result.success:
                         # Exit monitoring loop after successful sell
                         break
-                else:
-                    # Log current status
-                    pnl = position._get_pnl(current_price)
-                    logger.info(
-                        f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price:.10f} SOL ({pnl['net_price_change_pct']:+.2f}%)"
-                    )
 
             except Exception:
                 logger.exception("Error monitoring position, continuing though")

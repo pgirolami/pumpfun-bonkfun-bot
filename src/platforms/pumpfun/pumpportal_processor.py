@@ -77,7 +77,7 @@ class PumpFunPumpPortalProcessor:
             # - signature: Transaction signature
 
             if not all([name, symbol, mint_str, bonding_curve_str, creator_str]):
-                logger.warning("Missing required fields in PumpPortal token data")
+                logger.warning(f"Missing required fields in PumpPortal token data: {token_data}")
                 return None
 
             # Convert string addresses to Pubkey objects

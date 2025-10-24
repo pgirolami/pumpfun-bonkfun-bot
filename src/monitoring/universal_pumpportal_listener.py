@@ -89,7 +89,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
             await self._subscribe_to_new_tokens()
             
             # Resubscribe to all existing trade tracking
-            # await self._resubscribe_to_trades()
+            await self._resubscribe_to_trades()
             
             # Start ping loop in background
             # ping_task = asyncio.create_task(self._ping_loop())
