@@ -157,6 +157,7 @@ async def start_bot(config_path: str):
             bro_address=cfg["filters"].get("bro_address"),
             marry_mode=cfg["filters"].get("marry_mode", False),
             max_buys=cfg["filters"].get("max_buys", None),
+            min_initial_buy_sol=cfg["filters"].get("min_initial_buy_sol", 1.0),
             max_active_mints=cfg["trade"].get("max_active_mints", 1),
             # Compute unit configuration
             compute_units=cfg.get("compute_units", {}),

@@ -80,6 +80,7 @@ class UniversalTrader:
         bro_address: str | None = None,
         marry_mode: bool = False,
         max_buys: int | None = None,
+        min_initial_buy_sol: float = 1.0,
         # Compute unit configuration
         compute_units: dict | None = None,
         # Testing configuration
@@ -299,6 +300,7 @@ class UniversalTrader:
         self.bro_address = bro_address
         self.marry_mode = marry_mode
         self.max_buys = max_buys
+        self.min_initial_buy_sol = min_initial_buy_sol
         self.buy_count = 0  # Counter for number of successful buys
 
         # State tracking
@@ -480,6 +482,9 @@ class UniversalTrader:
 
     async def _process_token_queue(self) -> None:
         """Process tokens concurrently up to max_active_mints limit."""
+        logger.info("Token queue processor started")
+        queue_empty_count = 0
+        
         while True:
             try:
                 # Wait for capacity if at limit
@@ -489,8 +494,23 @@ class UniversalTrader:
                     await self.position_slot_available.wait()
                     total_slots = len(self.active_mints) + len(self.reserved_mints)
 
-                # Get next token from queue
-                token_info = await self.token_queue.get()
+                # Get next token from queue with timeout
+                try:
+                    token_info = await asyncio.wait_for(self.token_queue.get(), timeout=60.0)
+                    queue_empty_count = 0  # Reset counter when we get a token
+                except asyncio.TimeoutError:
+                    queue_empty_count += 1
+                    logger.warning(f"Token queue empty for {queue_empty_count * 60}s - no new tokens received")
+                    
+                    # If queue has been empty for 5 minutes, something might be wrong
+                    if queue_empty_count >= 1:
+                        logger.error("⚠️  NO TOKENS RECEIVED FOR 1+ MINUTES - POSSIBLE LISTENER ISSUE")
+                        logger.error(f"Active positions: {len(self.active_mints)}")
+                        logger.error(f"Reserved positions: {len(self.reserved_mints)}")
+                        logger.error(f"Queue size: {self.token_queue.qsize()}")
+                        queue_empty_count = 0  # Reset to avoid spam
+                    
+                    continue
                 token_key = str(token_info.mint)
 
                 # Check freshness
@@ -559,9 +579,9 @@ class UniversalTrader:
                 except Exception as e:
                     logger.exception(f"Failed to persist token info to database: {e}")
 
-            if token_info.initial_buy_sol_amount_decimal<1:
+            if token_info.initial_buy_sol_amount_decimal < self.min_initial_buy_sol:
                 logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Skipping because initial SOL amount is too low {token_info.initial_buy_sol_amount_decimal} SOL"
+                    f"[{self._mint_prefix(token_info.mint)}] Skipping because initial SOL amount is too low {token_info.initial_buy_sol_amount_decimal} SOL (min: {self.min_initial_buy_sol} SOL)"
                 )
                 return
 
