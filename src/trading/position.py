@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING
+import hashlib
 
 from solders.pubkey import Pubkey
 from interfaces.core import Platform
@@ -35,6 +36,9 @@ class ExitReason(Enum):
 class Position:
     """Represents an active trading position."""
 
+    # Position identification
+    position_id: str  # Unique identifier for this position
+    
     # Token information
     mint: Pubkey
     platform: Platform
@@ -86,6 +90,21 @@ class Position:
     buy_amount: float | None = None  # Intended SOL amount to invest
     total_net_sol_swapout_amount_raw: int | None = None  # Total SOL spent on buys
     total_net_sol_swapin_amount_raw: int | None = None  # Total SOL received from sells (starts at 0)
+
+    @staticmethod
+    def generate_position_id(mint: Pubkey, platform: Platform, entry_ts: int) -> str:
+        """Generate position ID hash from mint + platform + entry_ts.
+        
+        Args:
+            mint: Token mint address
+            platform: Trading platform
+            entry_ts: Entry timestamp in milliseconds
+            
+        Returns:
+            SHA256 hash as hex string
+        """
+        data = f"{mint!s}_{platform.value}_{entry_ts}"
+        return hashlib.sha256(data.encode()).hexdigest()
 
     @classmethod
     def create_from_buy_result(
@@ -142,7 +161,11 @@ class Position:
         if stop_loss_percentage is not None:
             stop_loss_price = entry_net_price_decimal * (1 - stop_loss_percentage)
 
+        # Generate position_id
+        position_id = cls.generate_position_id(mint, platform, entry_ts)
+        
         result = cls(
+            position_id=position_id,
             mint=mint,
             platform=platform,
             entry_net_price_decimal=entry_net_price_decimal,
@@ -459,7 +482,7 @@ class Position:
         """
         self.creator_token_swap_in = creator_swap_in
         self.creator_token_swap_out = creator_swap_out
-        logger.info(f"[{str(self.mint)[:8]}] Updated creator tracking: swap_in={creator_swap_in}, swap_out={creator_swap_out}")
+        logger.debug(f"[{str(self.mint)[:8]}] Updated creator tracking: swap_in={creator_swap_in}, swap_out={creator_swap_out}")
 
     def get_creator_net_position(self) -> int:
         """Get creator's net token position (bought - sold).

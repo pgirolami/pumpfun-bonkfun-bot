@@ -117,17 +117,13 @@ class DatabaseManager:
             return None
 
     # Position Operations
-    async def insert_position(self, position: Position) -> str:
-        """Insert position and return position ID.
+    async def insert_position(self, position: Position) -> None:
+        """Insert position into database.
 
         Args:
             position: Position to insert
-
-        Returns:
-            Position ID
         """
         row = PositionConverter.to_row(position)
-        position_id = row[0]  # First element is the ID
 
         async with self.get_connection() as conn:
             conn.execute(
@@ -144,8 +140,7 @@ class DatabaseManager:
             )
             conn.commit()
 
-        logger.debug(f"Position inserted: {position_id}")
-        return position_id
+        logger.debug(f"Position inserted: {position.position_id}")
 
     async def update_position(self, position: Position) -> None:
         """Update existing position.
@@ -153,9 +148,7 @@ class DatabaseManager:
         Args:
             position: Position with updated data
         """
-        position_id = PositionConverter.generate_position_id(
-            position.mint, position.platform, position.entry_ts
-        )
+        position_id = position.position_id
 
         async with self.get_connection() as conn:
             conn.execute(

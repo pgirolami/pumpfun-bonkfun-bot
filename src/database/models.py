@@ -4,7 +4,6 @@ Database model converters for trading bot data structures.
 This module provides conversion between Python dataclasses and database rows.
 """
 
-import hashlib
 import json
 
 from solders.pubkey import Pubkey
@@ -86,21 +85,6 @@ class PositionConverter:
     """Converter for Position dataclass to/from database rows."""
 
     @staticmethod
-    def generate_position_id(mint: Pubkey, platform: Platform, entry_ts: int) -> str:
-        """Generate position ID hash from mint + platform + entry_ts.
-
-        Args:
-            mint: Token mint address
-            platform: Trading platform
-            entry_ts: Entry timestamp in milliseconds
-
-        Returns:
-            SHA256 hash as hex string
-        """
-        data = f"{mint!s}_{platform.value}_{entry_ts}"
-        return hashlib.sha256(data.encode()).hexdigest()
-
-    @staticmethod
     def to_row(position: Position) -> tuple:
         """Convert Position to database row tuple.
 
@@ -110,12 +94,8 @@ class PositionConverter:
         Returns:
             Tuple of values for database insertion
         """
-        position_id = PositionConverter.generate_position_id(
-            position.mint, position.platform, position.entry_ts
-        )
-
         return (
-            position_id,
+            position.position_id,
             str(position.mint),
             position.platform.value,
             position.entry_net_price_decimal,
@@ -157,6 +137,7 @@ class PositionConverter:
         from trading.position import ExitReason
 
         return Position(
+            position_id=row[0],
             mint=Pubkey.from_string(row[1]),
             platform=Platform(row[2]),
             entry_net_price_decimal=row[3],

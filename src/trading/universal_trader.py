@@ -7,6 +7,7 @@ import asyncio
 from time import monotonic, time
 from typing import Any
 
+from database.manager import DatabaseManager
 import uvloop
 from solders.pubkey import Pubkey
 
@@ -84,7 +85,7 @@ class UniversalTrader:
         # Testing configuration
         testing: dict | None = None,
         # Database configuration
-        database_manager=None,
+        database_manager: DatabaseManager | None = None,
         # Parallel position configuration
         max_active_mints: int = 1,
         # Blockhash caching configuration
@@ -161,20 +162,24 @@ class UniversalTrader:
         self.trade_staleness_threshold = trade_staleness_threshold
 
         # Initialize the appropriate listener only if trade tracking is enabled
-        logger.info(f"Creating token listener for trade tracking (type: {listener_type})")
-        self.token_listener = ListenerFactory.create_listener(
-            listener_type=listener_type,
-            wss_endpoint=wss_endpoint,
-            geyser_endpoint=geyser_endpoint,
-            geyser_api_token=geyser_api_token,
-            geyser_auth_type=geyser_auth_type,
-            pumpportal_url=pumpportal_url,
-            platforms=[self.platform],  # Only listen for our platform
-        )
-        if self.token_listener is None:
-            logger.error(f"Failed to create token listener for type: {listener_type}")
+        if self.enable_trade_tracking:
+            logger.info(f"Creating token listener for trade tracking (type: {listener_type})")
+            self.token_listener = ListenerFactory.create_listener(
+                listener_type=listener_type,
+                wss_endpoint=wss_endpoint,
+                geyser_endpoint=geyser_endpoint,
+                geyser_api_token=geyser_api_token,
+                geyser_auth_type=geyser_auth_type,
+                pumpportal_url=pumpportal_url,
+                platforms=[self.platform],  # Only listen for our platform
+            )
+            if self.token_listener is None:
+                logger.error(f"Failed to create token listener for type: {listener_type}")
+            else:
+                logger.info(f"Successfully created token listener: {type(self.token_listener).__name__}")
         else:
-            logger.info(f"Successfully created token listener: {type(self.token_listener).__name__}")
+            self.token_listener = None
+            logger.info("Trade tracking disabled, no token listener created")
 
         # Get platform-specific implementations (after token_listener is created)
         self.platform_implementations = get_platform_implementations(
@@ -545,6 +550,22 @@ class UniversalTrader:
                 )
                 return
 
+
+            # Persist to database if available
+            if self.database_manager:
+                try:
+                    # Insert token info (will be ignored if already exists)
+                    await self.database_manager.insert_token_info(token_info)
+                except Exception as e:
+                    logger.exception(f"Failed to persist token info to database: {e}")
+
+            if token_info.initial_buy_sol_amount_decimal<1:
+                logger.info(
+                    f"[{self._mint_prefix(token_info.mint)}] Skipping because initial SOL amount is too low {token_info.initial_buy_sol_amount_decimal} SOL"
+                )
+                return
+
+
             # Wait for pool/curve to stabilize (unless in extreme fast mode)
             if not self.extreme_fast_mode:
                 logger.info(
@@ -554,25 +575,20 @@ class UniversalTrader:
 
             # Subscribe to trade tracking if enabled (before buying)
             if self.enable_trade_tracking:
-                if self.token_listener is None:
-                    logger.error(
-                        f"[{self._mint_prefix(token_info.mint)}] Trade tracking enabled but token_listener is None"
-                    )
+                # Validate that we have virtual reserves for trade tracking
+                if token_info.virtual_sol_reserves is None or token_info.virtual_token_reserves is None:
+                    logger.error(f"Cannot subscribe to trade tracking: missing virtual reserves for {token_info.symbol}")
                 else:
-                    # Validate that we have virtual reserves for trade tracking
-                    if token_info.virtual_sol_reserves is None or token_info.virtual_token_reserves is None:
-                        logger.error(f"Cannot subscribe to trade tracking: missing virtual reserves for {token_info.symbol}")
-                    else:
-                        try:
-                            # Subscribe to trade tracking
-                            await self.token_listener.subscribe_token_trades(token_info)
-                            logger.debug(
-                                f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
-                            )
-                        except Exception as e:
-                            logger.exception(
-                                f"[{self._mint_prefix(token_info.mint)}] Failed to subscribe to trade tracking: {e}"
-                            )
+                    try:
+                        # Subscribe to trade tracking
+                        await self.token_listener.subscribe_token_trades(token_info)
+                        logger.debug(
+                            f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            f"[{self._mint_prefix(token_info.mint)}] Failed to subscribe to trade tracking: {e}"
+                        )
 
             # Buy token
             logger.info(
@@ -608,8 +624,10 @@ class UniversalTrader:
                     min_gain_time_window=self.min_gain_time_window,
                 )
             else:
+                position_id = Position.generate_position_id(token_info.mint, token_info.platform, entry_ts)
                 # Failed buy - create inactive position with None values
                 position = Position(
+                    position_id=position_id,
                     mint=token_info.mint,
                     platform=token_info.platform,
                     entry_net_price_decimal=None,  # No actual entry
@@ -626,6 +644,14 @@ class UniversalTrader:
                     total_net_sol_swapout_amount_raw=0,  # No SOL spent
                     total_net_sol_swapin_amount_raw=0,  # No SOL received
                 )
+            if self.database_manager:
+                try:
+                    # Insert position
+                    await self.database_manager.insert_position(position)
+
+                    logger.debug("Persisted position to database")
+                except Exception as e:
+                    logger.exception(f"Failed to persist position to database: {e}")
 
             # Increment buy counter regardless of success/failure
             self.buy_count += 1
@@ -672,22 +698,19 @@ class UniversalTrader:
         # Persist to database if available
         if self.database_manager:
             try:
-                # Insert token info (will be ignored if already exists)
-                await self.database_manager.insert_token_info(token_info)
 
-                # Insert position
-                position_id = await self.database_manager.insert_position(position)
+                await self.database_manager.update_position(position)
 
                 # Insert buy trade
                 await self.database_manager.insert_trade(
                     trade_result=buy_result,
                     mint=str(token_info.mint),
-                    position_id=position_id,
+                    position_id=position.position_id,
                     trade_type="buy",
                     run_id=self.run_id,
                 )
 
-                logger.debug("Persisted buy trade and position to database")
+                logger.debug("Persisted buy trade to database")
             except Exception as e:
                 logger.exception(f"Failed to persist buy trade to database: {e}")
 
@@ -743,17 +766,13 @@ class UniversalTrader:
         # Persist failed trade to database if available
         if self.database_manager:
             try:
-                # Insert token info (will be ignored if already exists)
-                await self.database_manager.insert_token_info(token_info)
-
-                # Insert position
-                position_id = await self.database_manager.insert_position(position)
+                await self.database_manager.update_position(position)
 
                 # Insert failed buy trade
                 await self.database_manager.insert_trade(
                     trade_result=buy_result,
                     mint=str(token_info.mint),
-                    position_id=position_id,  # Now has a position!
+                    position_id=position.position_id,
                     trade_type="buy",
                     run_id=self.run_id,
                 )
@@ -933,6 +952,7 @@ class UniversalTrader:
                 # Update creator tracking from trade tracker if available
                 if self.enable_trade_tracking and self.token_listener:
                     tracker = self.token_listener.get_trade_tracker_by_mint(str(token_info.mint))
+                    logger.debug(f"[{self._mint_prefix(token_info.mint)}] Tracker: {tracker}")
                     creator_swaps = tracker.get_creator_swaps()
                     position.update_creator_tracking(
                         creator_swaps[0], 
@@ -989,13 +1009,10 @@ class UniversalTrader:
                                 await self.database_manager.update_position(position)
 
                                 # Insert sell trade
-                                position_id = PositionConverter.generate_position_id(
-                                    position.mint, position.platform, position.entry_ts
-                                )
                                 await self.database_manager.insert_trade(
                                     trade_result=sell_result,
                                     mint=str(token_info.mint),
-                                    position_id=position_id,
+                                    position_id=position.position_id,
                                     trade_type="sell",
                                     run_id=self.run_id,
                                 )
@@ -1125,18 +1142,11 @@ class UniversalTrader:
             )
             
             # Subscribe to trade tracking for resumed positions if enabled
-            if (self.enable_trade_tracking and self.token_listener and 
-                token_info.virtual_sol_reserves is not None and 
-                token_info.virtual_token_reserves is not None):
-                try:
-                    await self.token_listener.subscribe_token_trades(token_info)
-                    logger.debug(
-                        f"[{self._mint_prefix(position.mint)}] Subscribed to trade tracking for resumed position {token_info.symbol}"
-                    )
-                except Exception as e:
-                    logger.exception(
-                        f"[{self._mint_prefix(position.mint)}] Failed to subscribe to trade tracking for resumed position: {e}"
-                    )
+            if (self.enable_trade_tracking):
+                await self.token_listener.subscribe_token_trades(token_info)
+                logger.debug(
+                    f"[{self._mint_prefix(position.mint)}] Subscribed to trade tracking for resumed position {token_info.symbol}"
+                )
             
             # Track as active and start monitoring task
             self.active_mints.add(position.mint)

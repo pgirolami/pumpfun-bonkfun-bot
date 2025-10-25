@@ -18,6 +18,8 @@ class TokenTradeTracker:
     Tracks virtual reserves from PumpPortal trade messages and provides
     real-time price calculations without RPC delays.
     """
+    virtual_sol_reserves: int | None = None
+    virtual_token_reserves: int | None = None
 
     def __init__(self, token_info: TokenInfo):
         """Initialize tracker with token information from creation.
@@ -81,10 +83,6 @@ class TokenTradeTracker:
         """
         if not self.is_initialized():
             raise RuntimeError(f"Tracker for {str(self.mint)} not initialized")
-        
-        if self.virtual_token_reserves == 0:
-            logger.warning(f"[{str(self.mint)[:8]}] Zero token reserves, returning 0 price")
-            return 0.0
         
         price_lamports = self.virtual_sol_reserves / self.virtual_token_reserves
         price = price_lamports * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
