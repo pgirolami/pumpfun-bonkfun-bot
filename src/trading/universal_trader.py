@@ -304,8 +304,6 @@ class UniversalTrader:
         self.buy_count = 0  # Counter for number of successful buys
 
         # State tracking
-        self.active_mints: set[Pubkey] = set()  # Renamed from traded_mints
-        self.reserved_mints: set[Pubkey] = set()  # Track reserved buy slots
         self.token_queue: asyncio.Queue[TokenInfo] = asyncio.Queue[TokenInfo]()
         self.processing: bool = False
         self.processed_tokens: set[str] = set()
@@ -317,7 +315,6 @@ class UniversalTrader:
         # Parallel position tracking
         self.max_active_mints = max_active_mints
         self.position_tasks: dict[str, asyncio.Task] = {}
-        self.position_slot_available = asyncio.Event()
 
     def _mint_prefix(self, mint: Pubkey) -> str:
         """Get short mint prefix for logging."""
@@ -445,6 +442,8 @@ class UniversalTrader:
 
     async def _queue_token(self, token_info: TokenInfo) -> None:
         """Queue a token for processing if not already processed."""
+        logger.info("_queue_token()")
+
         # Check if we should stop
         if self._stop_event.is_set():
             logger.info("Stop event set, ignoring new tokens")
@@ -453,24 +452,15 @@ class UniversalTrader:
         token_key = str(token_info.mint)
 
         if token_key in self.processed_tokens:
-            logger.debug(f"Token {token_info.symbol} already processed. Skipping...")
+            logger.info(f"Token {token_info.symbol} already processed. Skipping...")
             return
 
-        # Check if mint is already reserved or active
-        if token_info.mint in self.reserved_mints or token_info.mint in self.active_mints:
-            logger.debug(f"Token {token_info.symbol} already reserved/active. Skipping...")
+        # Check capacity using active position tasks
+        if len(self.position_tasks) >= self.max_active_mints:
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({len(self.position_tasks)}/{self.max_active_mints})"
+            )
             return
-
-        # Enforce max_active_mints globally (including resumed positions and reserved slots)
-        total_slots = len(self.active_mints) + len(self.reserved_mints)
-        if total_slots >= self.max_active_mints:
-            # logger.info(
-            #     f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({total_slots}/{self.max_active_mints})"
-            # )
-            return
-
-        # Reserve the buy slot immediately
-        self.reserved_mints.add(token_info.mint)
         
         # Record timestamp when token was discovered
         self.token_timestamps[token_key] = monotonic()
@@ -484,13 +474,6 @@ class UniversalTrader:
         """Process tokens concurrently up to max_active_mints limit."""
         while True:
             try:
-                # Wait for capacity if at limit
-                total_slots = len(self.active_mints) + len(self.reserved_mints)
-                while total_slots >= self.max_active_mints:
-                    self.position_slot_available.clear()
-                    await self.position_slot_available.wait()
-                    total_slots = len(self.active_mints) + len(self.reserved_mints)
-
                 # Get next token from queue
                 token_info = await self.token_queue.get()
                 token_key = str(token_info.mint)
@@ -512,7 +495,7 @@ class UniversalTrader:
                 # Spawn concurrent task
                 task = asyncio.create_task(self._handle_token_wrapper(token_info))
                 self.position_tasks[token_key] = task
-
+                logger.info(f"_process_token_queue() [{self._mint_prefix(token_info.mint)}] Created position task")
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -526,21 +509,10 @@ class UniversalTrader:
         try:
             await self._handle_token(token_info)
         finally:
-            # Cleanup: Remove from both reserved and active tracking
-            # Remove from reserved if still present (may have been cleaned up in failed buy handler)
-            if token_info.mint in self.reserved_mints:
-                self.reserved_mints.remove(token_info.mint)
-                logger.debug(f"[{self._mint_prefix(token_info.mint)}] Released reserved slot in wrapper cleanup")
-            
-            # Only remove from active if present (buy might have failed)
-            if token_info.mint in self.active_mints:
-                self.active_mints.remove(token_info.mint)
-
+            # Cleanup: Remove from position tasks
             if mint_key in self.position_tasks:
+                logger.info(f"_handle_token_wrapper() [{self._mint_prefix(token_info.mint)}] Removed position task")
                 del self.position_tasks[mint_key]
-
-            # Signal that a slot is available for next token
-            self.position_slot_available.set()
 
     async def _handle_token(self, token_info: TokenInfo) -> None:
         """Handle a new token creation event."""
@@ -691,10 +663,6 @@ class UniversalTrader:
         )
         logger.info(f"Position: {position}")
         
-        # Move from reserved to active (slot was already reserved when queued)
-        if token_info.mint in self.reserved_mints:
-            self.reserved_mints.remove(token_info.mint)
-        self.active_mints.add(token_info.mint)
 
 
         # Persist to database if available
@@ -748,10 +716,6 @@ class UniversalTrader:
             f"(fees: {pnl_dict['total_fees_raw'] / LAMPORTS_PER_SOL:.6f} SOL)"
         )
 
-        # Clean up reserved slot since buy failed
-        if token_info.mint in self.reserved_mints:
-            self.reserved_mints.remove(token_info.mint)
-            logger.debug(f"[{self._mint_prefix(token_info.mint)}] Released reserved slot after failed buy")
 
         # Unsubscribe from trade tracking if enabled (buy failed)
         if self.enable_trade_tracking and self.token_listener:
@@ -1151,12 +1115,12 @@ class UniversalTrader:
                 )
             
             # Track as active and start monitoring task
-            self.active_mints.add(position.mint)
             task_key = str(position.mint)
             task = asyncio.create_task(
                 self._monitor_resumed_position(token_info, position)
             )
             self.position_tasks[task_key] = task
+            logger.info(f"_resume_active_positions() [{self._mint_prefix(token_info.mint)}] Created position task")
 
     def _apply_current_exit_config(self, position: Position) -> None:
         """Override exit strategy thresholds using current bot config."""
@@ -1191,15 +1155,13 @@ class UniversalTrader:
                 except Exception as e:
                     logger.debug(f"[{self._mint_prefix(position.mint)}] Failed to unsubscribe from trade tracking: {e}")
             
-            # Remove from active tracking when monitoring ends or task is cancelled
-            if position.mint in self.active_mints:
-                self.active_mints.remove(position.mint)
+            # Remove from position tasks when monitoring ends or task is cancelled
             if mint_key in self.position_tasks:
                 del self.position_tasks[mint_key]
-            self.position_slot_available.set()
+                logger.info(f"[{self._mint_prefix(position.mint)}] Removed position task")
             
             # Check if we should stop the trader after all positions close
-            if self._max_buys_reached and len(self.active_mints) == 0:
+            if self._max_buys_reached and len(self.position_tasks) == 0:
                 logger.info("All positions have closed after reaching max_buys limit. Stopping trader...")
                 # This will cause the main loop to exit
                 self._main_stop_event.set()

@@ -98,12 +98,14 @@ class UniversalPumpPortalListener(BaseTokenListener):
                 async for message in websocket:
                     try:
                         data = json.loads(message)
-                        
                         # Check if it's a token creation or trade message
                         if data.get("txType") == "create":
                             token_info = await self._process_token_creation(data, match_string, creator_address)
                             if token_info:
+                                logger.info("Token creation message processed")
                                 await token_callback(token_info)
+                            else:
+                                logger.info(f"Token creation message not processed: {data}")
                         elif data.get("txType") in ["buy", "sell"]:
                             # Process trade message
                             self._handle_trade_message(data)
@@ -180,7 +182,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
         # Get pool name to determine which processor to use
         pool_name = message.get("pool", "").lower()
         if pool_name not in self.pool_to_processors:
-            logger.debug(f"Ignoring token from unsupported pool: {pool_name}")
+            logger.info(f"Ignoring token from unsupported pool: {pool_name}")
             return None
 
         # Try each processor that supports this pool
@@ -287,5 +289,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
             logger.debug(f"WebSocket closed while unsubscribing from {mint}")
         except Exception as e:
             logger.exception(f"Failed to send trade unsubscription for {mint}: {e}")
-    
+
+        self._subscribed_mints.remove(mint)
+
     
