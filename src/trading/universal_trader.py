@@ -482,9 +482,6 @@ class UniversalTrader:
 
     async def _process_token_queue(self) -> None:
         """Process tokens concurrently up to max_active_mints limit."""
-        logger.info("Token queue processor started")
-        queue_empty_count = 0
-        
         while True:
             try:
                 # Wait for capacity if at limit
@@ -494,23 +491,8 @@ class UniversalTrader:
                     await self.position_slot_available.wait()
                     total_slots = len(self.active_mints) + len(self.reserved_mints)
 
-                # Get next token from queue with timeout
-                try:
-                    token_info = await asyncio.wait_for(self.token_queue.get(), timeout=60.0)
-                    queue_empty_count = 0  # Reset counter when we get a token
-                except asyncio.TimeoutError:
-                    queue_empty_count += 1
-                    logger.warning(f"Token queue empty for {queue_empty_count * 60}s - no new tokens received")
-                    
-                    # If queue has been empty for 5 minutes, something might be wrong
-                    if queue_empty_count >= 1:
-                        logger.error("⚠️  NO TOKENS RECEIVED FOR 1+ MINUTES - POSSIBLE LISTENER ISSUE")
-                        logger.error(f"Active positions: {len(self.active_mints)}")
-                        logger.error(f"Reserved positions: {len(self.reserved_mints)}")
-                        logger.error(f"Queue size: {self.token_queue.qsize()}")
-                        queue_empty_count = 0  # Reset to avoid spam
-                    
-                    continue
+                # Get next token from queue
+                token_info = await self.token_queue.get()
                 token_key = str(token_info.mint)
 
                 # Check freshness
