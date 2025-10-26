@@ -41,6 +41,7 @@ class UniversalTrader:
         buy_amount: float,
         buy_slippage: float,
         sell_slippage: float,
+        max_wallet_loss_percentage: float | None = None,
         # Platform configuration
         platform: Platform | str = Platform.PUMP_FUN,
         # Listener configuration
@@ -318,6 +319,11 @@ class UniversalTrader:
         
         # Wallet balance monitoring
         self._balance_monitoring_task: asyncio.Task | None = None
+        self._initial_wallet_balance_sol: float | None = None  # Store initial balance for drawdown calculation
+        
+        # Circuit breaker configuration
+        self.max_wallet_loss_percentage = max_wallet_loss_percentage
+        self._circuit_breaker_triggered: bool = False
 
     def _mint_prefix(self, mint: Pubkey) -> str:
         """Get short mint prefix for logging."""
@@ -329,9 +335,24 @@ class UniversalTrader:
             balance_lamports = await self.solana_client.get_sol_balance(self.wallet.pubkey)
             balance_sol = balance_lamports / 1_000_000_000  # Convert lamports to SOL
             
+            # Store initial balance on first log
+            if self._initial_wallet_balance_sol is None:
+                self._initial_wallet_balance_sol = balance_sol
+                logger.info(f"Initial wallet balance: {balance_sol:.6f} SOL")
+            
+            # Calculate increase
+            increase_sol = balance_sol - self._initial_wallet_balance_sol
+            increase_percentage = (increase_sol / self._initial_wallet_balance_sol) * 100 if self._initial_wallet_balance_sol > 0 else 0
+            
+            # Format increase display
+            increase_text = f" | Increase: {increase_sol:+.6f} SOL ({increase_percentage:+.2f}%)"
+            
+            # Check circuit breaker
+            self._check_circuit_breaker(balance_sol)
+            
             logger.info(
                 f"Wallet {self.wallet.pubkey} balance: "
-                f"{balance_sol:.6f} SOL ({balance_lamports:,} lamports)"
+                f"{balance_sol:.6f} SOL ({balance_lamports:,} lamports){increase_text}"
             )
             
             # Store in database if available
@@ -348,6 +369,41 @@ class UniversalTrader:
                     
         except Exception as e:
             logger.error(f"Failed to get wallet balance: {e}")
+
+    def _check_circuit_breaker(self, current_balance_sol: float) -> bool:
+        """Check if circuit breaker should be triggered based on wallet loss.
+        
+        Args:
+            current_balance_sol: Current wallet balance in SOL
+            
+        Returns:
+            True if circuit breaker is triggered (stop buying), False otherwise
+        """
+        # If already triggered, stay triggered
+        if self._circuit_breaker_triggered:
+            return True
+        
+        # If no threshold configured, circuit breaker is disabled
+        if self.max_wallet_loss_percentage is None:
+            return False
+        
+        # If no initial balance yet, cannot check
+        if self._initial_wallet_balance_sol is None:
+            return False
+        
+        # Calculate current loss percentage
+        loss_percentage = ((self._initial_wallet_balance_sol - current_balance_sol) / self._initial_wallet_balance_sol) * 100
+        
+        # Trigger if loss exceeds threshold
+        if loss_percentage >= self.max_wallet_loss_percentage:
+            self._circuit_breaker_triggered = True
+            logger.warning(
+                f"CIRCUIT BREAKER TRIGGERED: Wallet loss {loss_percentage:.2f}% exceeds threshold "
+                f"{self.max_wallet_loss_percentage:.2f}%. Stopping new token purchases."
+            )
+            return True
+        
+        return False
 
     async def _start_balance_monitoring(self) -> None:
         """Start background wallet balance monitoring."""
@@ -601,6 +657,13 @@ class UniversalTrader:
                     await self.database_manager.insert_token_info(token_info)
                 except Exception as e:
                     logger.exception(f"Failed to persist token info to database: {e}")
+
+            # Check circuit breaker
+            if self._circuit_breaker_triggered:
+                logger.info(
+                    f"[{self._mint_prefix(token_info.mint)}] Skipping token due to circuit breaker (wallet loss threshold exceeded)"
+                )
+                return
 
             if token_info.initial_buy_sol_amount_decimal < self.min_initial_buy_sol:
                 logger.info(

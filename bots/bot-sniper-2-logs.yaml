@@ -26,6 +26,7 @@ trade:
   buy_amount: 0.0001 # Amount of SOL to spend when buying (in SOL)
   buy_slippage: 0.2 # Maximum acceptable price deviation (0.2 = 20%)
   sell_slippage: 0.3
+  max_wallet_loss_percentage: 5.0  # Stop buying if wallet loss exceeds 5%
   max_active_mints: 1 # Maximum concurrent active positions (YOLO mode only)
 
   # Exit strategy configuration
