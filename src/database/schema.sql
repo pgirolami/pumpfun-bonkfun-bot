@@ -93,3 +93,18 @@ CREATE TABLE IF NOT EXISTS price_history (
 
 -- Create index for efficient queries
 CREATE INDEX IF NOT EXISTS idx_price_history_mint ON price_history(mint);
+
+-- Wallet balance history table (balance updates every minute)
+CREATE TABLE IF NOT EXISTS wallet_balances (
+    wallet_pubkey TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,  -- Unix epoch milliseconds
+    balance_sol REAL NOT NULL,   -- Balance in SOL (decimal)
+    balance_lamports INTEGER NOT NULL,  -- Balance in lamports
+    run_id TEXT NOT NULL,  -- Bot run identifier (timestamp + git hash)
+    PRIMARY KEY (wallet_pubkey, timestamp)
+);
+
+-- Create index for efficient queries
+CREATE INDEX IF NOT EXISTS idx_wallet_balances_wallet ON wallet_balances(wallet_pubkey);
+CREATE INDEX IF NOT EXISTS idx_wallet_balances_timestamp ON wallet_balances(timestamp);
+CREATE INDEX IF NOT EXISTS idx_wallet_balances_run_id ON wallet_balances(run_id);

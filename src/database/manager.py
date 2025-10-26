@@ -391,3 +391,33 @@ class DatabaseManager:
             conn.commit()
 
         logger.debug(f"Price history inserted: {mint} at {price_decimal:.8f} SOL")
+
+    async def insert_wallet_balance(
+        self,
+        wallet_pubkey: str,
+        balance_sol: float,
+        balance_lamports: int,
+        run_id: str,
+    ) -> None:
+        """Insert wallet balance record.
+
+        Args:
+            wallet_pubkey: Wallet public key
+            balance_sol: Balance in SOL (decimal)
+            balance_lamports: Balance in lamports
+            run_id: Bot run identifier
+        """
+        timestamp = int(time() * 1000)
+
+        async with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO wallet_balances 
+                (wallet_pubkey, timestamp, balance_sol, balance_lamports, run_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (wallet_pubkey, timestamp, balance_sol, balance_lamports, run_id),
+            )
+            conn.commit()
+
+        logger.debug(f"Wallet balance inserted: {wallet_pubkey} = {balance_sol:.6f} SOL (run_id: {run_id})")

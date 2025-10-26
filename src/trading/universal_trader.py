@@ -333,6 +333,19 @@ class UniversalTrader:
                 f"Wallet {self.wallet.pubkey} balance: "
                 f"{balance_sol:.6f} SOL ({balance_lamports:,} lamports)"
             )
+            
+            # Store in database if available
+            if self.database_manager:
+                try:
+                    await self.database_manager.insert_wallet_balance(
+                        wallet_pubkey=str(self.wallet.pubkey),
+                        balance_sol=balance_sol,
+                        balance_lamports=balance_lamports,
+                        run_id=self.run_id,
+                    )
+                except Exception as e:
+                    logger.exception(f"Failed to store wallet balance in database: {e}")
+                    
         except Exception as e:
             logger.error(f"Failed to get wallet balance: {e}")
 
