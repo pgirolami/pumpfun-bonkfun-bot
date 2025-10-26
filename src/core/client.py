@@ -152,6 +152,19 @@ class SolanaClient:
             return int(response.value.amount)
         return 0
 
+    async def get_sol_balance(self, pubkey: Pubkey) -> int:
+        """Get SOL balance for a wallet account.
+
+        Args:
+            pubkey: Public key of the wallet
+
+        Returns:
+            SOL balance in lamports
+        """
+        client = await self.get_client()
+        response = await client.get_balance(pubkey)
+        return response.value
+
     async def get_latest_blockhash(self) -> Hash:
         """Get the latest blockhash.
 

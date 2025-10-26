@@ -85,6 +85,7 @@ async def start_bot(config_path: str):
         database_manager = DatabaseManager(db_path)
         
         logging.info(f"Database initialized: {db_path}")
+            
     except Exception as e:
         logging.exception(f"Failed to initialize database: {e}")
         database_manager = None
@@ -191,7 +192,7 @@ def run_bot_process(config_path):
     asyncio.run(start_bot(config_path))
 
 
-def run_all_bots():
+async def run_all_bots():
     """Run all bots defined in YAML files in the 'bots' directory."""
     bot_dir = Path("bots")
     if not bot_dir.exists():
@@ -204,6 +205,34 @@ def run_all_bots():
         return
 
     logging.info(f"Found {len(bot_files)} bot configuration files")
+
+    # Check for wallet sharing across bot configurations
+    wallet_to_bots = {}  # wallet_pubkey -> list of bot_names
+    for file in bot_files:
+        try:
+            cfg = load_bot_config(str(file))
+            bot_name = cfg.get("name", file.stem)
+            
+            # Skip disabled bots
+            if not cfg.get("enabled", True):
+                continue
+                
+            wallet = Wallet(cfg["private_key"])
+            wallet_pubkey = wallet.pubkey
+            
+            if wallet_pubkey not in wallet_to_bots:
+                wallet_to_bots[wallet_pubkey] = []
+            wallet_to_bots[wallet_pubkey].append(bot_name)
+            
+        except Exception as e:
+            logging.warning(f"Could not process wallet info from {file}: {e}")
+    
+    # Report wallet sharing
+    for wallet_pubkey, bot_names in wallet_to_bots.items():
+        if len(bot_names) > 1:
+            raise RuntimeError(f"Wallet {wallet_pubkey} is shared across multiple bots: {', '.join(bot_names)}")
+        else:
+            logging.debug(f"Wallet {wallet_pubkey} used by single bot: {bot_names[0]}")
 
     processes = []
     skipped_bots = 0
@@ -266,7 +295,7 @@ def run_all_bots():
                 logging.info(
                     f"Starting bot '{bot_name}' ({platform.value}) in main process"
                 )
-                asyncio.run(start_bot(str(file)))
+                await start_bot(str(file))
 
         except Exception as e:
             logging.exception(f"Failed to start bot from {file}: {e}")
@@ -303,7 +332,7 @@ def main() -> None:
     except Exception as e:
         logging.warning(f"Could not load platform information: {e}")
 
-    run_all_bots()
+    asyncio.run(run_all_bots())
 
 
 if __name__ == "__main__":

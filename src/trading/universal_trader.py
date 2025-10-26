@@ -315,10 +315,61 @@ class UniversalTrader:
         # Parallel position tracking
         self.max_active_mints = max_active_mints
         self.position_tasks: dict[str, asyncio.Task] = {}
+        
+        # Wallet balance monitoring
+        self._balance_monitoring_task: asyncio.Task | None = None
 
     def _mint_prefix(self, mint: Pubkey) -> str:
         """Get short mint prefix for logging."""
         return str(mint)[:8]
+
+    async def _log_wallet_balance(self) -> None:
+        """Log the current SOL balance for this trader's wallet."""
+        try:
+            balance_lamports = await self.solana_client.get_sol_balance(self.wallet.pubkey)
+            balance_sol = balance_lamports / 1_000_000_000  # Convert lamports to SOL
+            
+            logger.info(
+                f"Wallet {self.wallet.pubkey} balance: "
+                f"{balance_sol:.6f} SOL ({balance_lamports:,} lamports)"
+            )
+        except Exception as e:
+            logger.error(f"Failed to get wallet balance: {e}")
+
+    async def _start_balance_monitoring(self) -> None:
+        """Start background wallet balance monitoring."""
+        logger.debug("Starting wallet balance monitoring (every 60 seconds)")
+        
+        # Log initial balance
+        await self._log_wallet_balance()
+        
+        # Start background monitoring task
+        self._balance_monitoring_task = asyncio.create_task(self._balance_monitoring_loop())
+
+    async def _balance_monitoring_loop(self) -> None:
+        """Background loop for wallet balance monitoring."""
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.sleep(60)  # Check every minute
+                if not self._stop_event.is_set():
+                    await self._log_wallet_balance()
+            except asyncio.CancelledError:
+                logger.debug("Balance monitoring task cancelled")
+                break
+            except Exception as e:
+                logger.exception(f"Error in balance monitoring loop: {e}")
+                await asyncio.sleep(5)  # Short delay before retrying
+
+    async def _stop_balance_monitoring(self) -> None:
+        """Stop background wallet balance monitoring."""
+        if self._balance_monitoring_task:
+            self._balance_monitoring_task.cancel()
+            try:
+                await self._balance_monitoring_task
+            except asyncio.CancelledError:
+                pass
+            self._balance_monitoring_task = None
+            logger.debug("Stopped wallet balance monitoring")
 
     async def start(self) -> None:
         """Start the trading bot and listen for new tokens."""
@@ -367,6 +418,9 @@ class UniversalTrader:
             logger.exception("Failed to resume active positions from database")
 
         try:
+            # Start wallet balance monitoring
+            await self._start_balance_monitoring()
+            
             # Start continuous trading with max_buys limit
             logger.info(f"Starting continuous trading (max_buys: {self.max_buys})")
             processor_task = asyncio.create_task(self._process_token_queue())
@@ -414,6 +468,9 @@ class UniversalTrader:
 
     async def _cleanup_resources(self) -> None:
         """Perform cleanup operations before shutting down."""
+        # Stop wallet balance monitoring
+        await self._stop_balance_monitoring()
+        
         # Cancel all active position monitoring tasks
         if self.position_tasks:
             logger.info(
@@ -427,10 +484,10 @@ class UniversalTrader:
             logger.info("All position tasks cancelled")
 
         # DO NOT cleanup tokens on interrupt - user can recover manually
-        total_interrupted = len(self.active_mints) + len(self.reserved_mints)
+        total_interrupted = len(self.position_tasks)
         if total_interrupted > 0:
             logger.warning(
-                f"{total_interrupted} position(s) interrupted ({len(self.active_mints)} active, {len(self.reserved_mints)} reserved). "
+                f"{total_interrupted} position(s) interrupted. "
                 f"Tokens NOT burned - manual recovery possible."
             )
 

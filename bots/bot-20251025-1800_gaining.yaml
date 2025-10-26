@@ -2,13 +2,13 @@
 # Carefully review and adjust values to match your trading strategy and risk tolerance.
 
 # Bot identification and connection settings
-name: "bot-sniper-pumpportal"
+name: "bot-20251025-1800_gaining"
 env_file: ".env"
 rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
 wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
 private_key: "${SOLANA_PRIVATE_KEY}"
 
-enabled: true # You can turn off the bot w/o removing its config
+enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
@@ -34,7 +34,7 @@ trade:
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual", "trailing"
-  take_profit_percentage: 0.1 # Take profit (0.1 = 10%)
+  take_profit_percentage: 0.9 # Take profit (0.1 = 10%)
   stop_loss_percentage: 0.01 # Stop loss (0.1 = 10%)
   trailing_stop_percentage: 0.1 # Trailing stop at 20% from highest price (0.2 = 20%)
   max_hold_time: 6000 # Maximum hold time in seconds (600 = 10 minutes)
@@ -64,7 +64,7 @@ trade:
   # When enabled, skips waiting for the bonding curve to stabilize and RPC price check.
   # The bot calculates token amount based on platform starting price and buy_amount for precision.
   extreme_fast_mode: true
-  max_no_price_change_time: 2 # Maximum time in seconds without price change
+  max_no_price_change_time: 3 # Maximum time in seconds without price change
 
 # Priority fee configuration
 # Manage transaction speed and cost on the Solana network.
@@ -91,7 +91,6 @@ filters:
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
   max_buys: null # Maximum number of buys (null = unlimited)
-  min_initial_buy_sol: 1.0 # Minimum initial SOL buy amount to consider a token (in SOL)
 
 # Retry and timeout settings
 retries:
