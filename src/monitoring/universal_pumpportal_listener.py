@@ -102,10 +102,10 @@ class UniversalPumpPortalListener(BaseTokenListener):
                         if data.get("txType") == "create":
                             token_info = await self._process_token_creation(data, match_string, creator_address)
                             if token_info:
-                                logger.info("Token creation message processed")
+                                logger.debug("Token creation message processed")
                                 await token_callback(token_info)
                             else:
-                                logger.info(f"Token creation message not processed: {data}")
+                                logger.debug(f"Token creation message not processed: {data}")
                         elif data.get("txType") in ["buy", "sell"]:
                             # Process trade message
                             self._handle_trade_message(data)

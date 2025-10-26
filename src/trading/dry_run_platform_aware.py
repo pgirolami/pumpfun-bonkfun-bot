@@ -57,7 +57,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
 
                 # actual_sol_cost_raw = int(current_price * float(order.token_amount_raw) / 10**TOKEN_DECIMALS * 1_000_000_000)
 
-                logger.info(f"{order.token_info.mint}: Actual SOL swaped {actual_sol_cost_raw} ({actual_sol_cost_raw/1_000_000_000:.10f} SOL) current price={current_price:.10f} SOL")
+                logger.debug(f"{order.token_info.mint}: Actual SOL swaped {actual_sol_cost_raw} ({actual_sol_cost_raw/1_000_000_000:.10f} SOL) current price={current_price:.10f} SOL")
 
             except Exception:
                 logger.info(f"Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")

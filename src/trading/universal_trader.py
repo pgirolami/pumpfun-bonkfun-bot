@@ -512,7 +512,6 @@ class UniversalTrader:
 
     async def _queue_token(self, token_info: TokenInfo) -> None:
         """Queue a token for processing if not already processed."""
-        logger.info("_queue_token()")
 
         # Check if we should stop
         if self._stop_event.is_set():
@@ -565,7 +564,7 @@ class UniversalTrader:
                 # Spawn concurrent task
                 task = asyncio.create_task(self._handle_token_wrapper(token_info))
                 self.position_tasks[token_key] = task
-                logger.info(f"_process_token_queue() [{self._mint_prefix(token_info.mint)}] Created position task")
+                logger.debug(f"_process_token_queue() [{self._mint_prefix(token_info.mint)}] Created position task")
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -581,7 +580,7 @@ class UniversalTrader:
         finally:
             # Cleanup: Remove from position tasks
             if mint_key in self.position_tasks:
-                logger.info(f"_handle_token_wrapper() [{self._mint_prefix(token_info.mint)}] Removed position task")
+                logger.debug(f"_handle_token_wrapper() [{self._mint_prefix(token_info.mint)}] Removed position task")
                 del self.position_tasks[mint_key]
 
     async def _handle_token(self, token_info: TokenInfo) -> None:
