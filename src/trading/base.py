@@ -28,6 +28,7 @@ class TradeResult:
     # Actual amounts from transaction analysis
     token_swap_amount_raw: int | None = None  # Raw token amount from balance change
     sol_swap_amount_raw: int | None = None  # Raw SOL amount from balance change (including transaction fee)
+    net_sol_swap_amount_raw: int | None = None
     transaction_fee_raw: int | None = None  # Base + priority transaction fee in lamports (from meta.fee)
     platform_fee_raw: int | None = None  # Platform fee in lamports (includes creator + platform fees)
     trade_duration_ms: int | None = None  # Trade execution duration in milliseconds
@@ -65,26 +66,6 @@ class TradeResult:
         from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
         return (abs(self.sol_swap_amount_raw / self.token_swap_amount_raw)) * (10 ** TOKEN_DECIMALS) / LAMPORTS_PER_SOL
 
-    def net_sol_swap_amount_raw(self) -> int | None:
-        """Get SOL amount actually used for token purchase (excluding fees).
-        
-        Returns:
-            SOL amount in lamports used for token purchase, or None if not available
-        """
-        if self.sol_swap_amount_raw is None:
-            return None
-        
-        # Calculate net SOL amount (excluding platform and transaction fees)
-        # The amount of SOL that corresponded to that amount of tokens so it's sol_swap_amount PLUS (transaction_fee + platform_fee)
-        #  For a buy, sol_swap_amount_raw is negative and has been even more negative because of the fees => thats why we add the fees back
-        #  For a sell, sol_swap_amount_raw is positive but has been made lower by the fees that were token => that's why we add the fees back too
-        net_sol_amount_raw = self.sol_swap_amount_raw
-        if self.platform_fee_raw:
-            net_sol_amount_raw += self.platform_fee_raw
-        if self.transaction_fee_raw:
-            net_sol_amount_raw += self.transaction_fee_raw
-        
-        return net_sol_amount_raw
 
     def net_price_sol_decimal(self) -> float | None:
         """Get net price per token in SOL (excluding platform and transaction fees).
@@ -95,13 +76,12 @@ class TradeResult:
         if self.token_swap_amount_raw is None or self.token_swap_amount_raw == 0:
             return None
         
-        net_sol_amount_raw = abs(self.net_sol_swap_amount_raw())
-        if net_sol_amount_raw is None:
+        if self.net_sol_swap_amount_raw is None:
             return None
         
         from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
         
-        result = abs(net_sol_amount_raw / self.token_swap_amount_raw) * (10 ** TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+        result = abs((self.net_sol_swap_amount_raw / LAMPORTS_PER_SOL) / (self.token_swap_amount_raw / (10 ** TOKEN_DECIMALS)))
         
         return result
 
@@ -122,7 +102,7 @@ class TradeResult:
             "platform_fee_raw": self.platform_fee_raw,
             # Computed values
             "token_swap_amount_decimal": self.token_swap_amount_decimal(),
-            "net_sol_swap_amount_raw": self.net_sol_swap_amount_raw(),
+            "net_sol_swap_amount_raw": self.net_sol_swap_amount_raw,
             "sol_swap_amount_decimal": self.sol_swap_amount_decimal(),
             "price_decimal": self.price_sol_decimal(),
             "net_price_decimal": self.net_price_sol_decimal(),
@@ -149,8 +129,8 @@ class TradeResult:
             result += f", sol_swap_amount_raw={self.sol_swap_amount_raw} ({sol_decimal:.6f} SOL)"
 
         if self.sol_swap_amount_raw is not None:
-            sol_decimal = self.net_sol_swap_amount_raw() / LAMPORTS_PER_SOL
-            result += f", net_sol_swap_amount_raw={self.net_sol_swap_amount_raw()} ({sol_decimal:.6f} SOL)"
+            sol_decimal = self.net_sol_swap_amount_raw / LAMPORTS_PER_SOL
+            result += f", net_sol_swap_amount_raw={self.net_sol_swap_amount_raw} ({sol_decimal:.6f} SOL)"
 
         if self.transaction_fee_raw is not None:
             fee_decimal = self.transaction_fee_raw / LAMPORTS_PER_SOL

@@ -202,7 +202,7 @@ class TradeConverter:
             trade_result.tx_signature,
             trade_result.error_message,
             trade_result.token_swap_amount_raw,
-            trade_result.net_sol_swap_amount_raw(),
+            trade_result.net_sol_swap_amount_raw,
             trade_result.transaction_fee_raw,
             trade_result.platform_fee_raw,
             trade_result.price_sol_decimal(),
@@ -225,9 +225,6 @@ class TradeConverter:
         net_sol_amount_raw = row[9]  # net_sol_swap_amount_raw from database
         transaction_fee_raw = row[10] or 0
         platform_fee_raw = row[11] or 0
-        sol_swap_amount_raw = (
-            net_sol_amount_raw - transaction_fee_raw - platform_fee_raw
-        )
 
         return TradeResult(
             success=bool(row[3]),
@@ -236,7 +233,7 @@ class TradeConverter:
             error_message=row[7],
             block_time=row[1],  # timestamp
             token_swap_amount_raw=row[8],
-            sol_swap_amount_raw=sol_swap_amount_raw,
+            net_sol_swap_amount_raw=net_sol_amount_raw,
             transaction_fee_raw=row[10],
             platform_fee_raw=row[11],
             trade_duration_ms=row[14],  # trade_duration_ms

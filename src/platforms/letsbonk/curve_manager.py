@@ -12,6 +12,7 @@ from solders.pubkey import Pubkey
 from core.client import SolanaClient
 from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from interfaces.core import CurveManager, Platform
+from monitoring.base_listener import BaseTokenListener
 from platforms.letsbonk.address_provider import LetsBonkAddressProvider
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
@@ -22,13 +23,15 @@ logger = get_logger(__name__)
 class LetsBonkCurveManager(CurveManager):
     """LetsBonk (Raydium LaunchLab) implementation of CurveManager interface."""
 
-    def __init__(self, client: SolanaClient, idl_parser: IDLParser):
+    def __init__(self, client: SolanaClient, idl_parser: IDLParser, listener: BaseTokenListener | None = None):
         """Initialize LetsBonk curve manager with injected IDL parser.
 
         Args:
             client: Solana RPC client
             idl_parser: Pre-loaded IDL parser for LetsBonk platform
+            listener: Optional listener for trade tracking
         """
+        super().__init__(listener=listener)
         self.client = client
         self.address_provider = LetsBonkAddressProvider()
         self._idl_parser = idl_parser

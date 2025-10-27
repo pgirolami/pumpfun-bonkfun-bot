@@ -37,9 +37,9 @@ class PumpFunCurveManager(CurveManager):
             listener: Optional listener for trade tracking
             trade_staleness_threshold: Seconds before trade data is considered stale
         """
+        super().__init__(listener=listener)
         self.client = client
         self._idl_parser = idl_parser
-        self.listener = listener
         self.trade_staleness_threshold = trade_staleness_threshold
         self.constants: dict[str, Any] = {}
         self._constants_loaded = False

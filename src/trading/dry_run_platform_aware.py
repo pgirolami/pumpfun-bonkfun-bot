@@ -31,56 +31,50 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         # Simulate network latency
         logger.info(f"Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
-        order.block_ts=int(time() * 1000)
 
-        order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
 
         # Generate fake signature for successful transaction
         order.tx_signature = f"DRYRUN_BUY_{order.token_info.mint}_{int(time()*1000)}"
 
         # Simulate slippage validation - calculate actual SOL cost for fixed token amount
-        actual_sol_cost_raw = None
-        while actual_sol_cost_raw is None:
+        net_sol_swapped_raw = None
+        while net_sol_swapped_raw is None:
             try:
                 # Calculate actual SOL cost for the fixed token amount using curve manager
                 pool_address = self._get_pool_address(order.token_info, None)
-                actual_sol_cost_raw = await self.curve_manager.calculate_buy_amount_out(
+                net_sol_swapped_raw = - await self.curve_manager.calculate_buy_amount_out(
                     mint=order.token_info.mint,
                     pool_address=pool_address, 
                     amount_in=order.token_amount_raw
                 )
+                #This is incomplete, it's doesn't contain the fees yet
+                order.sol_amount_raw=net_sol_swapped_raw
                 
-                
-                # Update the order with current price for accurate entry price calculation
-                current_price = await self.curve_manager.calculate_price(mint=order.token_info.mint,
-                    pool_address=pool_address)
-                
+                                
                 # Calculate actual price based on order's token amount and actual SOL cost
-                actual_price_sol_per_token = (actual_sol_cost_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS))
-                order.token_price_sol = actual_price_sol_per_token
-
-                # actual_sol_cost_raw = int(current_price * float(order.token_amount_raw) / 10**TOKEN_DECIMALS * 1_000_000_000)
-
-                logger.info(f"[{str(order.token_info.mint)[:8]}] Actual Token swapped {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Actual SOL swaped {actual_sol_cost_raw} ({actual_sol_cost_raw/1_000_000_000:.10f} SOL) current price on curve={current_price:.10f} SOL, actual price from trade={actual_price_sol_per_token:.10f} SOL")
+                trade_price_sol_per_token = -(net_sol_swapped_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS))
+                order.token_price_sol = trade_price_sol_per_token
+                logger.info(f"[{str(order.token_info.mint)[:8]}] Actual Token swapped {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Net SOL swapped {net_sol_swapped_raw} ({net_sol_swapped_raw/1_000_000_000:.10f} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
 
             except Exception:
                 logger.exception(f"[{str(order.token_info.mint)[:8]}] Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
                 await asyncio.sleep(self.PROPAGATION_SLEEP_TIME)
-        
+
+        order.block_ts=int(time() * 1000)
+
         # Check if actual SOL cost exceeds slippage tolerance
-        if actual_sol_cost_raw > order.max_sol_amount_raw:
+        if -net_sol_swapped_raw > order.max_sol_amount_raw:
             # Simulate slippage failure - still charge transaction fees
             from core.pubkeys import LAMPORTS_PER_SOL
-            logger.warning(f"DRY RUN: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.10f} SOL, actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.10f} SOL")
+            logger.warning(f"DRY RUN: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.10f} SOL, actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL:.10f} SOL")
             order.tx_signature = f"DRYRUN_BUY_FAILED_{order.token_info.mint}_{int(time()*1000)}"
             order.slippage_failed = True  # Add flag to indicate slippage failure
             
             return order
         else:
             from core.pubkeys import LAMPORTS_PER_SOL
-            logger.info(f"DRY RUN: Slippage check passed - actual cost {actual_sol_cost_raw / LAMPORTS_PER_SOL:.10f} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.10f} SOL)")
+            logger.info(f"DRY RUN: Slippage check passed - actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL:.10f} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL:.10f} SOL)")
                             
-        logger.info(f"Buy transaction simulated: {order.tx_signature}")
         return order
     
     async def _confirm_transaction(self, order: BuyOrder):
@@ -108,41 +102,36 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
 
         is_slippage_failure = order.tx_signature.startswith("DRYRUN_BUY_FAILED_")
         
-        sol_swap_amount_raw = None
-        while not sol_swap_amount_raw:
-            try:
-                pool_address = self._get_pool_address(order.token_info, None)
-                sol_swap_amount_raw = - await self.curve_manager.calculate_sell_amount_out(
-                    mint=order.token_info.mint, 
-                    pool_address=pool_address, 
-                    amount_in=order.token_amount_raw
-                )
-
-                # Update the order with current price for accurate entry price calculation
-                current_price = await self.curve_manager.calculate_price(mint=order.token_info.mint,
-                    pool_address=pool_address)
-                order.token_price_sol = current_price
-
-            except Exception:
-                logger.info("Could not retrieve SOL amount swapped, account isn't propagated yet. Sleep for 2s and retrying")
-                await asyncio.sleep(2.0)
+        net_sol_swapped_raw=order.sol_amount_raw
 
         # Get platform fee percentage from curve manager
         platform_constants = await self.curve_manager.get_platform_constants()
-        platform_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
+        platform_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100 
         # Still charge transaction fees even on slippage failure
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
-        order.platform_fee_raw = -int(sol_swap_amount_raw * platform_fee_percentage)
-        order.sol_amount_raw = 0 if is_slippage_failure else sol_swap_amount_raw-(order.platform_fee_raw+order.transaction_fee_raw)
+        order.platform_fee_raw = -int(net_sol_swapped_raw * platform_fee_percentage)
+        # minus the fees because sol_amount_raw is negative
+        order.sol_amount_raw = 0 if is_slippage_failure else net_sol_swapped_raw-(order.platform_fee_raw+order.transaction_fee_raw)
 
-        return BalanceChangeResult(
+        result = BalanceChangeResult(
             token_swap_amount_raw=order.token_amount_raw,
-            sol_amount_raw=order.sol_amount_raw,
-            platform_fee_raw=order.platform_fee_raw,
-            transaction_fee_raw=order.transaction_fee_raw,
+            net_sol_swap_amount_raw=net_sol_swapped_raw,
+            platform_fee_raw=0 if is_slippage_failure else order.platform_fee_raw,
+            transaction_fee_raw=0 if is_slippage_failure else order.transaction_fee_raw,
             rent_exemption_amount_raw=0,
-            sol_swap_amount_raw=sol_swap_amount_raw,
+            unattributed_sol_amount_raw=0,
+            sol_amount_raw=order.sol_amount_raw,
         )
+        
+        # Record simulated trade for price tracking
+        if not is_slippage_failure:
+            self.curve_manager.record_simulated_trade(
+                mint=order.token_info.mint,
+                sol_swap_raw=net_sol_swapped_raw,  # negative for buy
+                token_swap_raw=order.token_amount_raw,  # positive for buy
+            )
+        
+        return result
 
 class DryRunPlatformAwareSeller(PlatformAwareSeller):
     """Dry-run seller that simulates execution without blockchain calls."""
@@ -161,11 +150,21 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         await asyncio.sleep(self.dry_run_wait_time)
         order.block_ts=int(time() * 1000)
         
+        net_sol_swap_raw = await self.curve_manager.calculate_sell_amount_out(
+            mint=order.token_info.mint,
+            pool_address=self._get_pool_address(order.token_info,None), 
+            amount_in=order.token_amount_raw
+            )
+        #This is incomplete, it's doesn't contain the fees yet
+        order.expected_sol_swap_amount_raw=net_sol_swap_raw
+
         # Generate fake signature
         order.tx_signature = f"DRYRUN_SELL_{order.token_info.mint}_{int(time()*1000)}"
         
         
-        logger.info(f"Sell transaction simulated: {order.tx_signature}")
+        trade_price_sol_per_token = (net_sol_swap_raw / 1_000_000_000) / (-order.token_amount_raw / (10 ** TOKEN_DECIMALS))
+        order.token_price_sol = trade_price_sol_per_token
+        logger.info(f"[{str(order.token_info.mint)[:8]}] Sell transaction simulated: {order.tx_signature} Actual Token swapped {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Net SOL swapped {net_sol_swap_raw} ({net_sol_swap_raw/1_000_000_000:.10f} SOL), trade_price_sol_per_token={trade_price_sol_per_token:.10f} SOL")
         return order
     
     async def _confirm_transaction(self, order: SellOrder):
@@ -188,23 +187,29 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         # Create a mock balance change result
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
         
-        sol_swap_amount_raw = await self.curve_manager.calculate_sell_amount_out(
-            mint=order.token_info.mint,
-            pool_address=self._get_pool_address(order.token_info,None), 
-            amount_in=order.token_amount_raw
-            )
+        net_sol_swap_amount_raw = order.expected_sol_swap_amount_raw
         # Calculate fees
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
         # Get platform fee percentage from curve manager
         platform_constants = await self.curve_manager.get_platform_constants()
         platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
-        order.platform_fee_raw = int(sol_swap_amount_raw * platform_fee_percentage)
-
-        return BalanceChangeResult(
+        order.platform_fee_raw = int(net_sol_swap_amount_raw * platform_fee_percentage)
+        
+        result = BalanceChangeResult(
             token_swap_amount_raw=-order.token_amount_raw,
-            sol_amount_raw=sol_swap_amount_raw-(order.platform_fee_raw+order.transaction_fee_raw),
+            net_sol_swap_amount_raw=net_sol_swap_amount_raw,
             platform_fee_raw=order.platform_fee_raw,
             transaction_fee_raw=order.transaction_fee_raw,
             rent_exemption_amount_raw=0,
-            sol_swap_amount_raw=sol_swap_amount_raw,
+            unattributed_sol_amount_raw=0,
+            sol_amount_raw=net_sol_swap_amount_raw+order.platform_fee_raw+order.transaction_fee_raw,
         )
+        
+        # Record simulated trade for price tracking
+        self.curve_manager.record_simulated_trade(
+            mint=order.token_info.mint,
+            sol_swap_raw=net_sol_swap_amount_raw,  # positive for sell
+            token_swap_raw=-order.token_amount_raw,  # negative for sell
+        )
+        
+        return result

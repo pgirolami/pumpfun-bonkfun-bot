@@ -720,7 +720,7 @@ class UniversalTrader:
                     platform_fee_raw=buy_result.platform_fee_raw,
                     exit_strategy=self.exit_strategy,
                     buy_amount=self.buy_amount,
-                    total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw(),  # Raw value (negative for buys)
+                    total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw,  # Raw value (negative for buys)
                     take_profit_percentage=self.take_profit_percentage,
                     stop_loss_percentage=self.stop_loss_percentage,
                     trailing_stop_percentage=self.trailing_stop_percentage,
@@ -843,7 +843,7 @@ class UniversalTrader:
         position.realized_net_pnl_sol_decimal = pnl_dict["realized_net_pnl_sol_decimal"]
         
         from core.pubkeys import LAMPORTS_PER_SOL
-        logger.info(
+        logger.debug(
             f"[{self._mint_prefix(token_info.mint)}] Failed buy PnL: {position.realized_pnl_sol_decimal:.6f} SOL "
             f"(fees: {pnl_dict['total_fees_raw'] / LAMPORTS_PER_SOL:.6f} SOL)"
         )
@@ -1068,7 +1068,7 @@ class UniversalTrader:
                 # Log current status
                 pnl = position._get_pnl(current_price)
                 logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price:.10f} SOL ({pnl['net_price_change_pct']:+.2f}%)"
+                    f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price} SOL ({pnl['net_price_change_pct']:+.2f}%)"
                 )
 
                 # Check if position should be exited

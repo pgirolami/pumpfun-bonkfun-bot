@@ -39,6 +39,10 @@ class TokenTradeTracker:
         self.creator_token_swap_in = int(initial_buy_decimal * 10**TOKEN_DECIMALS)
         self.creator_token_swap_out = 0    # Tokens sold by creator (negative)
  
+        # Offset tracking for dry-run mode
+        self.simulated_sol_offset_raw = 0  # Cumulative SOL offset (signed)
+        self.simulated_token_offset_raw = 0  # Cumulative token offset (signed)
+ 
         logger.debug(f"[{str(self.mint)[:8]}] __init()__ -> (Init) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} => price={self.calculate_price():.10f} SOL")
     
     def apply_trade(self, trade_data: dict[str, Any]) -> None:
@@ -47,9 +51,20 @@ class TokenTradeTracker:
         Args:
             trade_data: Trade message from PumpPortal containing updated reserves
         """
-        # Extract updated reserves from trade message
-        self.virtual_sol_reserves = int(trade_data.get("vSolInBondingCurve")*LAMPORTS_PER_SOL)
-        self.virtual_token_reserves = int(trade_data.get("vTokensInBondingCurve")*10**TOKEN_DECIMALS)
+        # Extract updated reserves from trade message (real on-chain values)
+        sol_reserves_from_trade = int(trade_data.get("vSolInBondingCurve")*LAMPORTS_PER_SOL)
+        token_reserves_from_trade = int(trade_data.get("vTokensInBondingCurve")*10**TOKEN_DECIMALS)
+        
+        # Apply simulated trade offsets (zero if not in dry-run mode)
+        self.virtual_sol_reserves = sol_reserves_from_trade + self.simulated_sol_offset_raw
+        self.virtual_token_reserves = token_reserves_from_trade + self.simulated_token_offset_raw
+        
+        if self.simulated_sol_offset_raw != 0 or self.simulated_token_offset_raw != 0:
+            logger.info(
+                f"[{str(self.mint)[:8]}] Applied offsets: "
+                f"original=({sol_reserves_from_trade} lamports, {token_reserves_from_trade} token raw inits) -> "
+                f"after offset=({self.virtual_sol_reserves} lamports, {self.virtual_token_reserves} token raw units)"
+            )
         
         # Track creator trades
         trader_public_key = str(trade_data.get("traderPublicKey", ""))
@@ -70,7 +85,40 @@ class TokenTradeTracker:
 
         self.last_update_timestamp = time.time()
         
-        logger.info(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves}")
+        logger.info(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} -> price={self.calculate_price()}")
+    
+    def record_simulated_trade(self, sol_swap_raw: int, token_swap_raw: int) -> None:
+        """Record a simulated trade to adjust future reserve calculations.
+        
+        Accumulates signed swap amounts. For buys, sol is negative and tokens positive.
+        For sells, sol is positive and tokens negative. These offsets are applied to
+        all incoming WebSocket reserve updates.
+        
+        Also immediately applies the offset to current reserves so price is updated right away.
+        
+        Args:
+            sol_swap_raw: Signed SOL swap amount in lamports (negative = spent)
+            token_swap_raw: Signed token swap amount in raw units (negative = sold)
+        """
+        # these values come from the balance change analysis so they're from our wallet's point of view
+        # they need to be negative to apply the offset correctly
+        self.simulated_sol_offset_raw += -sol_swap_raw
+        self.simulated_token_offset_raw += -token_swap_raw
+        
+        # Immediately apply the offset to current reserves to update price right away
+        if self.virtual_sol_reserves is not None and self.virtual_token_reserves is not None:
+            self.virtual_sol_reserves += -sol_swap_raw
+            self.virtual_token_reserves += -token_swap_raw
+        
+        self.last_update_timestamp = time.time()
+        
+        logger.info(
+            f"[{str(self.mint)[:8]}] Recorded simulated trade: "
+            f"sol_swap={sol_swap_raw}, token_swap={token_swap_raw} | "
+            f"cumulative offsets: SOL={self.simulated_sol_offset_raw}, "
+            f"tokens={self.simulated_token_offset_raw}"
+        )
+
     
     def calculate_price(self) -> float:
         """Get current price from cached reserves.
@@ -84,10 +132,9 @@ class TokenTradeTracker:
         if not self.is_initialized():
             raise RuntimeError(f"Tracker for {str(self.mint)} not initialized")
         
-        price_lamports = self.virtual_sol_reserves / self.virtual_token_reserves
-        price = price_lamports * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+        price = (self.virtual_sol_reserves / LAMPORTS_PER_SOL) / (self.virtual_token_reserves/10**TOKEN_DECIMALS)
         age = time.time() - self.last_update_timestamp
-        logger.debug(f"[{str(self.mint)[:8]}] calculate_price() -> current price {price:.10f} SOL. Last trade {age:.2f}s ago")
+        logger.info(f"[{str(self.mint)[:8]}] calculate_price() -> current price {price} SOL. Last trade {age:.2f}s ago (virtual_sol_reserves={self.virtual_sol_reserves}, virtual_token_reserves={self.virtual_token_reserves})")
         return price
     
     def is_stale(self, max_age_seconds: float) -> bool:

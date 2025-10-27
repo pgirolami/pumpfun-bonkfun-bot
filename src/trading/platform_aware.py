@@ -153,9 +153,9 @@ class PlatformAwareBuyer(Trader):
             balance_changes = None
             try:
                 balance_changes = await self._analyze_balance_changes(order)
-                logger.debug(f"Balance analysis resulted in {balance_changes}")
+                logger.info(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
-                logger.warning(f"Failed to analyze transaction balances")
+                logger.warning(f"[{str(order.token_info.mint)[:8]}] Failed to analyze transaction balances")
                 logger.exception(e)
 
             # Calculate trade duration
@@ -168,7 +168,8 @@ class PlatformAwareBuyer(Trader):
                 block_time=confirm_result.block_ts,
                 transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
-                sol_swap_amount_raw=balance_changes.sol_swap_amount_raw if balance_changes else None,
+                net_sol_swap_amount_raw=balance_changes.net_sol_swap_amount_raw if balance_changes else None,
+                sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
                 platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
                 trade_duration_ms=trade_duration_ms,
             )
@@ -347,7 +348,7 @@ class PlatformAwareSeller(Trader):
             balance_changes = None
             try:
                 balance_changes = await self._analyze_balance_changes(order)
-                # logger.info(f"Balance changes ={balance_changes}")
+                logger.info(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances: {e}")
 
@@ -361,6 +362,7 @@ class PlatformAwareSeller(Trader):
                 block_time=confirm_result.block_ts,
                 transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
+                net_sol_swap_amount_raw=balance_changes.net_sol_swap_amount_raw if balance_changes else None,
                 sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
                 platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
                 trade_duration_ms=trade_duration_ms,

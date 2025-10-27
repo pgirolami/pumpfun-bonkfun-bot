@@ -8,7 +8,7 @@ rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
 wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
 private_key: "${SOLANA_PRIVATE_KEY}"
 
-enabled: true # You can turn off the bot w/o removing its config
+enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
@@ -91,8 +91,8 @@ filters:
   listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
-  max_buys: null # Maximum number of buys (null = unlimited)
-  min_initial_buy_sol: 1.0 # Minimum initial SOL buy amount to consider a token (in SOL)
+  max_buys: 1 # Maximum number of buys (null = unlimited)
+  min_initial_buy_sol: 0.98 # Minimum initial SOL buy amount to consider a token (in SOL)
 
 # Retry and timeout settings
 retries:

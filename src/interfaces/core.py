@@ -8,52 +8,63 @@ must implement to enable unified trading operations across different protocols.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from solders.instruction import Instruction
 from solders.pubkey import Pubkey
 from solders.solders import EncodedConfirmedTransactionWithStatusMeta
 
+if TYPE_CHECKING:
+    from monitoring.base_listener import BaseTokenListener
+
 
 @dataclass
 class BalanceChangeResult:
     """Result of balance change analysis for trading transactions."""
-    
-    token_swap_amount_raw: int = 0  # Token amount in raw units: positive for buys, negative for sells
-    sol_amount_raw: int = 0  # SOL amount in lamports: negative for buys, positive for sells. Includes fees.
-    #Note that the real amount of SOL expended on a buy or received in a sell is sol_amount_raw-platform_fee_raw-transaction_fee_raw
-    platform_fee_raw: int = 0  # Platform fee in lamports (includes creator + platform fees)
-    transaction_fee_raw: int = 0  # Base + priority transaction fee in lamports (from meta.fee)
-    rent_exemption_amount_raw: int = 0  # Rent exemption amount in lamports for token account creation
-    sol_swap_amount_raw:int = 0  # SOL amount in lamports that was actually used for token purchase (excluding rent exemption since we get that back after closing the ATA)
+
+    token_swap_amount_raw: int = (
+        0  # Token amount in raw units: positive for buys, negative for sells
+    )
+    net_sol_swap_amount_raw: int = 0  # SOL amount in lamports that was actually used for token purchase (excluding rent exemption since we get that back after closing the ATA)
+    platform_fee_raw: int = (
+        0  # Platform fee in lamports (includes creator + platform fees)
+    )
+    transaction_fee_raw: int = (
+        0  # Base + priority transaction fee in lamports (from meta.fee)
+    )
+    rent_exemption_amount_raw: int = (
+        0  # Rent exemption amount in lamports for token account creation
+    )
+    unattributed_sol_amount_raw : int = 0 #in cas
+    sol_amount_raw: int = 0  # SOL amount in lamports: negative for buys, positive for sells. Includes fees & rent exemption amount.
+
+    # Note that
+    # BUY: sol_amount_raw = sol_swap_amount_raw - platform_fee_raw - transaction_fee_raw - rent_exemption_amount_raw + unattributed_sol_amount_raw
+    # SEL: sol_amount_raw = unattributed_sol_amount_raw + platform_fee_raw + transaction_fee_raw + rent_exemption_amount_raw + unattributed_sol_amount_raw
 
     def __str__(self) -> str:
         """String representation with raw and decimal values."""
         from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
-        
-        # The amount of SOL that corresponded to that amount of tokens so it's sol_swap_amount PLUS (transaction_fee + platform_fee)
-        #  For a buy, sol_swap_amount_raw is negative and has been even more negative because of the fees => thats why we add the fees back
-        #  For a sell, sol_swap_amount_raw is positive but has been made lower by the fees that were token => that's why we add the fees back too
-        net_sol_swap_amount_raw = self.sol_swap_amount_raw + (self.transaction_fee_raw + self.platform_fee_raw)
-        
+
         # Convert to decimal values
         sol_amount_decimal = self.sol_amount_raw / LAMPORTS_PER_SOL
         rent_exemption_decimal = self.rent_exemption_amount_raw / LAMPORTS_PER_SOL
-        sol_swap_amount_decimal = self.sol_swap_amount_raw / LAMPORTS_PER_SOL
         transaction_fee_decimal = self.transaction_fee_raw / LAMPORTS_PER_SOL
         platform_fee_decimal = self.platform_fee_raw / LAMPORTS_PER_SOL
-        net_sol_swap_amount_decimal = net_sol_swap_amount_raw / LAMPORTS_PER_SOL
-        token_swap_amount_decimal = self.token_swap_amount_raw / (10 ** TOKEN_DECIMALS)
-        
+        net_sol_swap_amount_decimal = self.net_sol_swap_amount_raw / LAMPORTS_PER_SOL
+        token_swap_amount_decimal = self.token_swap_amount_raw / (10**TOKEN_DECIMALS)
+
+        net_price_decimal = abs(self.net_sol_swap_amount_raw) / self.token_swap_amount_raw * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+
         return (
             f"BalanceChangeResult("
-            f"sol_amount={self.sol_amount_raw} lamports ({sol_amount_decimal:.6f} SOL) & "
-            f"rent_exemption_amount={self.rent_exemption_amount_raw} lamports ({rent_exemption_decimal:.6f} SOL) "
-            f"=> sol_swap_amount={self.sol_swap_amount_raw} lamports ({sol_swap_amount_decimal:.6f} SOL), "
-            f"transaction_fee={self.transaction_fee_raw} lamports ({transaction_fee_decimal:.6f} SOL) & "
+            f"token_swap_amount={self.token_swap_amount_raw} raw units ({token_swap_amount_decimal:.6f} tokens), "
+            f"net_sol_swap_amount ={self.net_sol_swap_amount_raw} lamports ({net_sol_swap_amount_decimal:.6f} SOL), "
+            f"transaction_fee={self.transaction_fee_raw} lamports ({transaction_fee_decimal:.6f} SOL), "
             f"platform_fee={self.platform_fee_raw} lamports ({platform_fee_decimal:.6f} SOL), "
-            f"=> net_sol_swap_amount ={net_sol_swap_amount_raw} lamports ({net_sol_swap_amount_decimal:.6f} SOL), "
-            f"token_swap_amount={self.token_swap_amount_raw} raw units ({token_swap_amount_decimal:.6f} tokens)"
+            f"rent_exemption_amount={self.rent_exemption_amount_raw} lamports ({rent_exemption_decimal:.6f} SOL) "
+            f"=> sol_amount={self.sol_amount_raw} lamports ({sol_amount_decimal:.6f} SOL) "
+            f"=> net_price={net_price_decimal} SOL"
             f")"
         )
 
@@ -91,11 +102,15 @@ class TokenInfo:
     # Metadata
     creation_timestamp: float | None = None
     additional_data: dict[str, Any] | None = None
-    
+
     # PumpPortal-specific initial buy data
-    initial_buy_token_amount_decimal: float | None = None  # Decimal token amount from PumpPortal's initialBuy
-    initial_buy_sol_amount_decimal: float | None = None  # SOL amount from PumpPortal's solAmount
-    
+    initial_buy_token_amount_decimal: float | None = (
+        None  # Decimal token amount from PumpPortal's initialBuy
+    )
+    initial_buy_sol_amount_decimal: float | None = (
+        None  # SOL amount from PumpPortal's solAmount
+    )
+
     # Virtual reserves for trade tracking (from token creation)
     virtual_sol_reserves: int | None = None  # Virtual SOL reserves in lamports
     virtual_token_reserves: int | None = None  # Virtual token reserves in raw units
@@ -281,6 +296,17 @@ class InstructionBuilder(ABC):
 class CurveManager(ABC):
     """Abstract interface for platform-specific price calculations and pool state management."""
 
+    def __init__(
+        self, listener: "BaseTokenListener | None" = None, **kwargs
+    ):
+        """Initialize the curve manager.
+        
+        Args:
+            listener: Optional listener for trade tracking
+        """
+        super().__init__(**kwargs)
+        self.listener = listener
+
     @property
     @abstractmethod
     def platform(self) -> Platform:
@@ -328,7 +354,7 @@ class CurveManager(ABC):
 
     @abstractmethod
     async def calculate_sell_amount_out(
-        self, mint:Pubkey, pool_address: Pubkey, amount_in: int
+        self, mint: Pubkey, pool_address: Pubkey, amount_in: int
     ) -> int:
         """Calculate expected quote tokens received for a sell operation.
 
@@ -352,6 +378,23 @@ class CurveManager(ABC):
             Tuple of (base_reserves, quote_reserves)
         """
         pass
+
+    def record_simulated_trade(
+        self, mint: Pubkey, sol_swap_raw: int, token_swap_raw: int
+    ) -> None:
+        """Record a simulated trade for dry-run mode.
+
+        Default implementation delegates to listener's trade tracker.
+
+        Args:
+            mint: Token mint address
+            sol_swap_raw: Signed SOL swap amount in lamports
+            token_swap_raw: Signed token swap amount in raw units
+        """
+        if self.listener:
+            tracker = self.listener.get_trade_tracker_by_mint(str(mint))
+            if tracker:
+                tracker.record_simulated_trade(sol_swap_raw, token_swap_raw)
 
     @abstractmethod
     async def get_platform_constants(self) -> dict[str, Any]:
@@ -455,7 +498,11 @@ class BalanceAnalyzer(ABC):
 
     @abstractmethod
     def analyze_balance_changes(
-        self, tx: EncodedConfirmedTransactionWithStatusMeta, token_info: TokenInfo, wallet_pubkey: Pubkey, instruction_accounts: dict[str, Pubkey]
+        self,
+        tx: EncodedConfirmedTransactionWithStatusMeta,
+        token_info: TokenInfo,
+        wallet_pubkey: Pubkey,
+        instruction_accounts: dict[str, Pubkey],
     ) -> BalanceChangeResult:
         """Analyze balance changes for trading transactions.
 

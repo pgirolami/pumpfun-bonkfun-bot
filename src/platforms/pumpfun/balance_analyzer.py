@@ -79,7 +79,7 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
         
         # Calculate the actual SOL balance change for the token account
         if user_token_account_index is not None:
-            #Purposely reversed to get the amount of SOL that was transferred out of the wallet's account
+            #Purposely reversed to get the amount of SOL that was transferred out of the wallet's account: negative on buys
             rent_exemption_amount_raw = int(pre_balances[user_token_account_index]) - int(post_balances[user_token_account_index])
 
         # Extract real fees from transaction balance changes
@@ -135,13 +135,13 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
         
         total_platform_fee_raw = protocol_fee_raw + creator_fee_raw
                 
-        sol_swap_amount_raw = sol_amount_raw-rent_exemption_amount_raw
+        net_sol_swap_amount_raw = sol_amount_raw-rent_exemption_amount_raw - total_platform_fee_raw - transaction_fee
         
         return BalanceChangeResult(
-            sol_amount_raw=sol_amount_raw,
+            token_swap_amount_raw=token_swap_amount_raw,  # Positive for buys, negative for sells
+            net_sol_swap_amount_raw=net_sol_swap_amount_raw,  # Negative for buys, positive for sells
             rent_exemption_amount_raw=rent_exemption_amount_raw, #positive for buys
-            sol_swap_amount_raw=sol_swap_amount_raw,  # Negative for buys, positive for sells
             platform_fee_raw=total_platform_fee_raw,
             transaction_fee_raw=transaction_fee,
-            token_swap_amount_raw=token_swap_amount_raw,  # Positive for buys, negative for sells
+            sol_amount_raw=sol_amount_raw,
         )
