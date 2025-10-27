@@ -114,33 +114,37 @@ class PumpFunCurveManager(CurveManager):
         return price_lamports * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
 
     async def calculate_buy_amount_out(
-        self, pool_address: Pubkey, amount_in: int
+        self, mint:Pubkey, pool_address: Pubkey, amount_in: int
     ) -> int:
-        """Calculate expected tokens received for a buy operation.
+        """Calculate expected SOL used for a buy operation in PumpFun.
 
         Uses the pump.fun bonding curve formula to calculate token output.
 
         Args:
             pool_address: Address of the bonding curve
-            amount_in: Amount of SOL to spend (in lamports)
+            amount_in: Amount of token to buy (in raw units)
 
         Returns:
-            Expected amount of tokens to receive (in raw token units)
+            Expected amount of lamports to spend
         """
-        pool_state = await self.get_pool_state(pool_address)
-        
-        virtual_token_reserves = pool_state["virtual_token_reserves"]
-        virtual_sol_reserves = pool_state["virtual_sol_reserves"]
+        virtual_token_reserves, virtual_sol_reserves = await self.get_reserves(mint, pool_address)
 
-        # Use virtual reserves for bonding curve calculation
-        # Formula: tokens_out = (amount_in * virtual_token_reserves) / (virtual_sol_reserves + amount_in)
-        numerator = amount_in * virtual_token_reserves
-        denominator = virtual_sol_reserves + amount_in
+        # k = virtual_token_reserves * virtual_sol_reserves
+        # and
+        # k = (virtual_token_reserves - token_swap_amount) * (virtual_sol_reserves + sol_swap_amount)
+        # 
+        # So virtual_token_reserves * virtual_sol_reserves = (virtual_token_reserves - token_swap_amount) * (virtual_sol_reserves + sol_swap_amount)
+        # => virtual_sol_reserves + sol_swap_amount = (virtual_token_reserves * virtual_sol_reserves) / (virtual_token_reserves - token_swap_amount)
+        # => sol_swap_amount = (virtual_token_reserves * virtual_sol_reserves) / (virtual_token_reserves - token_swap_amount) - virtual_sol_reserves
+        # => sol_swap_amount = (virtual_token_reserves * virtual_sol_reserves) / (virtual_token_reserves - token_swap_amount) - virtual_sol_reserves * (virtual_token_reserves - token_swap_amount) / (virtual_token_reserves - token_swap_amount)
+        # => sol_swap_amount = (virtual_token_reserves * virtual_sol_reserves - virtual_sol_reserves * virtual_token_reserves + virtual_sol_reserves * token_swap_amount) / (virtual_token_reserves - token_swap_amount)
+        # => sol_swap_amount = (virtual_sol_reserves * token_swap_amount) / (virtual_token_reserves - token_swap_amount)
 
-        if denominator == 0:
-            return 0
+        numerator = virtual_sol_reserves * amount_in
+        denominator = virtual_token_reserves - amount_in
 
         tokens_out = numerator // denominator
+
         return tokens_out
 
     async def calculate_sell_amount_out(
@@ -159,11 +163,19 @@ class PumpFunCurveManager(CurveManager):
         """
         virtual_token_reserves, virtual_sol_reserves = await self.get_reserves(mint, pool_address)
 
-        # Use virtual reserves for bonding curve calculation
-        # Formula: sol_out = (amount_in * virtual_sol_reserves) / (virtual_token_reserves + amount_in)
-        # numerator = (float(amount_in) / 10**TOKEN_DECIMALS) * (float(virtual_sol_reserves)/LAMPORTS_PER_SOL)
-        # denominator = float(virtual_token_reserves + amount_in) / 10**TOKEN_DECIMALS
-        numerator = amount_in * virtual_sol_reserves
+
+        # k = virtual_token_reserves * virtual_sol_reserves
+        # and
+        # k = (virtual_token_reserves - token_swap_amount) * (virtual_sol_reserves + sol_swap_amount)
+        # 
+        # So virtual_token_reserves * virtual_sol_reserves = (virtual_token_reserves + token_swap_amount) * (virtual_sol_reserves - sol_swap_amount)
+        # => virtual_sol_reserves - sol_swap_amount = (virtual_token_reserves * virtual_sol_reserves) / (virtual_token_reserves + token_swap_amount)
+        # => sol_swap_amount = virtual_sol_reserves - (virtual_token_reserves * virtual_sol_reserves) / (virtual_token_reserves + token_swap_amount)
+        # => sol_swap_amount = virtual_sol_reserves * (virtual_token_reserves + token_swap_amount) / (virtual_token_reserves + token_swap_amount) - (virtual_token_reserves * virtual_sol_reserves) / (virtual_token_reserves + token_swap_amount)
+        # => sol_swap_amount = (virtual_sol_reserves * token_swap_amount + virtual_token_reserves * virtual_sol_reserves - virtual_token_reserves * virtual_sol_reserves) / (virtual_token_reserves + token_swap_amount)
+        # => sol_swap_amount = (virtual_sol_reserves * token_swap_amount) / (virtual_token_reserves + token_swap_amount)
+
+        numerator = virtual_sol_reserves * amount_in
         denominator = virtual_token_reserves + amount_in
 
         sol_out = numerator // denominator

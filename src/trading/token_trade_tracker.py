@@ -70,7 +70,7 @@ class TokenTradeTracker:
 
         self.last_update_timestamp = time.time()
         
-        logger.debug(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves}")
+        logger.info(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves}")
     
     def calculate_price(self) -> float:
         """Get current price from cached reserves.

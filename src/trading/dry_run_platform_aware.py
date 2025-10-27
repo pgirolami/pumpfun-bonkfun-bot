@@ -44,23 +44,27 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             try:
                 # Calculate actual SOL cost for the fixed token amount using curve manager
                 pool_address = self._get_pool_address(order.token_info, None)
-                actual_sol_cost_raw = await self.curve_manager.calculate_sell_amount_out(
+                actual_sol_cost_raw = await self.curve_manager.calculate_buy_amount_out(
                     mint=order.token_info.mint,
                     pool_address=pool_address, 
                     amount_in=order.token_amount_raw
                 )
                 
+                
                 # Update the order with current price for accurate entry price calculation
                 current_price = await self.curve_manager.calculate_price(mint=order.token_info.mint,
                     pool_address=pool_address)
-                order.token_price_sol = current_price
+                
+                # Calculate actual price based on order's token amount and actual SOL cost
+                actual_price_sol_per_token = (actual_sol_cost_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS))
+                order.token_price_sol = actual_price_sol_per_token
 
                 # actual_sol_cost_raw = int(current_price * float(order.token_amount_raw) / 10**TOKEN_DECIMALS * 1_000_000_000)
 
-                logger.debug(f"{order.token_info.mint}: Actual SOL swaped {actual_sol_cost_raw} ({actual_sol_cost_raw/1_000_000_000:.10f} SOL) current price={current_price:.10f} SOL")
+                logger.info(f"[{str(order.token_info.mint)[:8]}] Actual Token swapped {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Actual SOL swaped {actual_sol_cost_raw} ({actual_sol_cost_raw/1_000_000_000:.10f} SOL) current price on curve={current_price:.10f} SOL, actual price from trade={actual_price_sol_per_token:.10f} SOL")
 
             except Exception:
-                logger.info(f"Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
+                logger.exception(f"[{str(order.token_info.mint)[:8]}] Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
                 await asyncio.sleep(self.PROPAGATION_SLEEP_TIME)
         
         # Check if actual SOL cost exceeds slippage tolerance
