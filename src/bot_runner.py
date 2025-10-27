@@ -216,6 +216,13 @@ async def run_all_bots():
             
             # Skip disabled bots
             if not cfg.get("enabled", True):
+                logging.info(f"Skipping wallet checking for bot '{bot_name}' because disabled")
+                continue
+            
+            # Skip dry-run bots (they don't affect actual wallet balances)
+            testing = cfg.get("testing", {})
+            if testing.get("dry_run", False):
+                logging.info(f"Skipping wallet checking for bot '{bot_name}' because in dry-run mode")
                 continue
                 
             wallet = Wallet(cfg["private_key"])
