@@ -8,7 +8,7 @@ rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
 wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
 private_key: "${SOLANA_PRIVATE_KEY}"
 
-enabled: false # You can turn off the bot w/o removing its config
+enabled: true # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
@@ -20,7 +20,7 @@ pumpportal:
 
 # Testing configuration (optional)
 testing:
-  dry_run: true  # Set to true to simulate transactions without sending to blockchain
+  dry_run: false  # Set to true to simulate transactions without sending to blockchain
   dry_run_wait_time_seconds: 1.5  # Simulate RPC latency in dry-run mode
 
 

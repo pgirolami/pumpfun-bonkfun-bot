@@ -318,10 +318,13 @@ async def run_all_bots():
         p.join()
         logging.info(f"Process {p.name} completed")
 
-
 def main() -> None:
-    # File logging is set up per bot instance in setup_logging()
-    # No console output needed
+    # Set up basic console logging for main process
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     # Log supported platforms and listeners
     try:
