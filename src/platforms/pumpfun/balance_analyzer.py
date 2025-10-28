@@ -135,7 +135,7 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
         
         total_platform_fee_raw = protocol_fee_raw + creator_fee_raw
                 
-        net_sol_swap_amount_raw = sol_amount_raw-rent_exemption_amount_raw - total_platform_fee_raw - transaction_fee
+        net_sol_swap_amount_raw = sol_amount_raw + total_platform_fee_raw + transaction_fee - rent_exemption_amount_raw
         
         return BalanceChangeResult(
             token_swap_amount_raw=token_swap_amount_raw,  # Positive for buys, negative for sells

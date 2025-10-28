@@ -169,9 +169,9 @@ class PlatformAwareBuyer(Trader):
                 transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 net_sol_swap_amount_raw=balance_changes.net_sol_swap_amount_raw if balance_changes else None,
-                sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
                 platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
                 trade_duration_ms=trade_duration_ms,
+                sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
             )
             if not confirm_result.success:
                 result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"

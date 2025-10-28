@@ -41,6 +41,15 @@ def setup_file_logging(
     """
     root_logger = logging.getLogger()
 
+    # Remove any existing console handlers (StreamHandler) to prevent console output
+    handlers_to_remove = []
+    for handler in root_logger.handlers:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+            handlers_to_remove.append(handler)
+
+    for handler in handlers_to_remove:
+        root_logger.removeHandler(handler)
+
     # Check if file handler with same filename already exists
     for handler in root_logger.handlers:
         if (
@@ -59,10 +68,4 @@ def setup_file_logging(
     file_handler.setFormatter(formatter)
 
     root_logger.addHandler(file_handler)
-    
-    # Ensure console output is available for debugging
-    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler) for h in root_logger.handlers):
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(level)
-        console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
+
