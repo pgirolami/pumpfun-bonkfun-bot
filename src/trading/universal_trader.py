@@ -667,7 +667,7 @@ class UniversalTrader:
 
             if token_info.initial_buy_sol_amount_decimal < self.min_initial_buy_sol:
                 logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Skipping because initial SOL amount is too low {token_info.initial_buy_sol_amount_decimal} SOL (min: {self.min_initial_buy_sol} SOL)"
+                    f"[{self._mint_prefix(token_info.mint)}] Skipping token from creator [{str(token_info.creator)[:8]}] because initial SOL amount is too low {token_info.initial_buy_sol_amount_decimal} SOL (min: {self.min_initial_buy_sol} SOL)"
                 )
                 return
 
@@ -1068,7 +1068,7 @@ class UniversalTrader:
                 # Log current status
                 pnl = position._get_pnl(current_price)
                 logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Position status: {current_price} SOL ({pnl['net_price_change_pct']:+.2f}%)"
+                    f"[{self._mint_prefix(token_info.mint)}] Position's price on chain: {current_price} SOL ({pnl['net_price_change_pct']:+.2f}%)"
                 )
 
                 # Check if position should be exited

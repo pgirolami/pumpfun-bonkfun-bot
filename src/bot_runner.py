@@ -326,6 +326,11 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # Suppress noisy third-party loggers
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("solana.rpc").setLevel(logging.WARNING)
+
     # Log supported platforms and listeners
     try:
         from platforms import platform_factory

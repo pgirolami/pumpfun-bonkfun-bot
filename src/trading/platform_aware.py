@@ -153,7 +153,7 @@ class PlatformAwareBuyer(Trader):
             balance_changes = None
             try:
                 balance_changes = await self._analyze_balance_changes(order)
-                logger.info(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
+                logger.debug(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.warning(f"[{str(order.token_info.mint)[:8]}] Failed to analyze transaction balances")
                 logger.exception(e)
@@ -348,7 +348,7 @@ class PlatformAwareSeller(Trader):
             balance_changes = None
             try:
                 balance_changes = await self._analyze_balance_changes(order)
-                logger.info(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
+                logger.debug(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.warning(f"Failed to analyze transaction balances: {e}")
 

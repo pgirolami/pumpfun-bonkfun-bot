@@ -60,7 +60,7 @@ class TokenTradeTracker:
         self.virtual_token_reserves = token_reserves_from_trade + self.simulated_token_offset_raw
         
         if self.simulated_sol_offset_raw != 0 or self.simulated_token_offset_raw != 0:
-            logger.info(
+            logger.debug(
                 f"[{str(self.mint)[:8]}] Applied offsets: "
                 f"original=({sol_reserves_from_trade} lamports, {token_reserves_from_trade} token raw inits) -> "
                 f"after offset=({self.virtual_sol_reserves} lamports, {self.virtual_token_reserves} token raw units)"
@@ -85,7 +85,7 @@ class TokenTradeTracker:
 
         self.last_update_timestamp = time.time()
         
-        logger.info(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} -> price={self.calculate_price()}")
+        logger.debug(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} -> price={self.calculate_price()}")
     
     def record_simulated_trade(self, sol_swap_raw: int, token_swap_raw: int) -> None:
         """Record a simulated trade to adjust future reserve calculations.
@@ -134,7 +134,7 @@ class TokenTradeTracker:
         
         price = (self.virtual_sol_reserves / LAMPORTS_PER_SOL) / (self.virtual_token_reserves/10**TOKEN_DECIMALS)
         age = time.time() - self.last_update_timestamp
-        logger.info(f"[{str(self.mint)[:8]}] calculate_price() -> current price {price} SOL. Last trade {age:.2f}s ago (virtual_sol_reserves={self.virtual_sol_reserves}, virtual_token_reserves={self.virtual_token_reserves})")
+        logger.debug(f"[{str(self.mint)[:8]}] calculate_price() -> current price {price} SOL. Last trade {age:.2f}s ago (virtual_sol_reserves={self.virtual_sol_reserves}, virtual_token_reserves={self.virtual_token_reserves})")
         return price
     
     def is_stale(self, max_age_seconds: float) -> bool:

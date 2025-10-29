@@ -41,22 +41,16 @@ def setup_file_logging(
     """
     root_logger = logging.getLogger()
 
-    # Remove any existing console handlers (StreamHandler) to prevent console output
-    handlers_to_remove = []
-    for handler in root_logger.handlers:
-        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
-            handlers_to_remove.append(handler)
+    # Clear all existing handlers to start fresh for bot processes
+    root_logger.handlers.clear()
+    
+    # Set the root logger level
+    root_logger.setLevel(level)
 
-    for handler in handlers_to_remove:
-        root_logger.removeHandler(handler)
-
-    # Check if file handler with same filename already exists
-    for handler in root_logger.handlers:
-        if (
-            isinstance(handler, logging.FileHandler)
-            and handler.baseFilename == filename
-        ):
-            return  # File handler already added
+    # Suppress noisy third-party loggers
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("solana.rpc").setLevel(logging.WARNING)
 
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
