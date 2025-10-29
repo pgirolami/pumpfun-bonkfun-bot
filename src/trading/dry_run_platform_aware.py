@@ -52,7 +52,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 
                                 
                 # Calculate actual price based on order's token amount and actual SOL cost
-                trade_price_sol_per_token = -(net_sol_swapped_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS))
+                trade_price_sol_per_token = abs((net_sol_swapped_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS)))
                 order.token_price_sol = trade_price_sol_per_token
                 logger.info(f"[{str(order.token_info.mint)[:8]}] Actual Token swapped {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Net SOL swapped {net_sol_swapped_raw} ({net_sol_swapped_raw/1_000_000_000:.10f} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
 
@@ -117,7 +117,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             token_swap_amount_raw=order.token_amount_raw,
             net_sol_swap_amount_raw=net_sol_swapped_raw,
             platform_fee_raw=0 if is_slippage_failure else order.platform_fee_raw,
-            transaction_fee_raw=0 if is_slippage_failure else order.transaction_fee_raw,
+            transaction_fee_raw=order.transaction_fee_raw,
             rent_exemption_amount_raw=0,
             unattributed_sol_amount_raw=0,
             sol_amount_raw=order.sol_amount_raw,
@@ -162,7 +162,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         order.tx_signature = f"DRYRUN_SELL_{order.token_info.mint}_{int(time()*1000)}"
         
         
-        trade_price_sol_per_token = (net_sol_swap_raw / 1_000_000_000) / (-order.token_amount_raw / (10 ** TOKEN_DECIMALS))
+        trade_price_sol_per_token = abs((net_sol_swap_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS)))
         order.token_price_sol = trade_price_sol_per_token
         logger.info(f"[{str(order.token_info.mint)[:8]}] Sell transaction simulated: {order.tx_signature} Actual Token swapped {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Net SOL swapped {net_sol_swap_raw} ({net_sol_swap_raw/1_000_000_000:.10f} SOL), trade_price_sol_per_token={trade_price_sol_per_token:.10f} SOL")
         return order
