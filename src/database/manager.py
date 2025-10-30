@@ -51,6 +51,15 @@ class DatabaseManager:
 
         with sqlite3.connect(self.db_path) as conn:
             conn.executescript(schema_sql)
+            # Lightweight migration: ensure 'block_time' column exists on trades table
+            try:
+                cursor = conn.execute("PRAGMA table_info(trades)")
+                columns = {row[1] for row in cursor.fetchall()}
+                if "block_time" not in columns:
+                    conn.execute("ALTER TABLE trades ADD COLUMN block_time INTEGER")
+            except Exception:
+                # Do not fail initialization if pragma/alter fails; log and continue
+                logger.exception("Failed to migrate 'trades' table to add block_time column")
             conn.commit()
 
         logger.info(f"Database initialized at {self.db_path}")
@@ -262,8 +271,8 @@ class DatabaseManager:
                 INSERT INTO trades 
                 (mint, timestamp, position_id, success, platform, trade_type,
                  tx_signature, error_message, token_swap_amount_raw, net_sol_swap_amount_raw,
-                 transaction_fee_raw, platform_fee_raw, tip_fee_raw, price_decimal, net_price_decimal, trade_duration_ms, time_to_block_ms, run_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 transaction_fee_raw, platform_fee_raw, tip_fee_raw, price_decimal, net_price_decimal, trade_duration_ms, time_to_block_ms, run_id, block_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )

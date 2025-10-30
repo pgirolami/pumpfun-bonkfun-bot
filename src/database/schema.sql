@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS trades (
     trade_duration_ms INTEGER,  -- Trade execution duration in milliseconds
     time_to_block_ms INTEGER,  -- Time to blocktime in milliseconds
     run_id TEXT NOT NULL,  -- Bot run identifier (timestamp + git hash)
+    block_time INTEGER,  -- Original on-chain block time in Unix epoch (nullable)
     PRIMARY KEY (mint, timestamp)
 );
 

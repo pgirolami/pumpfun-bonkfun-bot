@@ -213,6 +213,7 @@ class TradeConverter:
             trade_result.trade_duration_ms,
             trade_result.time_to_block_ms,
             run_id,
+            trade_result.block_time,
         )
 
     @staticmethod
@@ -232,7 +233,7 @@ class TradeConverter:
             platform=Platform(row[4]),
             tx_signature=row[6],
             error_message=row[7],
-            block_time=row[1],  # timestamp
+            block_time=(row[18] if len(row) > 18 else row[1]),
             token_swap_amount_raw=row[8],
             net_sol_swap_amount_raw=row[9],
             transaction_fee_raw=row[10],

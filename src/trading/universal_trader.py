@@ -422,8 +422,7 @@ class UniversalTrader:
         while not self._stop_event.is_set():
             try:
                 await asyncio.sleep(60)  # Check every minute
-                if not self._stop_event.is_set():
-                    await self._log_wallet_balance()
+                await self._log_wallet_balance()
             except asyncio.CancelledError:
                 logger.debug("Balance monitoring task cancelled")
                 break
