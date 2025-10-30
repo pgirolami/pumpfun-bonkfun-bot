@@ -263,8 +263,8 @@ class DatabaseManager:
                 INSERT INTO trades 
                 (mint, timestamp, position_id, success, platform, trade_type,
                  tx_signature, error_message, token_swap_amount_raw, net_sol_swap_amount_raw,
-                 transaction_fee_raw, platform_fee_raw, tip_fee_raw, price_decimal, net_price_decimal, trade_duration_ms, run_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 transaction_fee_raw, platform_fee_raw, tip_fee_raw, price_decimal, net_price_decimal, trade_duration_ms, time_to_block_ms, run_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )

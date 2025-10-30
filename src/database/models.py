@@ -211,6 +211,7 @@ class TradeConverter:
             trade_result.price_sol_decimal(),
             trade_result.net_price_sol_decimal(),
             trade_result.trade_duration_ms,
+            trade_result.time_to_block_ms,
             run_id,
         )
 
@@ -238,6 +239,7 @@ class TradeConverter:
             platform_fee_raw=row[11],
             tip_fee_raw=row[12],
             trade_duration_ms=row[15],  # trade_duration_ms
+            time_to_block_ms=row[16],
         )
 
 

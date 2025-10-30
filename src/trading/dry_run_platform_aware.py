@@ -60,7 +60,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 logger.exception(f"[{str(order.token_info.mint)[:8]}] Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
                 await asyncio.sleep(self.PROPAGATION_SLEEP_TIME)
 
-        order.block_ts=int(time() * 1000)
+        order.block_ts=int(time())
 
         # Check if actual SOL cost exceeds slippage tolerance
         if -net_sol_swapped_raw > order.max_sol_amount_raw:
@@ -150,7 +150,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         # Simulate network latency
         logger.info(f"Simulating sell transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
-        order.block_ts=int(time() * 1000)
+        order.block_ts=int(time())
         
         net_sol_swap_raw = await self.curve_manager.calculate_sell_amount_out(
             mint=order.token_info.mint,

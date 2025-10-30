@@ -10,7 +10,7 @@ private_key: "${SOLANA_PRIVATE_KEY}"
 rpc:
   rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
   wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
-  send_method: "helius_sender"  # Options: "solana" (standard RPC) or "helius_sender" (Helius Sender)
+  send_method: "solana"  # Options: "solana" (standard RPC) or "helius_sender" (Helius Sender)
   # Helius Sender configuration (only used when send_method: "helius_sender")
   helius_sender:
     routing: "swqos_only"  # Options: "swqos_only" (default, requires 0.000005 SOL tip) or "dual" (requires 0.001 SOL tip)

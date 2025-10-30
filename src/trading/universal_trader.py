@@ -703,7 +703,7 @@ class UniversalTrader:
                 f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} ({str(token_info.mint)})on {token_info.platform.value}..."
             )
             buy_result = await self.buyer.execute(token_info)
-            logger.debug(
+            logger.info(
                 f"[{self._mint_prefix(token_info.mint)}] Buy result is {buy_result}"
             )
 
@@ -1092,7 +1092,7 @@ class UniversalTrader:
 
                     # Execute sell
                     sell_result = await self.seller.execute(token_info, position)
-                    logger.debug(
+                    logger.info(
                         f"[{self._mint_prefix(token_info.mint)}] Sell result: {sell_result}"
                     )
 

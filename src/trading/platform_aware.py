@@ -155,11 +155,11 @@ class PlatformAwareBuyer(Trader):
                 balance_changes = await self._analyze_balance_changes(order)
                 logger.info(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
-                logger.warning(f"[{str(order.token_info.mint)[:8]}] Failed to analyze transaction balances")
-                logger.exception(e)
+                logger.exception(f"[{str(order.token_info.mint)[:8]}] Failed to analyze transaction balances")
 
             # Calculate trade duration
             trade_duration_ms = int((time.time() - trade_start_time) * 1000)
+            time_to_block_ms = int((confirm_result.block_ts - trade_start_time) * 1000) if confirm_result.block_ts else None
 
             result = TradeResult(
                 success=confirm_result.success,
@@ -172,6 +172,7 @@ class PlatformAwareBuyer(Trader):
                 platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
                 tip_fee_raw=balance_changes.tip_fee_raw if balance_changes else None,
                 trade_duration_ms=trade_duration_ms,
+                time_to_block_ms=time_to_block_ms,
                 sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
             )
             if not confirm_result.success:
@@ -351,10 +352,11 @@ class PlatformAwareSeller(Trader):
                 balance_changes = await self._analyze_balance_changes(order)
                 logger.info(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
-                logger.warning(f"Failed to analyze transaction balances: {e}")
+                logger.exception(f"[{str(order.token_info.mint)[:8]}] Failed to analyze transaction balances")
 
             # Calculate trade duration
             trade_duration_ms = int((time.time() - trade_start_time) * 1000)
+            time_to_block_ms = int((confirm_result.block_ts - trade_start_time) * 1000) if confirm_result.block_ts else None
 
             result = TradeResult(
                 success=confirm_result.success,
@@ -368,6 +370,7 @@ class PlatformAwareSeller(Trader):
                 platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
                 tip_fee_raw=balance_changes.tip_fee_raw if balance_changes else None,
                 trade_duration_ms=trade_duration_ms,
+                time_to_block_ms=time_to_block_ms,
             )
             if not confirm_result.success:
                 result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"

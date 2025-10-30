@@ -33,6 +33,7 @@ class TradeResult:
     platform_fee_raw: int | None = None  # Platform fee in lamports (includes creator + platform fees)
     tip_fee_raw: int | None = None  # Tip fee in lamports (Helius Sender)
     trade_duration_ms: int | None = None  # Trade execution duration in milliseconds
+    time_to_block_ms: int | None = None  # Time to blocktime in milliseconds
 
     def token_swap_amount_decimal(self) -> float | None:
         """Get token amount in decimal form.
@@ -124,36 +125,39 @@ class TradeResult:
         
         if self.token_swap_amount_raw is not None:
             token_decimal = self.token_swap_amount_decimal()
-            result += f", token_swap_amount_raw={self.token_swap_amount_raw} ({token_decimal:.6f} tokens)" if token_decimal is not None else f", token_swap_amount_raw={self.token_swap_amount_raw}"
+            result += f", token_swap_amount_raw={self.token_swap_amount_raw} ({token_decimal} tokens)" if token_decimal is not None else f", token_swap_amount_raw={self.token_swap_amount_raw}"
         
         if self.sol_swap_amount_raw is not None:
             sol_decimal = self.sol_swap_amount_raw / LAMPORTS_PER_SOL
-            result += f", sol_swap_amount_raw={self.sol_swap_amount_raw} ({sol_decimal:.6f} SOL)"
+            result += f", sol_swap_amount_raw={self.sol_swap_amount_raw} ({sol_decimal} SOL)"
 
         if self.sol_swap_amount_raw is not None:
             sol_decimal = self.net_sol_swap_amount_raw / LAMPORTS_PER_SOL
-            result += f", net_sol_swap_amount_raw={self.net_sol_swap_amount_raw} ({sol_decimal:.6f} SOL)"
+            result += f", net_sol_swap_amount_raw={self.net_sol_swap_amount_raw} ({sol_decimal} SOL)"
 
         if self.transaction_fee_raw is not None:
             fee_decimal = self.transaction_fee_raw / LAMPORTS_PER_SOL
-            result += f", transaction_fee_raw={self.transaction_fee_raw} ({fee_decimal:.6f} SOL)"
+            result += f", transaction_fee_raw={self.transaction_fee_raw} ({fee_decimal} SOL)"
         
         if self.platform_fee_raw is not None:
             platform_fee_decimal = self.platform_fee_raw / LAMPORTS_PER_SOL
-            result += f", platform_fee_raw={self.platform_fee_raw} ({platform_fee_decimal:.6f} SOL)"
+            result += f", platform_fee_raw={self.platform_fee_raw} ({platform_fee_decimal} SOL)"
 
         if self.tip_fee_raw is not None:
             tip_fee_decimal = self.tip_fee_raw / LAMPORTS_PER_SOL
-            result += f", tip_fee_raw={self.tip_fee_raw} ({tip_fee_decimal:.6f} SOL)"
+            result += f", tip_fee_raw={self.tip_fee_raw} ({tip_fee_decimal} SOL)"
         
         price_decimal = self.price_sol_decimal()
         if price_decimal is not None:
-            result += f", price_decimal={price_decimal:.8f} SOL"
+            result += f", price_decimal={price_decimal} SOL"
         
         net_price_sol_decimal = self.net_price_sol_decimal()
         if net_price_sol_decimal is not None:
-            result += f", net_price_sol_decimal={net_price_sol_decimal:.8f} SOL"
-        
+            result += f", net_price_sol_decimal={net_price_sol_decimal} SOL"
+
+        if self.time_to_block_ms is not None:
+            result += f", time_to_block_ms={self.time_to_block_ms} SOL"
+
         result += ")"
         return result
 
