@@ -708,7 +708,7 @@ class UniversalTrader:
             )
 
             # Create position immediately after buy (regardless of success/failure)
-            entry_ts = buy_result.block_time or int(time() * 1000)
+            entry_ts = (buy_result.block_time or int(time())) * 1000
             if buy_result.success:
                 # Successful buy - create active position
                 position = Position.create_from_buy_result(
@@ -1097,6 +1097,8 @@ class UniversalTrader:
                     )
 
                     if sell_result.success:
+                        exit_ts = (sell_result.block_time or int(time())) * 1000
+                        position.exit_ts = exit_ts
                         # Close position with actual exit price
                         position.close_position(sell_result, exit_reason)
 
@@ -1143,10 +1145,11 @@ class UniversalTrader:
                             )
                     else:
                         logger.error(
-                            f"[{self._mint_prefix(token_info.mint)}] Failed to exit position: {sell_result.error_message}"
+                            f"[{self._mint_prefix(token_info.mint)}] Failed to exit position & stopping monitoring: {sell_result.error_message}"
                         )
-                        # Keep monitoring in case sell can be retried
-                        # Do not break; continue monitoring loop for another attempt
+                        #should continue but need to handle the case where we have a 429 or a bug in our code 
+                        # and we did really sell but we don't know it so further sell attempts fail because no tokens are let
+                        break 
 
                     if sell_result.success:
                         # Exit monitoring loop after successful sell

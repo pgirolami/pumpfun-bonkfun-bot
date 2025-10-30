@@ -2,15 +2,15 @@
 # Carefully review and adjust values to match your trading strategy and risk tolerance.
 
 # Bot identification and connection settings
-name: "bot-in-dev"
+name: "bot-in-dev-helius"
 env_file: ".env"
-private_key: "${SOLANA_PRIVATE_KEY}"
+private_key: "${SOLANA_PRIVATE_KEY_DAP}"
 
 # RPC configuration
 rpc:
-  rpc_endpoint: "${HELIUS_RPC_ENDPOINT}"
-  wss_endpoint: "${HELIUS_WSS_ENDPOINT}"
-  send_method: "solana"  # Options: "solana" (standard RPC) or "helius_sender" (Helius Sender)
+  rpc_endpoint: "${SOLANA_NODE_RPC_ENDPOINT}"
+  wss_endpoint: "${SOLANA_NODE_WSS_ENDPOINT}"
+  send_method: "helius_sender"  # Options: "solana" (standard RPC) or "helius_sender" (Helius Sender)
   # Helius Sender configuration (only used when send_method: "helius_sender")
   helius_sender:
     routing: "swqos_only"  # Options: "swqos_only" (default, requires 0.000005 SOL tip) or "dual" (requires 0.001 SOL tip)

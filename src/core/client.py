@@ -570,7 +570,7 @@ class SolanaClient:
             if tx and tx.value:
                 # Extract block time if available
                 if hasattr(tx.value, 'block_time') and tx.value.block_time:
-                    block_time = int(tx.value.block_time * 1000)  # Convert to milliseconds
+                    block_time = int(tx.value.block_time)
                 
                 # Extract detailed error messages if transaction failed
                 if resp.value[0].err and tx.value.transaction and tx.value.transaction.meta:

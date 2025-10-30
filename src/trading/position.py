@@ -373,7 +373,6 @@ class Position:
         self.is_active = False
         self.exit_net_price_decimal = sell_result.net_price_sol_decimal()
         self.exit_reason = exit_reason
-        self.exit_ts = int(time() * 1000)  # Unix epoch milliseconds
         
         # Update swap amounts from the final sell
         if sell_result.token_swap_amount_raw:

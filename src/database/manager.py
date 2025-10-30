@@ -185,9 +185,8 @@ class DatabaseManager:
                     position.tip_fee_raw or 0,
                     position.realized_pnl_sol_decimal,
                     position.realized_net_pnl_sol_decimal,
-                    position.total_net_sol_swapin_amount_raw
-                    or 0,  # Direct value, not accumulation
-                    int(__import__("time").time() * 1000),  # Current timestamp
+                    position.total_net_sol_swapin_amount_raw or 0,  # Direct value, not accumulation
+                    position.entry_ts,
                     position_id,
                 ),
             )
