@@ -7,6 +7,7 @@ from typing import Any
 from solders.pubkey import Pubkey
 from solders.solders import EncodedConfirmedTransactionWithStatusMeta
 
+from core.client import HELIUS_TIP_ACCOUNTS
 from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from interfaces.core import BalanceAnalyzer, BalanceChangeResult, TokenInfo
 from platforms.letsbonk.address_provider import LetsBonkAddressProvider
@@ -134,6 +135,18 @@ class LetsBonkBalanceAnalyzer(BalanceAnalyzer):
             
             token_swap_amount_raw = user_token_post_balance - user_token_pre_balance
             logger.info(f"User token account balance change: {user_token_pre_balance} -> {user_token_post_balance} = {token_swap_amount_raw} raw units")
+        
+        # Detect tip transfers to Helius tip accounts
+        tip_fee_raw = 0
+        tip_accounts_set = set(HELIUS_TIP_ACCOUNTS)
+        for i, account_key in enumerate(tx.transaction.transaction.message.account_keys):
+            if account_key.pubkey in tip_accounts_set:
+                if i < len(pre_balances) and i < len(post_balances):
+                    tip_balance_change = int(post_balances[i]) - int(pre_balances[i])
+                    if tip_balance_change > 0:
+                        tip_fee_raw += tip_balance_change
+                    else:
+                        logger.warning(f"Tip balance change is negative: {tip_balance_change} for account {account_key.pubkey} in transaction {str(tx.transaction.transaction.signature)}")
                     
         # Determine transaction type for logging
         tx_type = "buy" if sol_amount_raw < 0 else "sell"
@@ -144,6 +157,7 @@ class LetsBonkBalanceAnalyzer(BalanceAnalyzer):
             f"base_vault_change={base_vault_change/LAMPORTS_PER_SOL:.6f} SOL, "
             f"quote_vault_change={quote_vault_change/LAMPORTS_PER_SOL:.6f} SOL, "
             f"platform_fee={platform_fee_raw/LAMPORTS_PER_SOL:.6f} SOL, "
+            f"tip_fee={tip_fee_raw/LAMPORTS_PER_SOL:.6f} SOL, "
             f"rent_exemption={rent_exemption_amount_raw/LAMPORTS_PER_SOL:.6f} SOL, "
             f"token_swap_amount={token_swap_amount_raw/TOKEN_DECIMALS:.6f} tokens"
         )
@@ -154,5 +168,6 @@ class LetsBonkBalanceAnalyzer(BalanceAnalyzer):
             net_sol_swap_amount_raw=quote_vault_change,
             platform_fee_raw=platform_fee_raw,
             transaction_fee_raw=transaction_fee,
+            tip_fee_raw=tip_fee_raw,
             token_swap_amount_raw=token_swap_amount_raw,  # Positive for buys, negative for sells
         )

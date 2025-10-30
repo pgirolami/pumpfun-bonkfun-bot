@@ -4,6 +4,7 @@ Pump.fun balance analyzer for transaction breakdown.
 
 from solders.pubkey import Pubkey
 
+from core.client import HELIUS_TIP_ACCOUNTS
 from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from interfaces.core import BalanceAnalyzer, BalanceChangeResult, TokenInfo
 from solders.solders import EncodedConfirmedTransactionWithStatusMeta
@@ -134,8 +135,18 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
             token_swap_amount_raw = user_token_post_balance - user_token_pre_balance
         
         total_platform_fee_raw = protocol_fee_raw + creator_fee_raw
-                
-        net_sol_swap_amount_raw = sol_amount_raw + total_platform_fee_raw + transaction_fee - rent_exemption_amount_raw
+        
+        # Detect tip transfers to Helius tip accounts
+        tip_fee_raw = 0
+        tip_accounts_set = set(HELIUS_TIP_ACCOUNTS)
+        for i, account_key in enumerate(tx.transaction.transaction.message.account_keys):
+            if account_key.pubkey in tip_accounts_set:
+                if i < len(pre_balances) and i < len(post_balances):
+                    tip_balance_change = int(post_balances[i]) - int(pre_balances[i])
+                    if tip_balance_change > 0:
+                        tip_fee_raw += tip_balance_change
+        
+        net_sol_swap_amount_raw = sol_amount_raw + total_platform_fee_raw + transaction_fee + tip_fee_raw - rent_exemption_amount_raw
         
         return BalanceChangeResult(
             token_swap_amount_raw=token_swap_amount_raw,  # Positive for buys, negative for sells
@@ -143,5 +154,6 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
             rent_exemption_amount_raw=rent_exemption_amount_raw, #positive for buys
             platform_fee_raw=total_platform_fee_raw,
             transaction_fee_raw=transaction_fee,
+            tip_fee_raw=tip_fee_raw,
             sol_amount_raw=sol_amount_raw,
         )

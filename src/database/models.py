@@ -113,6 +113,7 @@ class PositionConverter:
             position.exit_ts,
             position.transaction_fee_raw or 0,
             position.platform_fee_raw or 0,
+            position.tip_fee_raw or 0,
             position.realized_pnl_sol_decimal,
             position.realized_net_pnl_sol_decimal,
             position.buy_amount,
@@ -156,11 +157,12 @@ class PositionConverter:
             exit_ts=row[15],
             transaction_fee_raw=row[16],
             platform_fee_raw=row[17],
-            realized_pnl_sol_decimal=row[18],
-            realized_net_pnl_sol_decimal=row[19],
-            buy_amount=row[20],
-            total_net_sol_swapout_amount_raw=row[21],
-            total_net_sol_swapin_amount_raw=row[22],
+            tip_fee_raw=row[18],
+            realized_pnl_sol_decimal=row[19],
+            realized_net_pnl_sol_decimal=row[20],
+            buy_amount=row[21],
+            total_net_sol_swapout_amount_raw=row[22],
+            total_net_sol_swapin_amount_raw=row[23],
             min_gain_percentage=min_gain_percentage,  # Set from current configuration
             min_gain_time_window=min_gain_time_window,  # Set from current configuration
             monitoring_start_ts=None,  # Will be set when monitoring starts
@@ -205,6 +207,7 @@ class TradeConverter:
             trade_result.net_sol_swap_amount_raw,
             trade_result.transaction_fee_raw,
             trade_result.platform_fee_raw,
+            trade_result.tip_fee_raw,
             trade_result.price_sol_decimal(),
             trade_result.net_price_sol_decimal(),
             trade_result.trade_duration_ms,
@@ -222,9 +225,6 @@ class TradeConverter:
             TradeResult instance
         """
         # Calculate raw SOL amount from stored net value
-        net_sol_amount_raw = row[9]  # net_sol_swap_amount_raw from database
-        transaction_fee_raw = row[10] or 0
-        platform_fee_raw = row[11] or 0
 
         return TradeResult(
             success=bool(row[3]),
@@ -233,10 +233,11 @@ class TradeConverter:
             error_message=row[7],
             block_time=row[1],  # timestamp
             token_swap_amount_raw=row[8],
-            net_sol_swap_amount_raw=net_sol_amount_raw,
+            net_sol_swap_amount_raw=row[9],
             transaction_fee_raw=row[10],
             platform_fee_raw=row[11],
-            trade_duration_ms=row[14],  # trade_duration_ms
+            tip_fee_raw=row[12],
+            trade_duration_ms=row[15],  # trade_duration_ms
         )
 
 

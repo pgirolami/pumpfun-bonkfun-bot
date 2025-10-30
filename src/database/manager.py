@@ -131,10 +131,10 @@ class DatabaseManager:
                 INSERT INTO positions 
                 (id, mint, platform, entry_net_price_decimal, token_decimals, total_token_swapin_amount_raw,
                  total_token_swapout_amount_raw, entry_ts, exit_strategy, highest_price, max_no_price_change_time, last_price_change_ts, is_active,
-                 exit_reason, exit_net_price_decimal, exit_ts, transaction_fee_raw, platform_fee_raw,
+                 exit_reason, exit_net_price_decimal, exit_ts, transaction_fee_raw, platform_fee_raw, tip_fee_raw,
                  realized_pnl_sol_decimal, realized_net_pnl_sol_decimal, buy_amount, total_net_sol_swapout_amount_raw, total_net_sol_swapin_amount_raw,
                  created_ts, updated_ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )
@@ -164,6 +164,7 @@ class DatabaseManager:
                     exit_ts = ?,
                     transaction_fee_raw = ?,
                     platform_fee_raw = ?,
+                    tip_fee_raw = ?,
                     realized_pnl_sol_decimal = ?,
                     realized_net_pnl_sol_decimal = ?,
                     total_net_sol_swapin_amount_raw = ?,
@@ -181,6 +182,7 @@ class DatabaseManager:
                     position.exit_ts,
                     position.transaction_fee_raw or 0,
                     position.platform_fee_raw or 0,
+                    position.tip_fee_raw or 0,
                     position.realized_pnl_sol_decimal,
                     position.realized_net_pnl_sol_decimal,
                     position.total_net_sol_swapin_amount_raw
@@ -261,8 +263,8 @@ class DatabaseManager:
                 INSERT INTO trades 
                 (mint, timestamp, position_id, success, platform, trade_type,
                  tx_signature, error_message, token_swap_amount_raw, net_sol_swap_amount_raw,
-                 transaction_fee_raw, platform_fee_raw, price_decimal, net_price_decimal, trade_duration_ms, run_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 transaction_fee_raw, platform_fee_raw, tip_fee_raw, price_decimal, net_price_decimal, trade_duration_ms, run_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )

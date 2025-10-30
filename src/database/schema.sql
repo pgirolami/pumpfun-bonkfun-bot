@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS positions (
     exit_ts INTEGER,  -- Unix epoch milliseconds
     transaction_fee_raw INTEGER,  -- Accumulated fees
     platform_fee_raw INTEGER,  -- Accumulated fees
+    tip_fee_raw INTEGER,  -- Accumulated Helius tip fees
     realized_pnl_sol_decimal REAL,  -- From get_net_pnl()["realized_pnl_sol_decimal"]
     realized_net_pnl_sol_decimal REAL,  -- From get_net_pnl()["realized_net_pnl_sol_decimal"]
     buy_amount REAL,  -- Intended SOL amount to invest
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS trades (
     net_sol_swap_amount_raw INTEGER,
     transaction_fee_raw INTEGER,
     platform_fee_raw INTEGER,
+    tip_fee_raw INTEGER,
     price_decimal REAL,  -- calculated from trade result
     net_price_decimal REAL,  -- calculated net price
     trade_duration_ms INTEGER,  -- Trade execution duration in milliseconds

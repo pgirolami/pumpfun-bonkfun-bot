@@ -32,6 +32,7 @@ class BalanceChangeResult:
     transaction_fee_raw: int = (
         0  # Base + priority transaction fee in lamports (from meta.fee)
     )
+    tip_fee_raw: int = 0  # Tip fee in lamports (for Helius Sender, always positive)
     rent_exemption_amount_raw: int = (
         0  # Rent exemption amount in lamports for token account creation
     )
@@ -55,12 +56,14 @@ class BalanceChangeResult:
         token_swap_amount_decimal = self.token_swap_amount_raw / (10**TOKEN_DECIMALS)
 
         net_price_decimal = abs(self.net_sol_swap_amount_raw / self.token_swap_amount_raw) * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+        tip_fee_decimal = self.tip_fee_raw / LAMPORTS_PER_SOL
 
         return (
             f"BalanceChangeResult("
             f"token_swap_amount={self.token_swap_amount_raw} raw units ({token_swap_amount_decimal:.6f} tokens), "
             f"net_sol_swap_amount ={self.net_sol_swap_amount_raw} lamports ({net_sol_swap_amount_decimal:.6f} SOL), "
             f"transaction_fee={self.transaction_fee_raw} lamports ({transaction_fee_decimal:.6f} SOL), "
+            f"tip_fee={self.tip_fee_raw} lamports ({tip_fee_decimal:.6f} SOL), "
             f"platform_fee={self.platform_fee_raw} lamports ({platform_fee_decimal:.6f} SOL), "
             f"rent_exemption_amount={self.rent_exemption_amount_raw} lamports ({rent_exemption_decimal:.6f} SOL) "
             f"=> sol_amount={self.sol_amount_raw} lamports ({sol_amount_decimal:.6f} SOL) "

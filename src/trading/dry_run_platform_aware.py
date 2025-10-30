@@ -110,6 +110,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         # Still charge transaction fees even on slippage failure
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
         order.platform_fee_raw = -int(net_sol_swapped_raw * platform_fee_percentage)
+        
         # minus the fees because sol_amount_raw is negative
         order.sol_amount_raw = 0 if is_slippage_failure else net_sol_swapped_raw-(order.platform_fee_raw+order.transaction_fee_raw)
 
@@ -118,6 +119,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             net_sol_swap_amount_raw=net_sol_swapped_raw,
             platform_fee_raw=0 if is_slippage_failure else order.platform_fee_raw,
             transaction_fee_raw=order.transaction_fee_raw,
+            tip_fee_raw=self.client._tip_amount_lamports if self.client._tip_amount_lamports else 0,
             rent_exemption_amount_raw=0,
             unattributed_sol_amount_raw=0,
             sol_amount_raw=order.sol_amount_raw,
@@ -200,6 +202,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
             net_sol_swap_amount_raw=net_sol_swap_amount_raw,
             platform_fee_raw=order.platform_fee_raw,
             transaction_fee_raw=order.transaction_fee_raw,
+            tip_fee_raw=self.client._tip_amount_lamports if self.client._tip_amount_lamports else 0,
             rent_exemption_amount_raw=0,
             unattributed_sol_amount_raw=0,
             sol_amount_raw=net_sol_swap_amount_raw+order.platform_fee_raw+order.transaction_fee_raw,

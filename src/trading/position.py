@@ -81,6 +81,7 @@ class Position:
     # Fees (lamports) - accumulated
     transaction_fee_raw: int | None = None  # Replaces buy_fee_raw and sell_fee_raw
     platform_fee_raw: int | None = None  # New field
+    tip_fee_raw: int | None = None
     
     # PnL tracking
     realized_pnl_sol_decimal: float | None = None  # From get_net_pnl()["realized_pnl_sol_decimal"]
@@ -117,6 +118,7 @@ class Position:
         entry_ts: int,
         transaction_fee_raw: int | None,
         platform_fee_raw: int | None,
+        tip_fee_raw: int | None,
         exit_strategy: str,
         buy_amount: float,
         total_net_sol_swapout_amount_raw: int | None,
@@ -180,6 +182,7 @@ class Position:
             max_no_price_change_time=max_no_price_change_time,
             transaction_fee_raw=transaction_fee_raw,
             platform_fee_raw=platform_fee_raw,
+            tip_fee_raw=tip_fee_raw,
             trailing_stop_percentage=trailing_stop_percentage,
             highest_price=entry_net_price_decimal,
             last_price_change_ts=time(),  # Initialize with current time
@@ -386,6 +389,7 @@ class Position:
         # Accumulate fees
         self.transaction_fee_raw = (self.transaction_fee_raw or 0) + (sell_result.transaction_fee_raw or 0)
         self.platform_fee_raw = (self.platform_fee_raw or 0) + (sell_result.platform_fee_raw or 0)
+        self.tip_fee_raw = (self.tip_fee_raw or 0) + (sell_result.tip_fee_raw or 0)
             
         # Calculate realized PnL using get_net_pnl method
         pnl_dict = self._get_pnl()  # No parameter needed since position is now inactive
@@ -408,7 +412,8 @@ class Position:
         if self.exit_reason == ExitReason.FAILED_BUY:
             transaction_fee_raw = int(self.transaction_fee_raw or 0)
             platform_fee_raw = int(self.platform_fee_raw or 0)
-            total_fees_raw = transaction_fee_raw + platform_fee_raw
+            tip_fee_raw = int(self.tip_fee_raw or 0)
+            total_fees_raw = transaction_fee_raw + platform_fee_raw + tip_fee_raw
             total_fees_sol = float(total_fees_raw) / LAMPORTS_PER_SOL
             
             return {
@@ -420,6 +425,7 @@ class Position:
                 "quantity": 0.0,
                 "transaction_fee_raw": transaction_fee_raw,
                 "platform_fee_raw": platform_fee_raw,
+                "tip_fee_raw": tip_fee_raw,
                 "total_fees_raw": total_fees_raw,
             }
 
@@ -438,7 +444,8 @@ class Position:
 
         transaction_fee_raw = int(self.transaction_fee_raw or 0)
         platform_fee_raw = int(self.platform_fee_raw or 0)
-        total_fees_raw = transaction_fee_raw + platform_fee_raw
+        tip_fee_raw = int(self.tip_fee_raw or 0)
+        total_fees_raw = transaction_fee_raw + platform_fee_raw + tip_fee_raw
 
         # Calculate net PnL (consolidated from _calculate_realized_pnl)
         net_pnl_sol = (net_price_change_decimal * self.token_quantity_decimal)
@@ -455,6 +462,7 @@ class Position:
                 "quantity": self.token_quantity_decimal,
                 "transaction_fee_raw": transaction_fee_raw,
                 "platform_fee_raw": platform_fee_raw,
+                "tip_fee_raw": tip_fee_raw,
                 "total_fees_raw": total_fees_raw,
                 "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
             }
@@ -469,6 +477,7 @@ class Position:
                 "quantity": self.token_quantity_decimal,
                 "transaction_fee_raw": transaction_fee_raw,
                 "platform_fee_raw": platform_fee_raw,
+                "tip_fee_raw": tip_fee_raw,
                 "total_fees_raw": total_fees_raw,
                 "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
             }

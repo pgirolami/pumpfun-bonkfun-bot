@@ -14,8 +14,9 @@ from interfaces.core import Platform
 # Existing validation rules (keeping all existing ones)
 REQUIRED_FIELDS = [
     "name",
-    "rpc_endpoint",
-    "wss_endpoint",
+    "rpc.rpc_endpoint",
+    "rpc.wss_endpoint",
+    "rpc.send_method",
     "private_key",
     "trade.buy_amount",
     "trade.buy_slippage",
@@ -84,6 +85,7 @@ VALID_VALUES = {
     "trade.exit_strategy": ["time_based", "tp_sl", "manual", "trailing"],
     "platform": ["pump_fun", "lets_bonk"],
     "testing.dry_run": [True, False],
+    "rpc.send_method": ["solana", "helius_sender"],
 }
 
 # Platform-specific listener compatibility
@@ -191,6 +193,26 @@ def validate_config(config: dict) -> None:
             raise ValueError(
                 "Cannot enable both dynamic and fixed priority fees simultaneously"
             )
+    except ValueError as e:
+        if "Missing required config key" not in str(e):
+            raise
+
+    # Validate Helius Sender configuration if enabled
+    try:
+        send_method = get_nested_value(config, "rpc.send_method")
+        if send_method == "helius_sender":
+            helius_sender_config = config.get("rpc", {}).get("helius_sender", {})
+            routing = helius_sender_config.get("routing", "swqos_only")
+            if routing not in ["dual", "swqos_only"]:
+                raise ValueError(
+                    f"rpc.helius_sender.routing must be one of: ['dual', 'swqos_only'], got: {routing}"
+                )
+            tip_amount_sol = helius_sender_config.get("tip_amount_sol")
+            if tip_amount_sol is not None:
+                if not isinstance(tip_amount_sol, (int, float)) or tip_amount_sol < 0:
+                    raise ValueError(
+                        "rpc.helius_sender.tip_amount_sol must be a non-negative number"
+                    )
     except ValueError as e:
         if "Missing required config key" not in str(e):
             raise

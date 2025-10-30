@@ -93,9 +93,8 @@ async def start_bot(config_path: str):
     # Initialize universal trader with platform-specific configuration
     try:
         trader = UniversalTrader(
-            # Connection settings
-            rpc_endpoint=cfg["rpc_endpoint"],
-            wss_endpoint=cfg["wss_endpoint"],
+            # Connection settings - pass entire rpc config section
+            rpc_config=cfg["rpc"],
             wallet=wallet,
             # Platform configuration - pass platform enum directly
             platform=platform,

@@ -31,6 +31,7 @@ class TradeResult:
     net_sol_swap_amount_raw: int | None = None
     transaction_fee_raw: int | None = None  # Base + priority transaction fee in lamports (from meta.fee)
     platform_fee_raw: int | None = None  # Platform fee in lamports (includes creator + platform fees)
+    tip_fee_raw: int | None = None  # Tip fee in lamports (Helius Sender)
     trade_duration_ms: int | None = None  # Trade execution duration in milliseconds
 
     def token_swap_amount_decimal(self) -> float | None:
@@ -100,6 +101,7 @@ class TradeResult:
             "token_swap_amount_raw": self.token_swap_amount_raw,
             "sol_swap_amount_raw": self.sol_swap_amount_raw,
             "platform_fee_raw": self.platform_fee_raw,
+            "tip_fee_raw": self.tip_fee_raw,
             # Computed values
             "token_swap_amount_decimal": self.token_swap_amount_decimal(),
             "net_sol_swap_amount_raw": self.net_sol_swap_amount_raw,
@@ -139,6 +141,10 @@ class TradeResult:
         if self.platform_fee_raw is not None:
             platform_fee_decimal = self.platform_fee_raw / LAMPORTS_PER_SOL
             result += f", platform_fee_raw={self.platform_fee_raw} ({platform_fee_decimal:.6f} SOL)"
+
+        if self.tip_fee_raw is not None:
+            tip_fee_decimal = self.tip_fee_raw / LAMPORTS_PER_SOL
+            result += f", tip_fee_raw={self.tip_fee_raw} ({tip_fee_decimal:.6f} SOL)"
         
         price_decimal = self.price_sol_decimal()
         if price_decimal is not None:

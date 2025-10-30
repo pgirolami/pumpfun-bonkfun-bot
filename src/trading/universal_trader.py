@@ -35,8 +35,7 @@ class UniversalTrader:
 
     def __init__(
         self,
-        rpc_endpoint: str,
-        wss_endpoint: str,
+        rpc_config: dict,
         wallet: Wallet,
         buy_amount: float,
         buy_slippage: float,
@@ -106,7 +105,7 @@ class UniversalTrader:
     ):
         """Initialize the universal trader."""
         # Core components
-        self.solana_client = SolanaClient(rpc_endpoint, blockhash_update_interval)
+        self.solana_client = SolanaClient(rpc_config, blockhash_update_interval)
         self.wallet = wallet
         self.priority_fee_manager = PriorityFeeManager(
             client=self.solana_client,
@@ -168,7 +167,7 @@ class UniversalTrader:
             logger.info(f"Creating token listener for trade tracking (type: {listener_type})")
             self.token_listener = ListenerFactory.create_listener(
                 listener_type=listener_type,
-                wss_endpoint=wss_endpoint,
+                wss_endpoint=rpc_config["wss_endpoint"],
                 geyser_endpoint=geyser_endpoint,
                 geyser_api_token=geyser_api_token,
                 geyser_auth_type=geyser_auth_type,
@@ -182,6 +181,9 @@ class UniversalTrader:
         else:
             self.token_listener = None
             logger.info("Trade tracking disabled, no token listener created")
+
+        # Store RPC endpoints for listener creation
+        self.wss_endpoint = rpc_config["wss_endpoint"]
 
         # Get platform-specific implementations (after token_listener is created)
         self.platform_implementations = get_platform_implementations(
@@ -718,6 +720,7 @@ class UniversalTrader:
                     entry_ts=entry_ts,
                     transaction_fee_raw=buy_result.transaction_fee_raw,
                     platform_fee_raw=buy_result.platform_fee_raw,
+                    tip_fee_raw=buy_result.tip_fee_raw,
                     exit_strategy=self.exit_strategy,
                     buy_amount=self.buy_amount,
                     total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw,  # Raw value (negative for buys)
@@ -746,6 +749,7 @@ class UniversalTrader:
                     exit_reason=ExitReason.FAILED_BUY,
                     transaction_fee_raw=buy_result.transaction_fee_raw,  # Still incurred fees
                     platform_fee_raw=buy_result.platform_fee_raw,  # Still incurred fees
+                    tip_fee_raw=buy_result.tip_fee_raw,  # Still incurred fees
                     buy_amount=self.buy_amount,  # Still intended to buy this amount
                     total_net_sol_swapout_amount_raw=0,  # No SOL spent
                     total_net_sol_swapin_amount_raw=0,  # No SOL received

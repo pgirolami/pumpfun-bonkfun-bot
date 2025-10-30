@@ -3,8 +3,10 @@ Solana client abstraction for blockchain operations.
 """
 
 import asyncio
+import base64
 import json
 import logging
+import random
 from typing import Any
 
 import aiohttp
@@ -20,6 +22,7 @@ from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.solders import EncodedConfirmedTransactionWithStatusMeta, Signature
+from solders.system_program import TransferParams, transfer
 from solders.transaction import Transaction
 
 from utils.logger import get_logger
@@ -33,18 +36,90 @@ from tenacity import (
 
 logger = get_logger(__name__)
 
+# Helius tip account addresses
+HELIUS_TIP_ACCOUNTS = [
+    Pubkey.from_string("4ACfpUFoaSD9bfPdeu6DBt89gB6ENTeHBXCAi87NhDEE"),
+    Pubkey.from_string("D2L6yPZ2FmmmTKPgzaMKdhu6EWZcTpLy1Vhx8uvZe7NZ"),
+    Pubkey.from_string("9bnz4RShgq1hAnLnZbP8kbgBg1kEmcJBYQq3gQbmnSta"),
+    Pubkey.from_string("5VY91ws6B2hMmBFRsXkoAAdsPHBJwRfBht4DXox3xkwn"),
+    Pubkey.from_string("2nyhqdwKcJZR2vcqCyrYsaPVdAnFoJjiksCXJ7hfEYgD"),
+    Pubkey.from_string("2q5pghRs6arqVjRvT5gfgWfWcHWmw1ZuCzphgd5KfWGJ"),
+    Pubkey.from_string("wyvPkWjVZz1M8fHQnMMCDTQDbkManefNNhweYk5WkcF"),
+    Pubkey.from_string("3KCKozbAaF75qEU33jtzozcJ29yJuaLJTy2jFdzUY8bT"),
+    Pubkey.from_string("4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey"),
+    Pubkey.from_string("4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or"),
+]
+
 
 class SolanaClient:
     """Abstraction for Solana RPC client operations."""
 
-    def __init__(self, rpc_endpoint: str, blockhash_update_interval: float = 10.0):
-        """Initialize Solana client with RPC endpoint.
+    def __init__(self, rpc_config: dict, blockhash_update_interval: float = 10.0):
+        """Initialize Solana client with RPC configuration.
 
         Args:
-            rpc_endpoint: URL of the Solana RPC endpoint
+            rpc_config: Dictionary containing:
+                - rpc_endpoint: URL of the Solana RPC endpoint
+                - wss_endpoint: URL of the WebSocket endpoint
+                - send_method: Either "solana" (standard RPC) or "helius_sender"
+                - helius_sender (optional): Configuration dict with:
+                    - routing: "dual" or "swqos_only"
+                    - tip_amount_sol: Tip amount in SOL (defaults based on routing)
+                    - endpoint (optional): Override endpoint (defaults to London)
             blockhash_update_interval: Interval in seconds to update cached blockhash
         """
-        self.rpc_endpoint = rpc_endpoint
+        self.rpc_endpoint = rpc_config["rpc_endpoint"]
+        self.wss_endpoint = rpc_config["wss_endpoint"]
+        self.send_method = rpc_config.get("send_method", "solana")
+        self._helius_sender_config = rpc_config.get("helius_sender")
+        
+        # Initialize Helius Sender attributes (always initialized, even if not used)
+        self._helius_session: aiohttp.ClientSession | None = None
+        self._helius_ping_task: asyncio.Task | None = None
+        
+        # Setup Helius Sender if enabled
+        if self.send_method == "helius_sender":
+            if not self._helius_sender_config:
+                self._helius_sender_config = {}
+            routing = self._helius_sender_config.get("routing", "swqos_only")
+            # Use HTTPS endpoint as per Helius documentation
+            base_endpoint = self._helius_sender_config.get(
+                "endpoint", "http://lon-sender.helius-rpc.com/fast"
+            )
+            # Append routing query parameter if swqos_only
+            if routing == "swqos_only":
+                # Add swqos_only parameter if not already present
+                if "swqos_only" not in base_endpoint:
+                    separator = "&" if "?" in base_endpoint else "?"
+                    self._helius_endpoint = f"{base_endpoint}{separator}swqos_only=true"
+                else:
+                    self._helius_endpoint = base_endpoint
+            else:
+                self._helius_endpoint = base_endpoint
+            # Construct ping endpoint URL from main endpoint (remove query params for ping)
+            ping_base = self._helius_endpoint.split("?")[0]
+            if "/fast" in ping_base:
+                self._helius_ping_endpoint = ping_base.replace("/fast", "/ping")
+            else:
+                # Fallback: append /ping if /fast not found
+                ping_base = ping_base.rstrip("/")
+                self._helius_ping_endpoint = f"{ping_base}/ping"
+            # Default tip amounts based on routing
+            if routing == "dual":
+                self._tip_amount_lamports = int(
+                    self._helius_sender_config.get("tip_amount_sol", 0.001)
+                    * 1_000_000_000
+                )
+            else:  # swqos_only (default)
+                self._tip_amount_lamports = int(
+                    self._helius_sender_config.get("tip_amount_sol", 0.000005)
+                    * 1_000_000_000
+                )
+            logger.info(
+                f"Helius Sender enabled: endpoint={self._helius_endpoint}, "
+                f"routing={routing}, tip={self._tip_amount_lamports / 1_000_000_000} SOL"
+            )
+        
         self._client = None
         self._cached_blockhash: Hash | None = None
         self._blockhash_lock = asyncio.Lock()
@@ -52,6 +127,14 @@ class SolanaClient:
         self._blockhash_updater_task = asyncio.create_task(
             self.start_blockhash_updater()
         )
+        
+        # Start Helius Sender connection warming if enabled
+        if self.send_method == "helius_sender":
+            self._helius_session = aiohttp.ClientSession()
+            self._helius_ping_task = asyncio.create_task(
+                self._start_helius_ping_loop()
+            )
+            logger.info("Helius Sender connection warming started")
 
     async def start_blockhash_updater(self, interval: float | None = None):
         """Start background task to update recent blockhash."""
@@ -94,7 +177,22 @@ class SolanaClient:
         return self._client
 
     async def close(self):
-        """Close the client connection and stop the blockhash updater."""
+        """Close the client connection and stop background tasks."""
+        # Stop Helius Sender ping task
+        if self._helius_ping_task:
+            self._helius_ping_task.cancel()
+            try:
+                await self._helius_ping_task
+            except asyncio.CancelledError:
+                pass
+            self._helius_ping_task = None
+        
+        # Close Helius Sender HTTP session
+        if self._helius_session:
+            await self._helius_session.close()
+            self._helius_session = None
+        
+        # Stop blockhash updater
         if self._blockhash_updater_task:
             self._blockhash_updater_task.cancel()
             try:
@@ -205,9 +303,8 @@ class SolanaClient:
         )
 
         # Add compute budget instructions if applicable
+        fee_instructions = []
         if priority_fee is not None or compute_unit_limit is not None:
-            fee_instructions = []
-
             # Set compute unit limit (use provided value or default to 85,000)
             cu_limit = compute_unit_limit if compute_unit_limit is not None else 85_000
             fee_instructions.append(set_compute_unit_limit(cu_limit))
@@ -216,32 +313,206 @@ class SolanaClient:
             if priority_fee is not None:
                 fee_instructions.append(set_compute_unit_price(priority_fee))
 
-            instructions = fee_instructions + instructions
-
-        recent_blockhash = await self.get_cached_blockhash()
-        message = Message(instructions, signer_keypair.pubkey())
-        transaction = Transaction([signer_keypair], message, recent_blockhash)
-
-        for attempt in range(max_retries):
-            try:
-                tx_opts = TxOpts(
-                    skip_preflight=skip_preflight, preflight_commitment=Processed
-                )
-                response = await client.send_transaction(transaction, tx_opts)
-                return response.value
-
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    logger.exception(
-                        f"Failed to send transaction after {max_retries} attempts"
+        # If Helius Sender is enabled, add tip instruction and send via Sender
+        if self.send_method == "helius_sender":
+            tip_instruction = self._add_tip_instruction(
+                signer_keypair.pubkey(), self._tip_amount_lamports
+            )
+            # CRITICAL: Order is compute budget → tip → user instructions
+            instructions = fee_instructions + [tip_instruction] + instructions
+            recent_blockhash = await self.get_cached_blockhash()
+            message = Message(instructions, signer_keypair.pubkey())
+            transaction = Transaction([signer_keypair], message, recent_blockhash)
+            
+            for attempt in range(max_retries):
+                try:
+                    return await self._send_via_helius_sender(transaction)
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.exception(
+                            f"Failed to send transaction via Helius Sender after {max_retries} attempts"
+                        )
+                        raise
+                    wait_time = 2**attempt
+                    logger.warning(
+                        f"Transaction attempt {attempt + 1} failed: {e!s}, retrying in {wait_time}s"
                     )
-                    raise
+                    await asyncio.sleep(wait_time)
+        else:
+            # Standard flow: just prepend fee instructions
+            instructions = fee_instructions + instructions
+            recent_blockhash = await self.get_cached_blockhash()
+            message = Message(instructions, signer_keypair.pubkey())
+            transaction = Transaction([signer_keypair], message, recent_blockhash)
 
-                wait_time = 2**attempt
-                logger.warning(
-                    f"Transaction attempt {attempt + 1} failed: {e!s}, retrying in {wait_time}s"
-                )
-                await asyncio.sleep(wait_time)
+            for attempt in range(max_retries):
+                try:
+                    tx_opts = TxOpts(
+                        skip_preflight=skip_preflight, preflight_commitment=Processed
+                    )
+                    response = await client.send_transaction(transaction, tx_opts)
+                    return response.value
+
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.exception(
+                            f"Failed to send transaction after {max_retries} attempts"
+                        )
+                        raise
+
+                    wait_time = 2**attempt
+                    logger.warning(
+                        f"Transaction attempt {attempt + 1} failed: {e!s}, retrying in {wait_time}s"
+                    )
+                    await asyncio.sleep(wait_time)
+
+    def _add_tip_instruction(
+        self, from_pubkey: Pubkey, tip_amount_lamports: int
+    ) -> Instruction:
+        """Create a tip transfer instruction to a random Helius tip account.
+
+        Args:
+            from_pubkey: Public key of the wallet sending the tip
+            tip_amount_lamports: Tip amount in lamports
+
+        Returns:
+            Instruction for SOL transfer to tip account
+        """
+        tip_account = random.choice(HELIUS_TIP_ACCOUNTS)
+        return transfer(
+            TransferParams(
+                from_pubkey=from_pubkey, to_pubkey=tip_account, lamports=tip_amount_lamports
+            )
+        )
+
+    async def _send_via_helius_sender(self, transaction: Transaction) -> Signature:
+        """Send transaction via Helius Sender endpoint.
+
+        Args:
+            transaction: Signed transaction to send
+
+        Returns:
+            Transaction signature
+
+        Raises:
+            Exception: If the transaction fails to send
+        """
+        # Serialize transaction to base64
+        serialized = bytes(transaction)
+        base64_tx = base64.b64encode(serialized).decode("utf-8")
+
+        # Prepare JSON-RPC 2.0 request
+        request_body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendTransaction",
+            "params": [
+                base64_tx,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 0,
+                },
+            ],
+        }
+
+        # Use persistent session for connection warming
+        if not self._helius_session:
+            self._helius_session = aiohttp.ClientSession()
+        
+        try:
+            async with self._helius_session.post(
+                self._helius_endpoint,
+                json=request_body,
+                timeout=aiohttp.ClientTimeout(10),
+            ) as response:
+                # Try to get response body even on error for better debugging
+                try:
+                    result = await response.json()
+                except Exception:
+                    # If JSON parsing fails, get text response
+                    text_result = await response.text()
+                    logger.error(
+                        f"Helius Sender HTTP {response.status} error. Response: {text_result[:500]}"
+                    )
+                    response.raise_for_status()  # Will raise HTTPException
+                
+                # Check for HTTP errors
+                if response.status != 200:
+                    error_detail = result.get("error", {}) if isinstance(result, dict) else str(result)
+                    logger.error(
+                        f"Helius Sender HTTP {response.status} error. Response: {error_detail}"
+                    )
+                    response.raise_for_status()
+                
+                # Check for JSON-RPC errors
+                if "error" in result:
+                    error_msg = result["error"].get("message", "Unknown error")
+                    error_code = result["error"].get("code", "N/A")
+                    raise Exception(
+                        f"Helius Sender JSON-RPC error (code {error_code}): {error_msg}"
+                    )
+
+                if "result" not in result:
+                    raise Exception(f"Helius Sender response missing result: {result}")
+
+                signature_str = result["result"]
+                logger.info(f"Transaction sent via Helius Sender: {signature_str}")
+                return Signature.from_string(signature_str)
+        except aiohttp.ClientResponseError as e:
+            # Include more context about the HTTP error
+            logger.error(
+                f"Helius Sender HTTP error {e.status}: {e.message}. "
+                f"URL: {self._helius_endpoint}"
+            )
+            raise Exception(f"Helius Sender HTTP {e.status}: {e.message}")
+        except aiohttp.ClientError as e:
+            logger.error(f"Helius Sender client error: {e!s}")
+            raise Exception(f"Helius Sender connection error: {e!s}")
+
+    async def _ping_helius_sender(self) -> bool:
+        """Send a ping to the Helius Sender endpoint to keep connection warm.
+
+        Returns:
+            True if ping succeeded, False otherwise
+        """
+        if not self._helius_session:
+            return False
+        
+        try:
+            async with self._helius_session.get(
+                self._helius_ping_endpoint,
+                timeout=aiohttp.ClientTimeout(5),
+            ) as response:
+                response.raise_for_status()
+                logger.debug(f"Helius Sender ping successful: {response.status}")
+                return True
+        except Exception as e:
+            logger.debug(f"Helius Sender ping failed: {e!s}")
+            return False
+
+    async def _start_helius_ping_loop(self, interval: float = 45.0) -> None:
+        """Start background ping loop to maintain warm connections.
+
+        Args:
+            interval: Seconds between pings (default 45s, within 30-60s range)
+        """
+        logger.info(f"Starting Helius Sender ping loop with {interval}s interval")
+        
+        # Initial ping to warm connection immediately
+        await self._ping_helius_sender()
+        
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await self._ping_helius_sender()
+            except asyncio.CancelledError:
+                logger.debug("Helius Sender ping loop cancelled")
+                break
+            except Exception as e:
+                logger.warning(f"Error in Helius Sender ping loop: {e!s}")
+                # Continue pinging even on error
+                await asyncio.sleep(5)
 
 
     @dataclass
