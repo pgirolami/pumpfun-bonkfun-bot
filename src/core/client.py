@@ -54,6 +54,8 @@ HELIUS_TIP_ACCOUNTS = [
 class SolanaClient:
     """Abstraction for Solana RPC client operations."""
 
+    tip_amount_lamports = int(0.000005*1_000_000_000)
+
     def __init__(self, rpc_config: dict, blockhash_update_interval: float = 10.0):
         """Initialize Solana client with RPC configuration.
 
@@ -106,18 +108,18 @@ class SolanaClient:
                 self._helius_ping_endpoint = f"{ping_base}/ping"
             # Default tip amounts based on routing
             if routing == "dual":
-                self._tip_amount_lamports = int(
+                self.tip_amount_lamports = int(
                     self._helius_sender_config.get("tip_amount_sol", 0.001)
                     * 1_000_000_000
                 )
             else:  # swqos_only (default)
-                self._tip_amount_lamports = int(
+                self.tip_amount_lamports = int(
                     self._helius_sender_config.get("tip_amount_sol", 0.000005)
                     * 1_000_000_000
                 )
             logger.info(
                 f"Helius Sender enabled: endpoint={self._helius_endpoint}, "
-                f"routing={routing}, tip={self._tip_amount_lamports / 1_000_000_000} SOL"
+                f"routing={routing}, tip={self.tip_amount_lamports / 1_000_000_000} SOL"
             )
         
         self._client = None
@@ -316,7 +318,7 @@ class SolanaClient:
         # If Helius Sender is enabled, add tip instruction and send via Sender
         if self.send_method == "helius_sender":
             tip_instruction = self._add_tip_instruction(
-                signer_keypair.pubkey(), self._tip_amount_lamports
+                signer_keypair.pubkey(), self.tip_amount_lamports
             )
             # CRITICAL: Order is compute budget → tip → user instructions
             instructions = fee_instructions + [tip_instruction] + instructions

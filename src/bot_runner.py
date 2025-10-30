@@ -304,8 +304,13 @@ async def run_all_bots():
                 )
                 await start_bot(str(file))
 
+            await asyncio.sleep(5)
+            logging.info(
+                f"Sleeping 5 seconds to not run into 429s"
+            )
+
         except Exception as e:
-            logging.exception(f"Failed to start bot from {file}: {e}")
+            logging.error(f"Failed to start bot from {file}: {e}")
             skipped_bots += 1
 
     logging.info(
