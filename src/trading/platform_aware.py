@@ -89,7 +89,7 @@ class PlatformAwareBuyer(Trader):
         order.priority_fee = await self.priority_fee_manager.calculate_priority_fee(priority_accounts)
         order.account_data_size_limit = self._get_cu_override(
              "account_data_size", token_info.platform
-        ),
+        )
 
         return order
 
@@ -291,7 +291,7 @@ class PlatformAwareSeller(Trader):
         order.priority_fee = await self.priority_fee_manager.calculate_priority_fee(priority_accounts)
         order.account_data_size_limit = self._get_cu_override(
              "account_data_size", token_info.platform
-        ),
+        )
 
         return order
 
@@ -383,101 +383,8 @@ class PlatformAwareSeller(Trader):
             if not confirm_result.success:
                 result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
 
-<<<<<<< HEAD
             # logger.info(f"Sell trade completed in {trade_duration_ms}ms")
             return result
-=======
-            # Get user's token account and balance
-            user_token_account = address_provider.derive_user_token_account(
-                self.wallet.pubkey, token_info.mint
-            )
-
-            token_balance = await self.client.get_token_account_balance(
-                user_token_account
-            )
-            token_balance_decimal = token_balance / 10**TOKEN_DECIMALS
-
-            logger.info(f"Token balance: {token_balance_decimal}")
-
-            if token_balance == 0:
-                logger.info("No tokens to sell.")
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message="No tokens to sell",
-                )
-
-            # Get pool address and current price using platform-agnostic method
-            pool_address = self._get_pool_address(token_info, address_provider)
-            token_price_sol = await curve_manager.calculate_price(pool_address)
-
-            logger.info(f"Price per Token: {token_price_sol:.8f} SOL")
-
-            # Calculate expected SOL output
-            expected_sol_output = token_balance_decimal * token_price_sol
-
-            # Calculate minimum SOL output with slippage protection
-            min_sol_output = int(
-                (expected_sol_output * (1 - self.slippage)) * LAMPORTS_PER_SOL
-            )
-
-            logger.info(
-                f"Selling {token_balance_decimal} tokens on {token_info.platform.value}"
-            )
-            logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
-            logger.info(
-                f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {min_sol_output / LAMPORTS_PER_SOL:.8f} SOL"
-            )
-
-            # Build sell instructions using platform-specific builder
-            instructions = await instruction_builder.build_sell_instruction(
-                token_info,
-                self.wallet.pubkey,
-                token_balance,  # amount_in (tokens)
-                min_sol_output,  # minimum_amount_out (SOL)
-                address_provider,
-            )
-
-            # Get accounts for priority fee calculation
-            priority_accounts = instruction_builder.get_required_accounts_for_sell(
-                token_info, self.wallet.pubkey, address_provider
-            )
-
-            # Send transaction
-            tx_signature = await self.client.build_and_send_transaction(
-                instructions,
-                self.wallet.keypair,
-                skip_preflight=True,
-                max_retries=self.max_retries,
-                priority_fee=await self.priority_fee_manager.calculate_priority_fee(
-                    priority_accounts
-                ),
-                compute_unit_limit=instruction_builder.get_sell_compute_unit_limit(
-                    self._get_cu_override("sell", token_info.platform)
-                ),
-                account_data_size_limit=self._get_cu_override(
-                    "account_data_size", token_info.platform
-                ),
-            )
-
-            success = await self.client.confirm_transaction(tx_signature)
-
-            if success:
-                logger.info(f"Sell transaction confirmed: {tx_signature}")
-                return TradeResult(
-                    success=True,
-                    platform=token_info.platform,
-                    tx_signature=tx_signature,
-                    amount=token_balance_decimal,
-                    price=token_price_sol,
-                )
-            else:
-                return TradeResult(
-                    success=False,
-                    platform=token_info.platform,
-                    error_message=f"Transaction failed to confirm: {tx_signature}",
-                )
->>>>>>> upstream/main
 
         except Exception as e:
             trade_duration_ms = int((time.time() - trade_start_time) * 1000)
