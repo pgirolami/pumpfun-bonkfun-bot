@@ -340,21 +340,21 @@ class UniversalTrader:
             # Store initial balance on first log
             if self._initial_wallet_balance_sol is None:
                 self._initial_wallet_balance_sol = balance_sol
-                logger.info(f"Initial wallet balance: {balance_sol:.6f} SOL")
+                logger.info(f"Initial wallet balance: {balance_sol} SOL")
             
             # Calculate increase
             increase_sol = balance_sol - self._initial_wallet_balance_sol
             increase_percentage = (increase_sol / self._initial_wallet_balance_sol) * 100 if self._initial_wallet_balance_sol > 0 else 0
             
             # Format increase display
-            increase_text = f" | Increase: {increase_sol:+.6f} SOL ({increase_percentage:+.2f}%)"
+            increase_text = f" | Increase: {increase_sol} SOL ({increase_percentage:+.2f}%)"
             
             # Check circuit breaker
             self._check_circuit_breaker(balance_sol)
             
             logger.info(
                 f"Wallet {self.wallet.pubkey} balance: "
-                f"{balance_sol:.6f} SOL ({balance_lamports:,} lamports){increase_text}"
+                f"{balance_sol} SOL ({balance_lamports:,} lamports){increase_text}"
             )
             
             # Store in database if available
