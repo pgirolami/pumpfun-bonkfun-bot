@@ -88,7 +88,7 @@ class PlatformAwareBuyer(Trader):
         )
         order.priority_fee = await self.priority_fee_manager.calculate_priority_fee(priority_accounts)
         order.account_data_size_limit = self._get_cu_override(
-             "account_data_size", token_info.platform
+             "account_data_size_buy", token_info.platform
         )
 
         return order
@@ -290,7 +290,7 @@ class PlatformAwareSeller(Trader):
         )
         order.priority_fee = await self.priority_fee_manager.calculate_priority_fee(priority_accounts)
         order.account_data_size_limit = self._get_cu_override(
-             "account_data_size", token_info.platform
+             "account_data_size_sell", token_info.platform
         )
 
         return order

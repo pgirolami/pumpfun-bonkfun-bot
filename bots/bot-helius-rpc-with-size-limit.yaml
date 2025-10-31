@@ -3,7 +3,7 @@
 
 # Bot identification and connection settings
 env_file: ".env"
-private_key: "${SOLANA_PRIVATE_KEY}"
+private_key: "${SOLANA_PRIVATE_KEY_DAP}"
 
 # RPC configuration
 rpc:
@@ -91,6 +91,8 @@ compute_units:
   # Override default CU limits for this platform
   # buy: 100_000    # Buy operations (ATA creation + trading)
   # sell: 60_000    # Sell operations (just trading)
+  account_data_size_buy: 512_000 # 512KB limit
+  account_data_size_sell: 512_000 # 512KB limit
 
 # Filters for token selection
 filters:
