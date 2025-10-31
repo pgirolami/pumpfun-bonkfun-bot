@@ -9,7 +9,7 @@ import struct
 
 from solders.instruction import AccountMeta, Instruction
 from solders.pubkey import Pubkey
-from spl.token.instructions import create_idempotent_associated_token_account
+from spl.token.instructions import CloseAccountParams, close_account, create_idempotent_associated_token_account
 
 from core.pubkeys import TOKEN_DECIMALS, SystemAddresses
 from interfaces.core import AddressProvider, InstructionBuilder, Platform, TokenInfo
@@ -256,6 +256,16 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             accounts=sell_accounts,
         )
         instructions.append(sell_instruction)
+
+        close_ix = close_account(
+            CloseAccountParams(
+                account=accounts_info["user_token_account"],
+                dest=user,
+                owner=user,
+                program_id=SystemAddresses.TOKEN_PROGRAM,
+            )
+        )
+        instructions.append(close_ix)
 
         return instructions
 

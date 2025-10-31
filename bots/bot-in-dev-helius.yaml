@@ -17,7 +17,7 @@ rpc:
     tip_amount_sol: 0.000005  # Tip amount in SOL (defaults: 0.000005 for swqos_only, 0.001 for dual)
     endpoint: "http://lon-sender.helius-rpc.com/fast"  # Optional override (defaults to London HTTPS endpoint)
 
-enabled: true # You can turn off the bot w/o removing its config
+enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"

@@ -1132,16 +1132,6 @@ class UniversalTrader:
                         final_pnl = position._get_pnl()
                         logger.info(f"[{self._mint_prefix(token_info.mint)}] Final net PnL: {final_pnl}")
 
-                        # Always cleanup ATA after sell
-                        if not self.dry_run:
-                            await cleanup_after_sell(
-                                self.solana_client,
-                                self.wallet,
-                                token_info.mint,
-                                self.priority_fee_manager,
-                                self.cleanup_with_priority_fee,
-                                self.cleanup_force_close_with_burn,
-                            )
                     else:
                         logger.error(
                             f"[{self._mint_prefix(token_info.mint)}] Failed to exit position & stopping monitoring: {sell_result.error_message}"

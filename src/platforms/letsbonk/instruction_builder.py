@@ -315,8 +315,12 @@ class LetsBonkInstructionBuilder(InstructionBuilder):
         )
         instructions.append(sell_instruction)
 
-        # 4. Close WSOL account to reclaim SOL
+        # 4. Close WSOL account to reclaim SOL  ---> ❌❌❌❌❌❌❌❌ MARCHERA PAS AVEC DES ACHATS EN PARALLEL !!!!!!!!!!!!!!!!
         close_wsol_ix = self._create_close_account_instruction(wsol_account, user, user)
+        instructions.append(close_wsol_ix)
+
+        # 4. Close WSOL account to reclaim SOL
+        close_token_account_ix = self._create_close_account_instruction(accounts_info["user_base_token"], user, user)
         instructions.append(close_wsol_ix)
 
         return instructions

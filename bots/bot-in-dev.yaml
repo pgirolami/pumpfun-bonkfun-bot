@@ -100,7 +100,7 @@ filters:
   listener_type: "pumpportal" # Method for detecting new tokens: "logs", "blocks", "geyser", or "pumpportal"
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
-  max_buys: 20 # Maximum number of buys (null = unlimited)
+  max_buys: 1 # Maximum number of buys (null = unlimited)
   min_initial_buy_sol: 0.98 # Minimum initial SOL buy amount to consider a token (in SOL)
 
 # Retry and timeout settings
