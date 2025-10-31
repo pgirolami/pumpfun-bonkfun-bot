@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import random
+import struct
 from typing import Any
 
 import aiohttp
@@ -49,6 +50,35 @@ HELIUS_TIP_ACCOUNTS = [
     Pubkey.from_string("4vieeGHPYPG2MmyPRcYjdiDmmhN3ww7hsFNap8pVN3Ey"),
     Pubkey.from_string("4TQLFNWK8AovT1gFvda5jfw2oJeRMKEmw7aH6MGBJ3or"),
 ]
+
+
+def set_loaded_accounts_data_size_limit(bytes_limit: int) -> Instruction:
+    """
+    Create SetLoadedAccountsDataSizeLimit instruction to reduce CU consumption.
+
+    By default, Solana transactions can load up to 64MB of account data,
+    costing 16k CU (8 CU per 32KB). Setting a lower limit reduces CU
+    consumption and improves transaction priority.
+
+    NOTE: CU savings are NOT visible in "consumed CU" metrics, which only
+    show execution CU. The 16k CU loaded accounts overhead is counted
+    separately for transaction priority/cost calculation.
+
+    Args:
+        bytes_limit: Max account data size in bytes (e.g., 512_000 = 512KB)
+
+    Returns:
+        Compute Budget instruction with discriminator 4
+
+    Reference:
+        https://www.anza.xyz/blog/cu-optimization-with-setloadedaccountsdatasizelimit
+    """
+    COMPUTE_BUDGET_PROGRAM = Pubkey.from_string(
+        "ComputeBudget111111111111111111111111111111"
+    )
+
+    data = struct.pack("<BI", 4, bytes_limit)
+    return Instruction(COMPUTE_BUDGET_PROGRAM, data, [])
 
 
 class SolanaClient:
@@ -283,6 +313,7 @@ class SolanaClient:
         max_retries: int = 3,
         priority_fee: int | None = None,
         compute_unit_limit: int | None = None,
+        account_data_size_limit: int | None = None,
     ) -> Signature:
         """
         Send a transaction with optional priority fee and compute unit limit.
@@ -294,6 +325,8 @@ class SolanaClient:
             max_retries: Maximum number of retry attempts.
             priority_fee: Optional priority fee in microlamports.
             compute_unit_limit: Optional compute unit limit. Defaults to 85,000 if not provided.
+            account_data_size_limit: Optional account data size limit in bytes (e.g., 512_000).
+                                    Reduces CU cost from 16k to ~128 CU. Must be first instruction.
 
         Returns:
             Transaction signature.
@@ -305,8 +338,19 @@ class SolanaClient:
         )
 
         # Add compute budget instructions if applicable
-        fee_instructions = []
-        if priority_fee is not None or compute_unit_limit is not None:
+        if (
+            priority_fee is not None
+            or compute_unit_limit is not None
+            or account_data_size_limit is not None
+        ):
+            fee_instructions = []
+
+            if account_data_size_limit is not None:
+                fee_instructions.append(
+                    set_loaded_accounts_data_size_limit(account_data_size_limit)
+                )
+                logger.info(f"Account data size limit: {account_data_size_limit} bytes")
+
             # Set compute unit limit (use provided value or default to 85,000)
             cu_limit = compute_unit_limit if compute_unit_limit is not None else 85_000
             fee_instructions.append(set_compute_unit_limit(cu_limit))
