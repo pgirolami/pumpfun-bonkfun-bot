@@ -18,6 +18,7 @@ class Order(ABC):
     # Transaction parameters (calculated)
     priority_fee: int | None = None
     compute_unit_limit: int | None = None
+    account_data_size_limit: int | None = None
     
     # Transaction execution (populated after send)
     tx_signature: str | None = None
