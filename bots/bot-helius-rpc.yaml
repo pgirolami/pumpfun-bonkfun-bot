@@ -2,7 +2,6 @@
 # Carefully review and adjust values to match your trading strategy and risk tolerance.
 
 # Bot identification and connection settings
-name: "bot-helius-rpc"
 env_file: ".env"
 private_key: "${SOLANA_PRIVATE_KEY}"
 

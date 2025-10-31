@@ -13,7 +13,6 @@ from interfaces.core import Platform
 
 # Existing validation rules (keeping all existing ones)
 REQUIRED_FIELDS = [
-    "name",
     "rpc.rpc_endpoint",
     "rpc.wss_endpoint",
     "rpc.send_method",
@@ -100,6 +99,8 @@ def load_bot_config(path: str) -> dict:
     config_path = Path(path)
     with config_path.open() as f:
         config = yaml.safe_load(f)
+
+    config["name"] = config_path.stem
 
     env_file = config.get("env_file")
     if env_file:

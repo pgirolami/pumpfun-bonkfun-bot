@@ -39,7 +39,7 @@ async def start_bot(config_path: str):
     testing = cfg.get("testing", {})
     mode = "dryrun" if testing.get("dry_run", False) else "live"
 
-    setup_logging(cfg["name"],mode)
+    setup_logging(cfg.get("name", "unknown"), mode)
     print_config_summary(cfg)
 
     # Get and validate platform from configuration
@@ -81,7 +81,8 @@ async def start_bot(config_path: str):
         wallet_pubkey_short = str(wallet.pubkey)[:8]
                 
         # Create database path
-        db_path = f"data/{cfg['name']}_{wallet_pubkey_short}_{mode}.db"
+        bot_name = cfg.get("name", "unknown")
+        db_path = f"data/{bot_name}_{wallet_pubkey_short}_{mode}.db"
         database_manager = DatabaseManager(db_path)
         
         logging.info(f"Database initialized: {db_path}")
