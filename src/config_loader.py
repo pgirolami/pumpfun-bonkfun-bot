@@ -218,6 +218,51 @@ def validate_config(config: dict) -> None:
         if "Missing required config key" not in str(e):
             raise
 
+    # Validate market quality configuration if enabled
+    try:
+        market_quality = config.get("trade", {}).get("market_quality")
+        if market_quality and market_quality.get("enabled", False):
+            lookback_minutes = market_quality.get("lookback_minutes")
+            exploration_probability = market_quality.get("exploration_probability")
+            min_trades_for_analysis = market_quality.get("min_trades_for_analysis")
+
+            if lookback_minutes is None:
+                raise ValueError(
+                    "trade.market_quality.lookback_minutes is required when enabled"
+                )
+            if exploration_probability is None:
+                raise ValueError(
+                    "trade.market_quality.exploration_probability is required when enabled"
+                )
+            if min_trades_for_analysis is None:
+                raise ValueError(
+                    "trade.market_quality.min_trades_for_analysis is required when enabled"
+                )
+
+            if not isinstance(lookback_minutes, int) or lookback_minutes <= 0:
+                raise ValueError(
+                    "trade.market_quality.lookback_minutes must be a positive integer"
+                )
+
+            if (
+                not isinstance(exploration_probability, (int, float))
+                or not (0 <= exploration_probability <= 1)
+            ):
+                raise ValueError(
+                    "trade.market_quality.exploration_probability must be between 0 and 1"
+                )
+
+            if (
+                not isinstance(min_trades_for_analysis, int)
+                or min_trades_for_analysis < 0
+            ):
+                raise ValueError(
+                    "trade.market_quality.min_trades_for_analysis must be a non-negative integer"
+                )
+    except ValueError as e:
+        if "Missing required config key" not in str(e):
+            raise
+
     # Platform-specific validation
     platform_str = config.get("platform", "pump_fun")
     try:

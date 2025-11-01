@@ -102,6 +102,8 @@ class UniversalTrader:
         # Trade tracking configuration
         enable_trade_tracking: bool = False,
         trade_staleness_threshold: float = 30.0,
+        # Market quality configuration
+        market_quality_config: dict | None = None,
     ):
         """Initialize the universal trader."""
         # Core components
@@ -181,6 +183,40 @@ class UniversalTrader:
         else:
             self.token_listener = None
             logger.info("Trade tracking disabled, no token listener created")
+
+        # Market quality configuration
+        if market_quality_config and market_quality_config.get("enabled", False):
+            from trading.market_quality import MarketQualityController
+
+            lookback_minutes = market_quality_config.get("lookback_minutes")
+            exploration_probability = market_quality_config.get("exploration_probability")
+            min_trades_for_analysis = market_quality_config.get("min_trades_for_analysis")
+
+            if lookback_minutes is None:
+                raise ValueError("market_quality.lookback_minutes is required when enabled")
+            if exploration_probability is None:
+                raise ValueError(
+                    "market_quality.exploration_probability is required when enabled"
+                )
+            if min_trades_for_analysis is None:
+                raise ValueError(
+                    "market_quality.min_trades_for_analysis is required when enabled"
+                )
+
+            self.market_quality_controller = MarketQualityController(
+                database_manager=database_manager,
+                lookback_minutes=lookback_minutes,
+                exploration_probability=exploration_probability,
+                min_trades_for_analysis=min_trades_for_analysis,
+            )
+            logger.info(
+                f"Market quality controller enabled "
+                f"(lookback: {lookback_minutes} min, exploration: {exploration_probability:.2%}, "
+                f"min_trades: {min_trades_for_analysis})"
+            )
+        else:
+            self.market_quality_controller = None
+            logger.info("Market quality controller disabled")
 
         # Store RPC endpoints for listener creation
         self.wss_endpoint = rpc_config["wss_endpoint"]
@@ -680,6 +716,17 @@ class UniversalTrader:
                 )
                 await asyncio.sleep(self.wait_time_after_creation)
 
+            # Check market quality buy decision (synchronous, uses cached score)
+            if self.market_quality_controller:
+                should_buy = self.market_quality_controller.should_buy()
+                if not should_buy:
+                    quality_score = self.market_quality_controller.get_cached_quality_score()
+                    logger.info(
+                        f"[{self._mint_prefix(token_info.mint)}] Skipping buy - "
+                        f"market quality insufficient (score: {quality_score:.2f})"
+                    )
+                    return
+
             # Subscribe to trade tracking if enabled (before buying)
             if self.enable_trade_tracking:
                 # Validate that we have virtual reserves for trade tracking
@@ -885,6 +932,13 @@ class UniversalTrader:
                 logger.exception(
                     f"[{self._mint_prefix(token_info.mint)}] Failed to persist failed buy trade to database: {e}"
                 )
+
+        # Update market quality score asynchronously (event-driven)
+        # Position is already marked as inactive with FAILED_BUY exit reason
+        if self.market_quality_controller:
+            asyncio.create_task(
+                self.market_quality_controller.update_quality_score(self.run_id)
+            )
 
         # No ATA cleanup needed - buy is atomic, no ATA created
 
@@ -1131,6 +1185,14 @@ class UniversalTrader:
                         # Log final PnL
                         final_pnl = position._get_pnl()
                         logger.info(f"[{self._mint_prefix(token_info.mint)}] Final net PnL: {final_pnl}")
+
+                        # Update market quality score asynchronously (event-driven)
+                        if self.market_quality_controller:
+                            asyncio.create_task(
+                                self.market_quality_controller.update_quality_score(
+                                    self.run_id
+                                )
+                            )
 
                     else:
                         logger.error(

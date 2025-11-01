@@ -240,6 +240,45 @@ class DatabaseManager:
 
             return [PositionConverter.from_row(tuple(row), min_gain_percentage, min_gain_time_window) for row in rows]
 
+    async def get_recent_closed_positions(
+        self, lookback_minutes: int, run_id: str
+    ) -> list[Position]:
+        """Get closed positions within time window for specific run_id.
+
+        Args:
+            lookback_minutes: Time window in minutes to look back
+            run_id: Bot run identifier (mandatory)
+
+        Returns:
+            List of closed positions with entry/exit times and PnL data
+        """
+        from time import time as current_time
+
+        # Calculate cutoff timestamp (milliseconds)
+        current_time_ms = int(current_time() * 1000)
+        cutoff_time_ms = current_time_ms - (lookback_minutes * 60 * 1000)
+
+        async with self.get_connection() as conn:
+            # Join positions with trades to filter by run_id
+            # Get distinct positions that have trades with the specified run_id
+            cursor = conn.execute(
+                """
+                SELECT DISTINCT p.*
+                FROM positions p
+                INNER JOIN trades t ON p.id = t.position_id
+                WHERE p.is_active = 0
+                  AND t.run_id = ?
+                  AND p.exit_ts >= ?
+                ORDER BY p.exit_ts DESC
+                """,
+                (run_id, cutoff_time_ms),
+            )
+            rows = cursor.fetchall()
+
+            return [
+                PositionConverter.from_row(tuple(row)) for row in rows
+            ]
+
     # Trade Operations
     async def insert_trade(
         self,
