@@ -345,7 +345,6 @@ class UniversalTrader:
         # State tracking
         self.token_queue: asyncio.Queue[TokenInfo] = asyncio.Queue[TokenInfo]()
         self.processing: bool = False
-        self.processed_tokens: set[str] = set()
         self.token_timestamps: dict[str, float] = {}
         self._stop_event = asyncio.Event()  # Event to signal stopping
         self._main_stop_event = asyncio.Event()  # Event to signal main loop stopping
@@ -597,9 +596,9 @@ class UniversalTrader:
                 f"Tokens NOT burned - manual recovery possible."
             )
 
-        old_keys = {k for k in self.token_timestamps if k not in self.processed_tokens}
-        for key in old_keys:
-            self.token_timestamps.pop(key, None)
+        # old_keys = {k for k in self.token_timestamps if k not in self.processed_tokens}
+        # for key in old_keys:
+        #     self.token_timestamps.pop(key, None)
 
         await self.solana_client.close()
 
@@ -612,10 +611,6 @@ class UniversalTrader:
             return
             
         token_key = str(token_info.mint)
-
-        if token_key in self.processed_tokens:
-            logger.info(f"Token {token_info.symbol} already processed. Skipping...")
-            return
 
         # Check capacity using active position tasks
         if len(self.position_tasks) >= self.max_active_mints:
@@ -645,14 +640,12 @@ class UniversalTrader:
                 token_age = current_time - self.token_timestamps.get(
                     token_key, current_time
                 )
-
+                self.token_timestamps.pop(token_key, None)
                 if token_age > self.max_token_age:
                     logger.debug(
                         f"[{self._mint_prefix(token_info.mint)}] Skipping - too old ({token_age:.1f}s)"
                     )
                     continue
-
-                self.processed_tokens.add(token_key)
 
                 # Spawn concurrent task
                 task = asyncio.create_task(self._handle_token_wrapper(token_info))
@@ -939,8 +932,6 @@ class UniversalTrader:
             asyncio.create_task(
                 self.market_quality_controller.update_quality_score(self.run_id)
             )
-
-        # No ATA cleanup needed - buy is atomic, no ATA created
 
     async def _handle_tp_sl_exit(
         self, token_info: TokenInfo, position: Position
