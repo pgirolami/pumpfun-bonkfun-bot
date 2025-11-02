@@ -1075,7 +1075,7 @@ class UniversalTrader:
                                     old_tp_price = position.take_profit_price
                                     position.take_profit_price = volatility_adjusted_take_profit_price
                                     logger.info(
-                                        f"[{self._mint_prefix(token_info.mint)}] TP adjusted due to {volatility_level} volatility: "
+                                        f"[{self._mint_prefix(token_info.mint)}] Take profit price adjusted due to {volatility_level} volatility: "
                                         f"{old_tp_price:.10f} -> {volatility_adjusted_take_profit_price:.10f} SOL "
                                         f"(reduction: {((old_tp_price - volatility_adjusted_take_profit_price) / old_tp_price * 100):.1f}%)"
                                     )
