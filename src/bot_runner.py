@@ -357,6 +357,16 @@ def main() -> None:
 
     asyncio.run(run_all_bots())
 
+def debug(sig, frame):
+    import traceback
+    traceback.print_stack(frame)
+    namespace = frame.f_globals.copy()
+    namespace.update(frame.f_locals)
+    code.interact(local=namespace)
 
 if __name__ == "__main__":
+    import code, signal
+
+    signal.signal(signal.SIGUSR1, debug)
+
     main()
