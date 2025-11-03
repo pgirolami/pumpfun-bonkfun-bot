@@ -54,7 +54,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 # Calculate actual price based on order's token amount and actual SOL cost
                 trade_price_sol_per_token = abs((net_sol_swapped_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS)))
                 order.token_price_sol = trade_price_sol_per_token
-                logger.info(f"[{str(order.token_info.mint)[:8]}] Actual Token swapped {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Net SOL swapped {net_sol_swapped_raw} ({net_sol_swapped_raw/1_000_000_000:.10f} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
+                logger.info(f"[{str(order.token_info.mint)[:8]}] Amount of token swapped would be {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Net SOL swapped {net_sol_swapped_raw} ({net_sol_swapped_raw/1_000_000_000:.10f} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
 
             except Exception:
                 logger.exception(f"[{str(order.token_info.mint)[:8]}] Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
@@ -131,6 +131,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 mint=order.token_info.mint,
                 sol_swap_raw=net_sol_swapped_raw,  # negative for buy
                 token_swap_raw=order.token_amount_raw,  # positive for buy
+                timestamp=time(),
             )
         
         return result
@@ -166,7 +167,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         
         trade_price_sol_per_token = abs((net_sol_swap_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS)))
         order.token_price_sol = trade_price_sol_per_token
-        logger.info(f"[{str(order.token_info.mint)[:8]}] Sell transaction simulated: {order.tx_signature} Actual Token swapped {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Net SOL swapped {net_sol_swap_raw} ({net_sol_swap_raw/1_000_000_000:.10f} SOL), trade_price_sol_per_token={trade_price_sol_per_token:.10f} SOL")
+        logger.info(f"[{str(order.token_info.mint)[:8]}] Amount of token swapped would be  {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS:.10f} tokens) Net SOL swapped {net_sol_swap_raw} ({net_sol_swap_raw/1_000_000_000:.10f} SOL), trade_price_sol_per_token={trade_price_sol_per_token:.10f} SOL")
         return order
     
     async def _confirm_transaction(self, order: SellOrder):
@@ -213,6 +214,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
             mint=order.token_info.mint,
             sol_swap_raw=net_sol_swap_amount_raw,  # positive for sell
             token_swap_raw=-order.token_amount_raw,  # negative for sell
+            timestamp=time(),
         )
         
         return result

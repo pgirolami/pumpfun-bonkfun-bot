@@ -385,7 +385,7 @@ class CurveManager(ABC):
         pass
 
     def record_simulated_trade(
-        self, mint: Pubkey, sol_swap_raw: int, token_swap_raw: int
+        self, mint: Pubkey, sol_swap_raw: int, token_swap_raw: int, timestamp: float
     ) -> None:
         """Record a simulated trade for dry-run mode.
 
@@ -395,11 +395,12 @@ class CurveManager(ABC):
             mint: Token mint address
             sol_swap_raw: Signed SOL swap amount in lamports
             token_swap_raw: Signed token swap amount in raw units
+            timestamp: Unix timestamp when the simulated trade occurred (mandatory)
         """
         if self.listener:
             tracker = self.listener.get_trade_tracker_by_mint(str(mint))
             if tracker:
-                tracker.record_simulated_trade(sol_swap_raw, token_swap_raw)
+                tracker.record_simulated_trade(sol_swap_raw, token_swap_raw, timestamp)
 
     @abstractmethod
     async def get_platform_constants(self) -> dict[str, Any]:

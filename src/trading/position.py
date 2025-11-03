@@ -3,6 +3,7 @@ Position management for take profit/stop loss functionality.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING
@@ -185,7 +186,8 @@ class Position:
             tip_fee_raw=tip_fee_raw,
             trailing_stop_percentage=trailing_stop_percentage,
             highest_price=entry_net_price_decimal,
-            last_price_change_ts=time(),  # Initialize with current time
+            #TODO review the following for replays
+            last_price_change_ts=time(),  # Initialize with current time and not block time because they are not in sync enough. 
             min_gain_percentage=min_gain_percentage,
             min_gain_time_window=min_gain_time_window,
             buy_amount=buy_amount,
@@ -287,15 +289,17 @@ class Position:
             self.monitoring_start_ts = timestamp
             logger.debug(f"Position monitoring started at {timestamp} (entry was at {self.entry_ts})")
 
-    def should_exit(self, current_price: float) -> tuple[bool, ExitReason | None]:
+    def should_exit(self, current_price: float, current_time: float) -> tuple[bool, ExitReason | None]:
         """Check if position should be exited based on current conditions.
 
         Args:
             current_price: Current token price
+            current_time: Current time in seconds (Unix timestamp, required)
 
         Returns:
             Tuple of (should_exit, exit_reason)
         """
+        current_time_ms = int(current_time * 1000)
 
         if not self.is_active:
             return False, None
@@ -326,9 +330,8 @@ class Position:
 
         # Check max hold time
         if self.max_hold_time:
-            current_ts = int(time() * 1000)
             # Max hold time is based on entry time (total time position has been open)
-            elapsed_time = (current_ts - self.entry_ts) / 1000  # Convert to seconds
+            elapsed_time = (current_time_ms - self.entry_ts) / 1000  # Convert to seconds
             if elapsed_time >= self.max_hold_time:
 #                logger.info(f"elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time}")
                 return True, ExitReason.MAX_HOLD_TIME
@@ -336,21 +339,19 @@ class Position:
 
         # Check max no price change time
         if self.max_no_price_change_time and self.last_price_change_ts is not None:
-            current_time = time()
             time_since_price_change = current_time - self.last_price_change_ts
             if time_since_price_change >= self.max_no_price_change_time:
-                # logger.info(f"time_since_price_change {time_since_price_change} >= max_no_price_change_time {self.max_no_price_change_time}")
+                logger.debug(f"time_since_price_change {time_since_price_change} >= max_no_price_change_time {self.max_no_price_change_time} current_time={datetime.fromtimestamp(current_time):%Y-%m-%d %H:%M:%S.%f} self.last_price_change_ts={datetime.fromtimestamp(self.last_price_change_ts):%Y-%m-%d %H:%M:%S.%f}")
                 return True, ExitReason.NO_PRICE_CHANGE
-            # logger.info(f"time_since_price_change {time_since_price_change} < max_no_price_change_time {self.max_no_price_change_time}")
+            logger.debug(f"time_since_price_change {time_since_price_change} < max_no_price_change_time {self.max_no_price_change_time} current_time={current_time} self.last_price_change_ts={self.last_price_change_ts}")
         else:
-            logger.info(f"max_no_price_change_time is not set : {self.max_no_price_change_time} and {self.last_price_change_ts}")
+            logger.debug(f"max_no_price_change_time is not set : {self.max_no_price_change_time} and {self.last_price_change_ts}")
 
         # Check insufficient gain within time window
         if self.min_gain_percentage is not None:
-            current_ts = int(time() * 1000)
             # Only check if monitoring has started (don't use entry time)
             if self.monitoring_start_ts is not None:
-                elapsed_time = (current_ts - self.monitoring_start_ts) / 1000  # Convert to seconds
+                elapsed_time = (current_time_ms - self.monitoring_start_ts) / 1000  # Convert to seconds
                 
                 # Only check if we're within the time window
                 if elapsed_time >= self.min_gain_time_window:
@@ -358,8 +359,13 @@ class Position:
                     current_gain = (current_price - self.entry_net_price_decimal) / self.entry_net_price_decimal
                     
                     if current_gain < self.min_gain_percentage:
-                        logger.info(f"current_gain {current_gain:.4f} < min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s")
+                        logger.info(f"current_gain {current_gain:.4f} < min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s (self.min_gain_time_window={self.min_gain_time_window}s)")
                         return True, ExitReason.INSUFFICIENT_GAIN
+                    else:
+                        logger.info(f"current_gain {current_gain:.4f} >= min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s so setting min_gain_percentage to None so we don't check again")
+                        self.min_gain_percentage=None
+            else:
+                logger.info(f"monitoring_start_ts is not set : {self.monitoring_start_ts}")
 
         return False, None
 
@@ -513,4 +519,5 @@ class Position:
         price_str = f"{self.entry_net_price_decimal}" if self.entry_net_price_decimal is not None else "None"
         sol_str = f"{-self.total_net_sol_swapout_amount_raw / LAMPORTS_PER_SOL:.10f}" if self.total_net_sol_swapin_amount_raw is not None else "None"
         sol_raw_str = f"{-self.total_net_sol_swapout_amount_raw}" if self.total_net_sol_swapout_amount_raw is not None else "None"
-        return f"Position({str(self.mint)}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} for net sol={sol_str} ({sol_raw_str}) - {status})"
+        last_price_change_ts_str = f"{datetime.fromtimestamp(self.last_price_change_ts):%Y-%m-%d %H:%M:%S.%f}" if self.last_price_change_ts is not None else "None"
+        return f"Position({str(self.mint)}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} for net sol={sol_str} ({sol_raw_str}) - {status}) - last_price_change_ts={last_price_change_ts_str}"

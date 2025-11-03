@@ -101,7 +101,7 @@ class BaseTokenListener(ABC):
         """Process trade message and update tracker.
         
         Args:
-            trade_data: Trade message from PumpPortal
+            trade_data: Trade message from PumpPortal (or other source)
         """
         mint = trade_data.get("mint")
         if not mint:
@@ -109,7 +109,11 @@ class BaseTokenListener(ABC):
         
         tracker = self._trade_trackers.get(mint)
         if tracker:
-            tracker.apply_trade(trade_data)
+            # Use current time as timestamp (message receipt time in live mode)
+            # In replay mode, replay system will override this method or inject timestamps differently
+            import time
+            timestamp = time.time()
+            tracker.apply_trade(trade_data, timestamp)
     
     async def _send_trade_subscription(self, mint: str) -> None:
         """Send WebSocket subscription for token trades.
@@ -132,17 +136,3 @@ class BaseTokenListener(ABC):
         """
         # Default implementation - subclasses should override
         pass
-    
-    def get_trade_tracker_by_mint(self, mint: str) -> TokenTradeTracker | None:
-        """Get trade tracker for a specific mint.
-        
-        Args:
-            mint: Token mint address
-            
-        Returns:
-            TokenTradeTracker instance or None if not found
-        """
-        result = self._trade_trackers.get(mint)
-        if result is None:
-            logger.info(f"No trade tracker found for {mint}. We have {self._trade_trackers.keys()}")
-        return result

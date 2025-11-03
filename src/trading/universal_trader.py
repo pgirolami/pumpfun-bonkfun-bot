@@ -22,6 +22,7 @@ from platforms import get_platform_implementations
 from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position import ExitReason, Position
+from trading.position_monitor import PositionMonitor
 from utils.logger import get_logger
 from utils.volatility import VolatilityCalculator, calculate_take_profit_adjustment
 
@@ -996,223 +997,30 @@ class UniversalTrader:
     async def _monitor_position_until_exit(
         self, token_info: TokenInfo, position: Position
     ) -> None:
-        """Monitor a position until exit conditions are met."""
-        logger.debug(
-            f"[{self._mint_prefix(token_info.mint)}] Starting position monitoring (check interval: {self.price_check_interval}s)"
-        )
-
-        pool_address = self._get_pool_address(token_info)
+        """Monitor a position until exit conditions are met using event-driven architecture."""
         curve_manager = self.platform_implementations.curve_manager
         
-        # Track last price for change detection
-        last_price = None
+        # Create position monitor instance
+        position_monitor = PositionMonitor(
+            position=position,
+            token_info=token_info,
+            curve_manager=curve_manager,
+            seller=self.seller,
+            price_check_interval=self.price_check_interval,
+            database_manager=self.database_manager,
+            token_listener=self.token_listener if self.enable_trade_tracking else None,
+            run_id=self.run_id,
+            enable_trade_tracking=self.enable_trade_tracking,
+            enable_volatility_adjustment=self.enable_volatility_adjustment,
+            volatility_window_seconds=self.volatility_window_seconds,
+            volatility_tp_adjustments=self.volatility_tp_adjustments,
+            take_profit_percentage=self.take_profit_percentage,
+            market_quality_controller=self.market_quality_controller,
+            mint_prefix_fn=self._mint_prefix,
+        )
         
-        # Initialize volatility calculator if enabled (will be created when first price is available)
-        volatility_calculator = None
-        volatility_monitoring_started = False
-        if self.enable_volatility_adjustment:
-            logger.debug(
-                f"[{self._mint_prefix(token_info.mint)}] Volatility adjustment enabled (window: {self.volatility_window_seconds}s) - waiting for first price"
-            )
-
-        while position.is_active:
-            try:
-                # Get current price from pool/curve
-                current_price = await curve_manager.calculate_price(token_info.mint,token_info.bonding_curve)
-                current_timestamp = time()
-                current_timestamp_ms = int(current_timestamp * 1000)
-
-                # Set monitoring start time on first price (for time-based exit conditions)
-                if position.monitoring_start_ts is None:
-                    position.set_monitoring_start_time(current_timestamp_ms)
-
-                # Store price in database if available
-                if self.database_manager:
-                    try:
-                        await self.database_manager.insert_price_history(
-                            mint=str(token_info.mint),
-                            platform=token_info.platform.value,
-                            price_decimal=current_price,
-                        )
-                    except Exception as e:
-                        logger.exception(f"Failed to insert price history: {e}")
-
-                # Calculate volatility and adjust take profit if enabled
-                if self.enable_volatility_adjustment:
-                    # Initialize volatility calculator on first valid price
-                    if not volatility_monitoring_started:
-                        volatility_calculator = VolatilityCalculator(self.volatility_window_seconds)
-                        volatility_monitoring_started = True
-                        logger.debug(
-                            f"[{self._mint_prefix(token_info.mint)}] Started volatility monitoring with first price: {current_price:.10f} SOL"
-                        )
-                    
-                    # Add current price to volatility calculator
-                    volatility_calculator.add_price(current_price, current_timestamp)
-                    
-                    if volatility_calculator.has_sufficient_data(current_timestamp):
-                        previous_value = volatility_calculator._last_volatility
-                        volatility_level = volatility_calculator.get_volatility_level(current_timestamp)
-                        volatility_value = volatility_calculator.get_cached_volatility()
-                        
-                        if volatility_value is not None:
-                            logger.debug(
-                                f"[{self._mint_prefix(token_info.mint)}] Volatility: {volatility_value:.4f} ({volatility_level})"
-                            )
-                            
-                            # Adjust take profit based on volatility
-                            if position.take_profit_price and self.take_profit_percentage:
-                                original_tp_price = position.entry_net_price_decimal * (1 + self.take_profit_percentage)
-                                volatility_adjusted_take_profit_percentage = calculate_take_profit_adjustment(
-                                    self.take_profit_percentage,
-                                    volatility_level,
-                                    self.volatility_tp_adjustments
-                                )
-                                volatility_adjusted_take_profit_price = position.entry_net_price_decimal * (1 + volatility_adjusted_take_profit_percentage)
-                                
-                                # Only adjust if the new TP is more conservative (lower)
-                                if volatility_adjusted_take_profit_price != position.take_profit_price:
-                                    old_tp_price = position.take_profit_price
-                                    position.take_profit_price = volatility_adjusted_take_profit_price
-                                    logger.info(
-                                        f"[{self._mint_prefix(token_info.mint)}] Take profit price adjusted due to {volatility_level} volatility: "
-                                        f"{old_tp_price:.10f} -> {volatility_adjusted_take_profit_price:.10f} SOL "
-                                        f"(reduction: {((old_tp_price - volatility_adjusted_take_profit_price) / old_tp_price * 100):.1f}%)"
-                                    )
-
-                # Update position fields based on current price
-                # Update highest_price if this is a new high
-                if current_price > (position.highest_price or 0):
-                    position.highest_price = current_price
-                    logger.debug(f"[{self._mint_prefix(token_info.mint)}] New highest price: {current_price:.8f} SOL")
-
-                # Track price changes for max_no_price_change_time exit condition
-                if position.max_no_price_change_time is not None:
-                    price_tolerance = 1e-10  # Very small tolerance for floating point precision
-                    if (last_price is None or 
-                        abs(current_price - last_price) > price_tolerance):
-                        position.last_price_change_ts = time()
-                        logger.debug(f"[{self._mint_prefix(token_info.mint)}] Price changed to {current_price:.8f} SOL, updating timestamp")
-                    last_price = current_price
-
-                # Update creator tracking from trade tracker if available
-                if self.enable_trade_tracking and self.token_listener:
-                    tracker = self.token_listener.get_trade_tracker_by_mint(str(token_info.mint))
-                    logger.debug(f"[{self._mint_prefix(token_info.mint)}] Tracker: {tracker}")
-                    creator_swaps = tracker.get_creator_swaps()
-                    position.update_creator_tracking(
-                        creator_swaps[0], 
-                        creator_swaps[1]
-                    )
- 
-                # Update position in database on every loop run
-                if self.database_manager:
-                    try:
-                        await self.database_manager.update_position(position)
-                        logger.debug(f"[{self._mint_prefix(token_info.mint)}] Updated position in database")
-                    except Exception as e:
-                        logger.exception(f"Failed to update position in database: {e}")
-
-                # Log current status
-                pnl = position._get_pnl(current_price)
-                logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Position's price on chain: {current_price} SOL ({pnl['net_price_change_pct']:+.2f}%)"
-                )
-
-                # Check if position should be exited
-                should_exit, exit_reason = position.should_exit(current_price)
-
-                if should_exit and exit_reason:
-                    logger.info(
-                        f"[{self._mint_prefix(token_info.mint)}] Exit condition met: {exit_reason.value}"
-                    )
-                    logger.info(
-                        f"[{self._mint_prefix(token_info.mint)}] Current onchain price: {current_price:.10f} SOL"
-                    )
-
-                    # Log PnL before exit
-                    pnl = position._get_pnl(current_price)
-                    logger.info(f"[{self._mint_prefix(token_info.mint)}] PNL: {pnl}")
-
-                    # Execute sell
-                    sell_result = await self.seller.execute(token_info, position)
-                    logger.info(
-                        f"[{self._mint_prefix(token_info.mint)}] Sell result: {sell_result}"
-                    )
-
-                    if sell_result.success:
-                        exit_ts = (sell_result.block_time or int(time())) * 1000
-                        position.exit_ts = exit_ts
-                        # Close position with actual exit price
-                        position.close_position(sell_result, exit_reason)
-
-                        logger.info(
-                            f"[{self._mint_prefix(token_info.mint)}] Successfully exited position: {exit_reason.value}"
-                        )
-
-                        # Persist sell trade and update position
-                        if self.database_manager:
-                            try:
-                                # Update position in database
-                                await self.database_manager.update_position(position)
-
-                                # Insert sell trade
-                                await self.database_manager.insert_trade(
-                                    trade_result=sell_result,
-                                    mint=str(token_info.mint),
-                                    position_id=position.position_id,
-                                    trade_type="sell",
-                                    run_id=self.run_id,
-                                )
-
-                                logger.debug(
-                                    "Persisted sell trade and updated position in database"
-                                )
-                            except Exception as e:
-                                logger.exception(
-                                    f"[{self._mint_prefix(token_info.mint)}] Failed to persist sell trade to database: {e}"
-                                )
-
-                        # Log final PnL
-                        final_pnl = position._get_pnl()
-                        logger.info(f"[{self._mint_prefix(token_info.mint)}] Final net PnL: {final_pnl}")
-
-                        # Update market quality score asynchronously (event-driven)
-                        if self.market_quality_controller:
-                            asyncio.create_task(
-                                self.market_quality_controller.update_quality_score(
-                                    self.run_id
-                                )
-                            )
-
-                    else:
-                        logger.error(
-                            f"[{self._mint_prefix(token_info.mint)}] Failed to exit position & stopping monitoring: {sell_result.error_message}"
-                        )
-                        #should continue but need to handle the case where we have a 429 or a bug in our code 
-                        # and we did really sell but we don't know it so further sell attempts fail because no tokens are let
-                        break 
-
-                    if sell_result.success:
-                        # Exit monitoring loop after successful sell
-                        break
-
-            except Exception:
-                logger.exception("Error monitoring position, continuing though")
-            # Wait before next price check
-            await asyncio.sleep(self.price_check_interval)
-
-        # Unsubscribe from trade tracking when monitoring ends
-        if self.enable_trade_tracking and self.token_listener:
-            try:
-                await self.token_listener.unsubscribe_token_trades(mint=str(token_info.mint))
-                logger.debug(
-                    f"[{self._mint_prefix(token_info.mint)}] Unsubscribed from trade tracking after position monitoring ended"
-                )
-            except Exception as e:
-                logger.exception(
-                    f"[{self._mint_prefix(token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
-                )
+        # Start monitoring - this will handle all event-driven logic
+        await position_monitor.monitor()
 
     def _get_pool_address(self, token_info: TokenInfo) -> Pubkey:
         """Get the pool/curve address for price monitoring using platform-agnostic method."""

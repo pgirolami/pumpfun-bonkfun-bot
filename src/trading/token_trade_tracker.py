@@ -1,5 +1,7 @@
 """TokenTradeTracker for real-time price tracking via PumpPortal trade events."""
 
+import asyncio
+from datetime import datetime
 import time
 from typing import Any
 
@@ -33,6 +35,15 @@ class TokenTradeTracker:
         self.creator_public_key = str(token_info.creator)
         self.last_update_timestamp = time.time()
         
+        # Event that signals price updates
+        self.price_update_event = asyncio.Event()
+        
+        # Price change tracking for max_no_price_change_time exit condition
+        # Track when price actually changes (not just when reserves are updated)
+        self._last_price: float | None = None
+        self.last_price_change_timestamp: float | None = None
+        self._price_tolerance = 1e-10  # Tolerance for floating point precision
+        
         # Creator tracking (raw token units)
         # Use the initial buy amount from token creation
         initial_buy_decimal = token_info.initial_buy_token_amount_decimal or 0.0
@@ -42,14 +53,21 @@ class TokenTradeTracker:
         # Offset tracking for dry-run mode
         self.simulated_sol_offset_raw = 0  # Cumulative SOL offset (signed)
         self.simulated_token_offset_raw = 0  # Cumulative token offset (signed)
+        
+        # Initialize price tracking with initial price
+        if self.is_initialized():
+            initial_price = self.calculate_price()
+            self._last_price = initial_price
+            self.last_price_change_timestamp = time.time()
  
         logger.debug(f"[{str(self.mint)[:8]}] __init()__ -> (Init) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} => price={self.calculate_price():.10f} SOL")
     
-    def apply_trade(self, trade_data: dict[str, Any]) -> None:
+    def apply_trade(self, trade_data: dict[str, Any], timestamp: float) -> None:
         """Update reserves from PumpPortal trade message.
         
         Args:
             trade_data: Trade message from PumpPortal containing updated reserves
+            timestamp: Unix timestamp when the trade occurred (mandatory)
         """
         # Extract updated reserves from trade message (real on-chain values)
         sol_reserves_from_trade = int(trade_data.get("vSolInBondingCurve")*LAMPORTS_PER_SOL)
@@ -83,11 +101,27 @@ class TokenTradeTracker:
             else:
                 logger.warning(f"[{str(self.mint)[:8]}] Creator [{self.creator_public_key[:8]}] unknown trade type: {tx_type}")
 
-        self.last_update_timestamp = time.time()
+        # Check if price actually changed (only update timestamp on real price changes)
+        current_price = self.calculate_price()
+        if self._last_price is None:
+            # First price observation - initialize tracking
+            self._last_price = current_price
+            self.last_price_change_timestamp = timestamp
+        elif abs(current_price - self._last_price) > self._price_tolerance:
+            # Price actually changed - update timestamp
+            self.last_price_change_timestamp = timestamp
+            logger.debug(f"[{str(self.mint)[:8]}] Price changed: {self._last_price:.10f} -> {current_price:.10f} SOL")
         
-        logger.debug(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} -> price={self.calculate_price()}")
+        # Always update last price for next comparison
+        self._last_price = current_price
+        
+        # Store timestamp and signal event
+        self.last_update_timestamp = timestamp
+        self.price_update_event.set()
+        
+        logger.debug(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} -> price={current_price:.10f}")
     
-    def record_simulated_trade(self, sol_swap_raw: int, token_swap_raw: int) -> None:
+    def record_simulated_trade(self, sol_swap_raw: int, token_swap_raw: int, timestamp: float) -> None:
         """Record a simulated trade to adjust future reserve calculations.
         
         Accumulates signed swap amounts. For buys, sol is negative and tokens positive.
@@ -99,6 +133,7 @@ class TokenTradeTracker:
         Args:
             sol_swap_raw: Signed SOL swap amount in lamports (negative = spent)
             token_swap_raw: Signed token swap amount in raw units (negative = sold)
+            timestamp: Unix timestamp when the simulated trade occurred (mandatory)
         """
         # these values come from the balance change analysis so they're from our wallet's point of view
         # they need to be negative to apply the offset correctly
@@ -110,7 +145,22 @@ class TokenTradeTracker:
             self.virtual_sol_reserves += -sol_swap_raw
             self.virtual_token_reserves += -token_swap_raw
         
-        self.last_update_timestamp = time.time()
+        # Check if price actually changed (only update timestamp on real price changes)
+        current_price = self.calculate_price()
+        if self._last_price is None:
+            # First price observation - initialize tracking
+            self._last_price = current_price
+            self.last_price_change_timestamp = timestamp
+        elif abs(current_price - self._last_price) > self._price_tolerance:
+            # Price actually changed - update timestamp
+            self.last_price_change_timestamp = timestamp
+            logger.debug(f"[{str(self.mint)[:8]}] Price changed: {self._last_price:.10f} -> {current_price:.10f} SOL (simulated trade)")
+        
+        # Always update last price for next comparison
+        self._last_price = current_price
+        
+        self.last_update_timestamp = timestamp
+        self.price_update_event.set()
         
         logger.info(
             f"[{str(self.mint)[:8]}] Recorded simulated trade: "
@@ -178,12 +228,18 @@ class TokenTradeTracker:
         logger.debug(f"[{str(self.mint)[:8]}] get_reserves() -> {result}")
         return result
 
-    def get_last_update_time(self) -> float | None:
-        """Get timestamp of last update.
+    
+    def get_last_update_timestamp(self) -> float | None:
+        """Get timestamp of last trade update.
         
         Returns:
-            Unix timestamp of last update or None if not initialized
+            Unix timestamp of last trade update
+            
+        Raises:
+            RuntimeError: If tracker not initialized
         """
+        if not self.is_initialized():
+            raise RuntimeError(f"Tracker for {str(self.mint)} not initialized")
         return self.last_update_timestamp
     
     def get_creator_swaps(self) -> tuple[int, int]:
@@ -201,3 +257,14 @@ class TokenTradeTracker:
             Net tokens held by creator (positive = holding, negative = short)
         """
         return self.creator_token_swap_in + self.creator_token_swap_out
+    
+    def get_last_price_change_timestamp(self) -> float | None:
+        """Get timestamp of last actual price change.
+        
+        This only updates when reserves change AND the calculated price changes,
+        not on every trade or time tick. Used for max_no_price_change_time exit condition.
+        
+        Returns:
+            Unix timestamp of last price change, or None if no price change detected yet
+        """
+        return self.last_price_change_timestamp
