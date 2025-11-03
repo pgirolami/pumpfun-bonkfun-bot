@@ -45,7 +45,7 @@ trade:
   market_quality:
     enabled: true # Enable market quality-based buy pausing
     lookback_minutes: 15 # Time window in minutes to analyze recent closed positions
-    exploration_probability: 0.1 # Probability of buying regardless of quality (0.1 = 10% exploration)
+    exploration_probability: 0.05 # Probability of buying regardless of quality (0.1 = 10% exploration)
     min_trades_for_analysis: 10 # Minimum number of closed positions required for analysis (returns 1.0 if fewer)
 
   # Exit strategy configuration
