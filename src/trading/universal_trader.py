@@ -192,6 +192,7 @@ class UniversalTrader:
             lookback_minutes = market_quality_config.get("lookback_minutes")
             exploration_probability = market_quality_config.get("exploration_probability")
             min_trades_for_analysis = market_quality_config.get("min_trades_for_analysis")
+            algorithm = market_quality_config.get("algorithm", "win_rate")
 
             if lookback_minutes is None:
                 raise ValueError("market_quality.lookback_minutes is required when enabled")
@@ -209,10 +210,12 @@ class UniversalTrader:
                 lookback_minutes=lookback_minutes,
                 exploration_probability=exploration_probability,
                 min_trades_for_analysis=min_trades_for_analysis,
+                algorithm=algorithm,
             )
             logger.info(
                 f"Market quality controller enabled "
-                f"(lookback: {lookback_minutes} min, exploration: {exploration_probability:.2%}, "
+                f"(algorithm: {algorithm}, lookback: {lookback_minutes} min, "
+                f"exploration: {exploration_probability:.2%}, "
                 f"min_trades: {min_trades_for_analysis})"
             )
         else:

@@ -265,13 +265,11 @@ class DatabaseManager:
                 """
                 SELECT DISTINCT p.*
                 FROM positions p
-                INNER JOIN trades t ON p.id = t.position_id
                 WHERE p.is_active = 0
-                  AND t.run_id = ?
                   AND p.exit_ts >= ?
                 ORDER BY p.exit_ts DESC
                 """,
-                (run_id, cutoff_time_ms),
+                (cutoff_time_ms,),
             )
             rows = cursor.fetchall()
 

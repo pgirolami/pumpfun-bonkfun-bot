@@ -225,6 +225,7 @@ def validate_config(config: dict) -> None:
             lookback_minutes = market_quality.get("lookback_minutes")
             exploration_probability = market_quality.get("exploration_probability")
             min_trades_for_analysis = market_quality.get("min_trades_for_analysis")
+            algorithm = market_quality.get("algorithm", "win_rate")
 
             if lookback_minutes is None:
                 raise ValueError(
@@ -258,6 +259,11 @@ def validate_config(config: dict) -> None:
             ):
                 raise ValueError(
                     "trade.market_quality.min_trades_for_analysis must be a non-negative integer"
+                )
+
+            if not isinstance(algorithm, str) or algorithm not in ("win_rate", "avg_pnl", "walk_pnl"):
+                raise ValueError(
+                    "trade.market_quality.algorithm must be 'win_rate', 'avg_pnl', or 'walk_pnl'"
                 )
     except ValueError as e:
         if "Missing required config key" not in str(e):

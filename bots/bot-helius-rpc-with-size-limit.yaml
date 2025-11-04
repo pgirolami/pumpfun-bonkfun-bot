@@ -43,6 +43,7 @@ trade:
 
   # Market quality configuration (NEW FEATURE)
   market_quality:
+    algorithm: "avg_pnl"
     enabled: true # Enable market quality-based buy pausing
     lookback_minutes: 15 # Time window in minutes to analyze recent closed positions
     exploration_probability: 0.05 # Probability of buying regardless of quality (0.1 = 10% exploration)
