@@ -81,11 +81,13 @@ CREATE INDEX IF NOT EXISTS idx_positions_mint ON positions(mint);
 CREATE INDEX IF NOT EXISTS idx_positions_platform ON positions(platform);
 CREATE INDEX IF NOT EXISTS idx_positions_is_active ON positions(is_active);
 CREATE INDEX IF NOT EXISTS idx_positions_entry_ts ON positions(entry_ts);
+CREATE INDEX IF NOT EXISTS idx_positions_exit_ts ON positions(exit_ts);
 
 CREATE INDEX IF NOT EXISTS idx_trades_position_id ON trades(position_id);
 CREATE INDEX IF NOT EXISTS idx_trades_platform ON trades(platform);
 CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
 CREATE INDEX IF NOT EXISTS idx_trades_success ON trades(success);
+CREATE INDEX IF NOT EXISTS idx_trades_run_id ON trades(run_id);
 
 -- Price history table (prices calculated during monitoring)
 CREATE TABLE IF NOT EXISTS price_history (

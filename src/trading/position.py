@@ -362,7 +362,7 @@ class Position:
                         logger.info(f"current_gain {current_gain:.4f} < min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s (self.min_gain_time_window={self.min_gain_time_window}s)")
                         return True, ExitReason.INSUFFICIENT_GAIN
                     else:
-                        logger.info(f"current_gain {current_gain:.4f} >= min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s so setting min_gain_percentage to None so we don't check again")
+                        logger.debug(f"current_gain {current_gain:.4f} >= min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s so setting min_gain_percentage to None so we don't check again")
                         self.min_gain_percentage=None
             else:
                 logger.info(f"monitoring_start_ts is not set : {self.monitoring_start_ts}")

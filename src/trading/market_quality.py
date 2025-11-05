@@ -73,6 +73,9 @@ class MarketQualityController:
 
         # If fewer positions than minimum required, return optimistic default
         if len(positions) < self.min_trades_for_analysis:
+            logger.info(
+                f"Market quality calculated ({self.algorithm}): {len(positions)} <= min_trades_for_analysis={self.min_trades_for_analysis} positions, returning 1.0"
+            )
             return 1.0
 
         # Dispatch to algorithm-specific method
@@ -106,7 +109,7 @@ class MarketQualityController:
 
         # Quality score mapping: 50% win rate = 1.0
         # Formula: score = min(1.0, win_rate / 0.5)
-        quality_score = min(1.0, win_rate / 0.5)
+        quality_score = min(1.0, win_rate / 0.25)
 
         logger.info(
             f"Market quality calculated ({self.algorithm}): {wins}/{total_closed} wins "
@@ -143,20 +146,22 @@ class MarketQualityController:
         # Average all normalized PnL values
         avg_normalized_pnl = sum(normalized_pnl_values) / len(normalized_pnl_values)
 
+        UPPER = 0.01
+        LOWER = -0.005
         # Apply linear function:
         # - normalized_pnl >= 0.01 → quality_score = 1.0
         # - normalized_pnl <= -0.01 → quality_score = 0.0
         # - -0.01 < normalized_pnl < 0.01 → linear interpolation
-        if avg_normalized_pnl >= 0.01:
+        if avg_normalized_pnl >= UPPER:
             quality_score = 1.0
-        elif avg_normalized_pnl <= -0.01:
+        elif avg_normalized_pnl <= LOWER:
             quality_score = 0.0
         else:
             # Linear interpolation: y = (x + 0.01) / 0.02
             # At x = -0.01: y = 0.0
             # At x = 0.0: y = 0.5
             # At x = 0.01: y = 1.0
-            quality_score = (avg_normalized_pnl + 0.01) / 0.02
+            quality_score = (avg_normalized_pnl + UPPER) / (UPPER - LOWER)
 
         # Clamp to [0.0, 1.0] range (safety check, though linear function should already be in range)
         quality_score = max(0.0, min(1.0, quality_score))
@@ -209,12 +214,12 @@ class MarketQualityController:
         self._walk_pnl_buy_probability = max(0.0, min(1.0, self._walk_pnl_buy_probability))
         
         logger.info(
-            f"Market quality calculated ({self.algorithm}) using position {positions[0].position_id[:8]} for mint {positions[0].mint[:8]}: "
+            f"Market quality calculated ({self.algorithm}) using position {most_recent_pos.position_id[:8]} for mint {str(most_recent_pos.mint)[:8]}: "
             f"amount_spent: {amount_spent_sol:.6f} SOL, "
             f"realized_pnl: {most_recent_pos.realized_pnl_sol_decimal:.6f} SOL, "
             f"last_normalized_pnl: {normalized_pnl:.4f}, "
             f"multiplier: {multiplier:.4f}, "
-            f"buy_probability: {old_buy_probability} -> {self._walk_pnl_buy_probability:.4f}"
+            f"buy_probability: {old_buy_probability:.4f} -> {self._walk_pnl_buy_probability:.4f}"
         )
         
         return self._walk_pnl_buy_probability
