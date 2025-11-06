@@ -22,6 +22,8 @@ dependencies = [
     "uvloop>=0.21.0",
     "tenacity>=9.1.2",
     "plotly>=5.0.0",
+    "flask>=3.0.0",
+    "flask-compress>=1.14",
 ]
 
 [project.optional-dependencies]

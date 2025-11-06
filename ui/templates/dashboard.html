@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PNL Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin-top: 0;
+            color: #333;
+        }
+        .controls {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        .controls label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+        .controls input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 300px;
+        }
+        .controls button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+        .controls button:hover {
+            background-color: #0056b3;
+        }
+        #chart {
+            margin-bottom: 30px;
+        }
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        .stats-card {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            background-color: #fafafa;
+        }
+        .stats-card h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .stats-table td {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+        .stats-table td:first-child {
+            font-weight: 500;
+            color: #666;
+            width: 60%;
+        }
+        .stats-table td:last-child {
+            text-align: right;
+            color: #333;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        .error {
+            background-color: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Cumulative PNL Dashboard</h1>
+        
+        <div class="controls">
+            <label for="start_ts">Start Timestamp (Unix epoch milliseconds):</label>
+            <input type="number" id="start_ts" placeholder="e.g., 1762331342956" value="{{ start_ts or '' }}">
+            <button onclick="loadData()">Load Data</button>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+        <div id="loading" class="loading" style="display: none;">Loading data...</div>
+        
+        <div id="chart"></div>
+        <div id="stats" class="stats-container"></div>
+    </div>
+
+    <script>
+        const COLORS = [
+            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+            '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
+        ];
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function formatNumber(num, decimals = 6) {
+            return num.toFixed(decimals);
+        }
+
+        function formatDuration(seconds) {
+            if (seconds < 60) {
+                return seconds.toFixed(1) + 's';
+            } else if (seconds < 3600) {
+                return (seconds / 60).toFixed(1) + 'm';
+            } else {
+                return (seconds / 3600).toFixed(1) + 'h';
+            }
+        }
+
+        async function loadData() {
+            hideError();
+            showLoading();
+            
+            const startTs = document.getElementById('start_ts').value;
+            const url = startTs ? `/api/data?start_ts=${startTs}` : '/api/data';
+            
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                renderChart(data.databases);
+                renderStats(data.databases);
+            } catch (error) {
+                showError('Error loading data: ' + error.message);
+                console.error('Error:', error);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function renderChart(databases) {
+            const traces = databases.map((db, idx) => {
+                const color = COLORS[idx % COLORS.length];
+                return {
+                    x: db.timestamps.map(ts => new Date(ts)),
+                    y: db.cumulative_pnl,
+                    mode: 'lines+markers',
+                    name: db.label,
+                    line: { color: color, width: 2 },
+                    marker: { size: 4, color: color },
+                    hovertemplate: `<b>${db.label}</b><br><b>%{x}</b><br>Cumulative PNL: %{y:.6f} SOL<extra></extra>`
+                };
+            });
+
+            const layout = {
+                title: {
+                    text: databases.length === 1 
+                        ? `Cumulative PNL Over Time<br><sub>${databases[0].label}</sub>`
+                        : `Cumulative PNL Over Time<br><sub>Comparing ${databases.length} databases</sub>`,
+                    x: 0.5,
+                    xanchor: 'center'
+                },
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'Cumulative PNL (SOL)' },
+                hovermode: 'x unified',
+                template: 'plotly_white',
+                showlegend: true,
+                legend: {
+                    x: 1.02,
+                    y: 1,
+                    xanchor: 'left',
+                    yanchor: 'top',
+                    bgcolor: 'rgba(255,255,255,0.8)'
+                },
+                height: 600,
+                shapes: [{
+                    type: 'line',
+                    xref: 'paper',
+                    yref: 'y',
+                    x0: 0,
+                    y0: 0,
+                    x1: 1,
+                    y1: 0,
+                    line: {
+                        color: 'gray',
+                        width: 1,
+                        dash: 'dash'
+                    }
+                }]
+            };
+
+            Plotly.newPlot('chart', traces, layout, { responsive: true });
+        }
+
+        function renderStats(databases) {
+            const statsContainer = document.getElementById('stats');
+            statsContainer.innerHTML = '';
+
+            databases.forEach(db => {
+                const card = document.createElement('div');
+                card.className = 'stats-card';
+                
+                const stats = db.stats;
+                card.innerHTML = `
+                    <h3>${db.label}</h3>
+                    <table class="stats-table">
+                        <tr><td>Total Positions</td><td>${stats.num_positions}</td></tr>
+                        <tr><td>Winning Positions</td><td>${stats.winning_positions}</td></tr>
+                        <tr><td>Win Rate</td><td>${formatNumber(stats.win_rate, 2)}%</td></tr>
+                        <tr><td>Average PNL per Position</td><td>${formatNumber(stats.avg_pnl, 6)} SOL</td></tr>
+                        <tr><td>Total Cumulative PNL</td><td>${formatNumber(stats.total_pnl, 6)} SOL</td></tr>
+                        <tr><td>Max Drawdown</td><td>${formatNumber(stats.max_drawdown, 2)}%</td></tr>
+                        <tr><td colspan="2"><strong>Position Duration Statistics</strong></td></tr>
+                        <tr><td>Average</td><td>${formatDuration(stats.avg_duration)}</td></tr>
+                        <tr><td>Median</td><td>${formatDuration(stats.median_duration)}</td></tr>
+                        <tr><td>P10</td><td>${formatDuration(stats.p10_duration)}</td></tr>
+                        <tr><td>P90</td><td>${formatDuration(stats.p90_duration)}</td></tr>
+                    </table>
+                `;
+                statsContainer.appendChild(card);
+            });
+        }
+
+        // Load data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadData();
+        });
+
+        // Allow Enter key to trigger load
+        document.getElementById('start_ts').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                loadData();
+            }
+        });
+    </script>
+</body>
+</html>
+

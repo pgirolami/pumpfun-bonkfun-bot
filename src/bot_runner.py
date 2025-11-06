@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import multiprocessing
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -325,6 +326,47 @@ async def run_all_bots():
         p.join()
         logging.info(f"Process {p.name} completed")
 
+def start_dashboard_server() -> None:
+    """Start the PNL dashboard web server in a separate thread."""
+    logging.info("Attempting to start PNL dashboard server...")
+    try:
+        import sys
+        from pathlib import Path
+        
+        # Add project root to path if needed
+        project_root = Path(__file__).parent.parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        
+        logging.info(f"Project root: {project_root}")
+        logging.info(f"Looking for ui.pnl_dashboard in {project_root / 'ui'}")
+        
+        from ui.pnl_dashboard import app
+        logging.info("Successfully imported dashboard app")
+
+        def run_server() -> None:
+            """Run Flask server in a thread."""
+            try:
+                app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+            except Exception as e:
+                logging.error(f"Error running dashboard server: {e}")
+                import traceback
+                traceback.print_exc()
+
+        dashboard_thread = threading.Thread(
+            target=run_server, daemon=True, name="pnl-dashboard"
+        )
+        dashboard_thread.start()
+        # Give it a moment to start
+        import time
+        time.sleep(0.5)
+        logging.info("PNL Dashboard server started at http://localhost:5000")
+    except Exception as e:
+        logging.error(f"Could not start PNL dashboard server: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def main() -> None:
     # Set up basic console logging for main process
     logging.basicConfig(
@@ -337,6 +379,9 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("solana.rpc").setLevel(logging.WARNING)
+
+    # Start PNL dashboard server
+    start_dashboard_server()
 
     # Log supported platforms and listeners
     try:

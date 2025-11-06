@@ -24,3 +24,4 @@ ORDER BY
 
 --
 select avg(realized_pnl_sol_decimal),round(100*count(CASE WHEN realized_pnl_sol_decimal>0 THEN 1 ELSE NULL END)/count(1),2) pct_pos_pnl,count(1) num_buys,sum(realized_pnl_sol_decimal),sum(realized_net_pnl_sol_decimal),sum(transaction_fee_raw)/1000000000.0 tx_fees,sum(platform_fee_raw)/1000000000.0 plat_fees  from positions where entry_ts>=1762189130341;
+
