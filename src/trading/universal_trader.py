@@ -350,6 +350,7 @@ class UniversalTrader:
         self.token_queue: asyncio.Queue[TokenInfo] = asyncio.Queue[TokenInfo]()
         self.processing: bool = False
         self.token_timestamps: dict[str, float] = {}
+        self._queued_tokens: set[str] = set()  # Track tokens already queued to prevent duplicates
         self._stop_event = asyncio.Event()  # Event to signal stopping
         self._main_stop_event = asyncio.Event()  # Event to signal main loop stopping
         self._max_buys_reached = False  # Flag to track if max_buys limit reached
@@ -616,6 +617,13 @@ class UniversalTrader:
             
         token_key = str(token_info.mint)
 
+        # Prevent duplicate queuing (can happen during WebSocket reconnection)
+        if token_key in self._queued_tokens:
+            logger.warning(
+                f"[{self._mint_prefix(token_info.mint)}] Token already queued, skipping duplicate"
+            )
+            return
+
         # Check capacity using active position tasks
         if len(self.position_tasks) >= self.max_active_mints:
             logger.info(
@@ -625,6 +633,9 @@ class UniversalTrader:
         
         # Record timestamp when token was discovered
         self.token_timestamps[token_key] = monotonic()
+        
+        # Mark as queued to prevent duplicates
+        self._queued_tokens.add(token_key)
 
         await self.token_queue.put(token_info)
         logger.debug(
@@ -634,6 +645,9 @@ class UniversalTrader:
     async def _process_token_queue(self) -> None:
         """Process tokens concurrently up to max_active_mints limit."""
         while True:
+            token_info = None
+            task_done_called = False
+            task_spawned = False
             try:
                 # Get next token from queue
                 token_info = await self.token_queue.get()
@@ -642,25 +656,46 @@ class UniversalTrader:
                 # Check freshness
                 current_time = monotonic()
                 token_age = current_time - self.token_timestamps.get(
-                    token_key, current_time
+                    token_key
                 )
                 self.token_timestamps.pop(token_key, None)
                 if token_age > self.max_token_age:
                     logger.debug(
                         f"[{self._mint_prefix(token_info.mint)}] Skipping - too old ({token_age:.1f}s)"
                     )
+                    # Remove from queued set since we're skipping it (not processing)
+                    self._queued_tokens.discard(token_key)
+                    # Mark task as done before continuing
+                    self.token_queue.task_done()
+                    task_done_called = True
                     continue
 
                 # Spawn concurrent task
                 task = asyncio.create_task(self._handle_token_wrapper(token_info))
                 self.position_tasks[token_key] = task
+                task_spawned = True
                 logger.debug(f"_process_token_queue() [{self._mint_prefix(token_info.mint)}] Created position task")
+                
+                # Mark task as done after successfully spawning the task
+                # Note: We don't discard from _queued_tokens here - _handle_token_wrapper will do it
+                self.token_queue.task_done()
+                task_done_called = True
             except asyncio.CancelledError:
+                # Mark task as done if we got a token before cancellation and haven't called it yet
+                if token_info is not None and not task_done_called:
+                    self.token_queue.task_done()
+                # Discard from queued set if we didn't spawn a task (prevents leak)
+                if token_info is not None and not task_spawned:
+                    self._queued_tokens.discard(str(token_info.mint))
                 break
             except Exception:
                 logger.exception("Error in token queue processor")
-            finally:
-                self.token_queue.task_done()
+                # Mark task as done even on error to maintain queue consistency
+                if token_info is not None and not task_done_called:
+                    self.token_queue.task_done()
+                # Discard from queued set if we didn't spawn a task (prevents leak)
+                if token_info is not None and not task_spawned:
+                    self._queued_tokens.discard(str(token_info.mint))
 
     async def _handle_token_wrapper(self, token_info: TokenInfo) -> None:
         """Wrapper around _handle_token that manages position lifecycle."""
@@ -672,6 +707,8 @@ class UniversalTrader:
             if mint_key in self.position_tasks:
                 logger.debug(f"_handle_token_wrapper() [{self._mint_prefix(token_info.mint)}] Removed position task")
                 del self.position_tasks[mint_key]
+            # Remove from queued set after processing completes (allows same token to be processed again if it comes in later)
+            self._queued_tokens.discard(mint_key)
 
     async def _handle_token(self, token_info: TokenInfo) -> None:
         """Handle a new token creation event."""
