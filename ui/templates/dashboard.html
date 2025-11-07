@@ -112,8 +112,25 @@
         <h1>Cumulative PNL Dashboard</h1>
         
         <div class="controls">
-            <label for="start_ts">Start Timestamp (Unix epoch milliseconds):</label>
-            <input type="number" id="start_ts" placeholder="e.g., 1762331342956" value="{{ start_ts or '' }}">
+            <div style="margin-bottom: 10px;">
+                <label for="start_date">Start Date (YYYY-MM-DD, optional HH:MM:SS, leave empty for bot start time):</label>
+                <input type="text" id="start_date" placeholder="YYYY-MM-DD or YYYY-MM-DD HH:MM:SS" value="">
+                <small style="display: block; color: #666; margin-top: 4px;">
+                    Examples: 2025-01-15 or 2025-01-15 14:30:00 (uses midnight if time not provided)
+                </small>
+            </div>
+            <div style="margin-bottom: 10px;">
+                <button onclick="setPastDay()" style="margin-right: 5px;">Past Day</button>
+                <button onclick="setPastWeek()" style="margin-right: 5px;">Past Week</button>
+                <button onclick="setPastMonth()" style="margin-right: 5px;">Past Month</button>
+                <button onclick="setFromStart()" style="margin-right: 5px;">From Start</button>
+            </div>
+            <div style="margin-bottom: 10px;">
+                <label style="display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="only_running" checked style="margin-right: 8px; width: auto;">
+                    <span>Only show databases from currently running bots</span>
+                </label>
+            </div>
             <button onclick="loadData()">Load Data</button>
         </div>
 
@@ -162,17 +179,109 @@
             }
         }
 
+        function formatDateForInput(date) {
+            // Format date as YYYY-MM-DD HH:MM:SS
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        }
+
+        function setPastDay() {
+            const now = new Date();
+            const pastDay = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            document.getElementById('start_date').value = formatDateForInput(pastDay);
+            loadData();
+        }
+
+        function setPastWeek() {
+            const now = new Date();
+            const pastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            document.getElementById('start_date').value = formatDateForInput(pastWeek);
+            loadData();
+        }
+
+        function setPastMonth() {
+            const now = new Date();
+            const pastMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            document.getElementById('start_date').value = formatDateForInput(pastMonth);
+            loadData();
+        }
+
+        function setFromStart() {
+            // Clear the date input to use default (bot start time)
+            document.getElementById('start_date').value = '';
+            loadData();
+        }
+
+        function parseDateToTimestamp(dateStr) {
+            if (!dateStr || dateStr.trim() === '') {
+                return null;
+            }
+            
+            // Try to parse YYYY-MM-DD or YYYY-MM-DD HH:MM:SS
+            const trimmed = dateStr.trim();
+            let date;
+            
+            // Validate format first
+            const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/;
+            const dateTimePattern = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+            
+            if (dateTimePattern.test(trimmed)) {
+                // Has time component: YYYY-MM-DD HH:MM:SS
+                date = new Date(trimmed);
+            } else if (dateOnlyPattern.test(trimmed)) {
+                // Only date: YYYY-MM-DD, use midnight in local timezone
+                date = new Date(trimmed + ' 00:00:00');
+            } else {
+                throw new Error(`Invalid date format: ${dateStr}. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS`);
+            }
+            
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+                throw new Error(`Invalid date: ${dateStr}. Please check the date is valid.`);
+            }
+            
+            // Return timestamp in milliseconds (UTC)
+            return date.getTime();
+        }
+
         async function loadData() {
             hideError();
             showLoading();
             
-            const startTs = document.getElementById('start_ts').value;
-            const url = startTs ? `/api/data?start_ts=${startTs}` : '/api/data';
+            const startDateStr = document.getElementById('start_date').value;
+            const onlyRunning = document.getElementById('only_running').checked;
+            
+            // Convert date string to timestamp
+            let startTs = null;
+            if (startDateStr) {
+                try {
+                    startTs = parseDateToTimestamp(startDateStr);
+                } catch (error) {
+                    showError(error.message);
+                    hideLoading();
+                    return;
+                }
+            }
+            
+            // Build URL with query parameters
+            const params = new URLSearchParams();
+            if (startTs !== null) {
+                params.append('start_ts', startTs.toString());
+            }
+            params.append('only_running', onlyRunning.toString());
+            
+            const url = `/api/data?${params.toString()}`;
             
             try {
                 const response = await fetch(url);
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || errorData.message || `HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
                 
@@ -180,11 +289,24 @@
                     throw new Error(data.error);
                 }
                 
+                // Handle empty databases case
+                if (!data.databases || data.databases.length === 0) {
+                    const message = data.message || "No databases found";
+                    showError(message);
+                    // Clear chart and stats
+                    document.getElementById('chart').innerHTML = '';
+                    document.getElementById('stats').innerHTML = '';
+                    return;
+                }
+                
                 renderChart(data.databases);
                 renderStats(data.databases);
             } catch (error) {
                 showError('Error loading data: ' + error.message);
                 console.error('Error:', error);
+                // Clear chart and stats on error
+                document.getElementById('chart').innerHTML = '';
+                document.getElementById('stats').innerHTML = '';
             } finally {
                 hideLoading();
             }
@@ -276,13 +398,18 @@
         // Load data on page load
         window.addEventListener('DOMContentLoaded', () => {
             loadData();
-        });
-
-        // Allow Enter key to trigger load
-        document.getElementById('start_ts').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+            
+            // Auto-reload when checkbox changes
+            document.getElementById('only_running').addEventListener('change', () => {
                 loadData();
-            }
+            });
+            
+            // Allow Enter key to trigger load
+            document.getElementById('start_date').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    loadData();
+                }
+            });
         });
     </script>
 </body>

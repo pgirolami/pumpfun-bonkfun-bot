@@ -87,6 +87,16 @@ async def start_bot(config_path: str):
         database_manager = DatabaseManager(db_path)
         
         logging.info(f"Database initialized: {db_path}")
+        
+        # Register this bot's database with the dashboard
+        # Note: For bots in separate processes, this is already registered in main process
+        # But we register again here in case the bot is running in the main process
+        try:
+            from ui.pnl_dashboard import register_running_bot_database
+            register_running_bot_database(db_path)
+            logging.debug(f"Registered database {db_path} with dashboard (bot process)")
+        except Exception as e:
+            logging.warning(f"Could not register database with dashboard: {e}")
             
     except Exception as e:
         logging.exception(f"Failed to initialize database: {e}")
@@ -292,6 +302,26 @@ async def run_all_bots():
                 skipped_bots += 1
                 continue
 
+            # Register database path in main process (for dashboard) before starting bot
+            # This ensures the dashboard can see the database even if bot runs in separate process
+            try:
+                # Derive wallet pubkey for database naming (same logic as in start_bot)
+                wallet = Wallet(cfg["private_key"])
+                wallet_pubkey_short = str(wallet.pubkey)[:8]
+                testing = cfg.get("testing", {})
+                mode = "dryrun" if testing.get("dry_run", False) else "live"
+                db_path = f"data/{bot_name}_{wallet_pubkey_short}_{mode}.db"
+                
+                # Register with dashboard in main process
+                try:
+                    from ui.pnl_dashboard import register_running_bot_database
+                    register_running_bot_database(db_path)
+                    logging.debug(f"Registered database {db_path} with dashboard (main process)")
+                except Exception as e:
+                    logging.warning(f"Could not register database with dashboard: {e}")
+            except Exception as e:
+                logging.warning(f"Could not determine database path for bot '{bot_name}': {e}")
+
             # Start bot in separate process or main process
             if cfg.get("separate_process", False):
                 logging.info(
@@ -331,6 +361,7 @@ def start_dashboard_server() -> None:
     logging.info("Attempting to start PNL dashboard server...")
     try:
         import sys
+        import time
         from pathlib import Path
         
         # Add project root to path if needed
@@ -341,8 +372,16 @@ def start_dashboard_server() -> None:
         logging.info(f"Project root: {project_root}")
         logging.info(f"Looking for ui.pnl_dashboard in {project_root / 'ui'}")
         
-        from ui.pnl_dashboard import app
+        from ui.pnl_dashboard import (
+            app,
+            set_default_start_timestamp,
+        )
         logging.info("Successfully imported dashboard app")
+        
+        # Set the default start timestamp to when bot_runner started (in milliseconds)
+        start_timestamp_ms = int(time.time() * 1000)
+        set_default_start_timestamp(start_timestamp_ms)
+        logging.info(f"Dashboard default start timestamp set to: {start_timestamp_ms}")
 
         def run_server() -> None:
             """Run Flask server in a thread."""
@@ -358,7 +397,6 @@ def start_dashboard_server() -> None:
         )
         dashboard_thread.start()
         # Give it a moment to start
-        import time
         time.sleep(0.5)
         logging.info("PNL Dashboard server started at http://localhost:5000")
     except Exception as e:
