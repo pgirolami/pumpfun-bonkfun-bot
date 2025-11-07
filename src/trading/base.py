@@ -32,6 +32,8 @@ class TradeResult:
     transaction_fee_raw: int | None = None  # Base + priority transaction fee in lamports (from meta.fee)
     platform_fee_raw: int | None = None  # Platform fee in lamports (includes creator + platform fees)
     tip_fee_raw: int | None = None  # Tip fee in lamports (Helius Sender)
+    rent_exemption_amount_raw: int | None = None  # Rent exemption amount in lamports (for token account creation)
+    unattributed_sol_amount_raw: int | None = None  # Unattributed SOL amount in lamports (for user's wallet)
     trade_duration_ms: int | None = None  # Trade execution duration in milliseconds
     time_to_block_ms: int | None = None  # Time to blocktime in milliseconds
 
@@ -103,6 +105,8 @@ class TradeResult:
             "sol_swap_amount_raw": self.sol_swap_amount_raw,
             "platform_fee_raw": self.platform_fee_raw,
             "tip_fee_raw": self.tip_fee_raw,
+            "rent_exemption_amount_raw": self.rent_exemption_amount_raw,
+            "unattributed_sol_amount_raw": self.unattributed_sol_amount_raw,
             # Computed values
             "token_swap_amount_decimal": self.token_swap_amount_decimal(),
             "net_sol_swap_amount_raw": self.net_sol_swap_amount_raw,
@@ -146,7 +150,15 @@ class TradeResult:
         if self.tip_fee_raw is not None:
             tip_fee_decimal = self.tip_fee_raw / LAMPORTS_PER_SOL
             result += f", tip_fee_raw={self.tip_fee_raw} ({tip_fee_decimal} SOL)"
-        
+
+        if self.rent_exemption_amount_raw is not None:
+            rent_exemption_amount_decimal = self.rent_exemption_amount_raw / LAMPORTS_PER_SOL
+            result += f", rent_exemption_amount_raw={self.rent_exemption_amount_raw} ({rent_exemption_amount_decimal} SOL)"
+
+        if self.unattributed_sol_amount_raw is not None:
+            unattributed_sol_amount_decimal = self.unattributed_sol_amount_raw / LAMPORTS_PER_SOL
+            result += f", unattributed_sol_amount_raw={self.unattributed_sol_amount_raw} ({unattributed_sol_amount_decimal} SOL)"
+
         price_decimal = self.price_sol_decimal()
         if price_decimal is not None:
             result += f", price_decimal={price_decimal} SOL"
@@ -157,6 +169,7 @@ class TradeResult:
 
         if self.time_to_block_ms is not None:
             result += f", time_to_block_ms={self.time_to_block_ms} SOL"
+
 
         result += ")"
         return result

@@ -47,7 +47,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                     pool_address=pool_address, 
                     amount_in=order.token_amount_raw
                 )
-                #This is incomplete, it's doesn't contain the fees yet
+                #This is incomplete, it's doesn't contain the fees yet: see next step
                 order.sol_amount_raw=net_sol_swapped_raw
                 
                                 
@@ -106,21 +106,33 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
 
         # Get platform fee percentage from curve manager
         platform_constants = await self.curve_manager.get_platform_constants()
-        platform_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100 
+        protocol_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("fee_percentage", 0.95))/100 
+        creator_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("creator_fee_percentage", 0.3))/100 
         # Still charge transaction fees even on slippage failure
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
-        order.platform_fee_raw = -int(net_sol_swapped_raw * platform_fee_percentage)
+        order.protocol_fee_raw = -int(net_sol_swapped_raw * protocol_fee_percentage)
+        order.creator_fee_raw = -int(net_sol_swapped_raw * creator_fee_percentage)
         
+        tip_fee_raw = self.client.tip_amount_lamports if self.client.send_method == "helius_sender" else 0
+
         # minus the fees because sol_amount_raw is negative
-        order.sol_amount_raw = 0 if is_slippage_failure else net_sol_swapped_raw-(order.platform_fee_raw+order.transaction_fee_raw)
+        order.sol_amount_raw = 0 if is_slippage_failure else (
+            -TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE
+            +net_sol_swapped_raw
+            -order.protocol_fee_raw
+            -order.creator_fee_raw
+            -order.transaction_fee_raw
+            -tip_fee_raw
+        )
 
         result = BalanceChangeResult(
             token_swap_amount_raw=order.token_amount_raw,
             net_sol_swap_amount_raw=net_sol_swapped_raw,
-            platform_fee_raw=0 if is_slippage_failure else order.platform_fee_raw,
+            protocol_fee_raw=order.protocol_fee_raw,
+            creator_fee_raw=order.creator_fee_raw,
             transaction_fee_raw=order.transaction_fee_raw,
-            tip_fee_raw=self.client.tip_amount_lamports if self.client.send_method == "helius_sender" else 0,
-            rent_exemption_amount_raw=0,
+            tip_fee_raw=tip_fee_raw,
+            rent_exemption_amount_raw=-TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
             unattributed_sol_amount_raw=0,
             sol_amount_raw=order.sol_amount_raw,
         )
@@ -191,22 +203,37 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
         
         net_sol_swap_amount_raw = order.expected_sol_swap_amount_raw
-        # Calculate fees
-        order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
+
         # Get platform fee percentage from curve manager
         platform_constants = await self.curve_manager.get_platform_constants()
-        platform_fee_percentage = float(platform_constants.get("fee_percentage", 0.95)+platform_constants.get("creator_fee_percentage", 0.3))/100  # Default to 0.8% if not available
-        order.platform_fee_raw = int(net_sol_swap_amount_raw * platform_fee_percentage)
-        
+        protocol_fee_percentage = float(platform_constants.get("fee_percentage", 0.95))/100 
+        creator_fee_percentage = float(platform_constants.get("creator_fee_percentage", 0.3))/100 
+        # Still charge transaction fees even on slippage failure
+        order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
+        order.protocol_fee_raw = int(net_sol_swap_amount_raw * protocol_fee_percentage)
+        order.creator_fee_raw = int(net_sol_swap_amount_raw * creator_fee_percentage)
+
+        tip_fee_raw = self.client.tip_amount_lamports if self.client.send_method == "helius_sender" else 0
+
+        sol_amount_raw=(
+            TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE
+            +net_sol_swap_amount_raw
+            -order.protocol_fee_raw
+            -order.creator_fee_raw
+            -order.transaction_fee_raw
+            -tip_fee_raw
+        )
+
         result = BalanceChangeResult(
             token_swap_amount_raw=-order.token_amount_raw,
             net_sol_swap_amount_raw=net_sol_swap_amount_raw,
-            platform_fee_raw=order.platform_fee_raw,
             transaction_fee_raw=order.transaction_fee_raw,
-            tip_fee_raw=self.client.tip_amount_lamports if self.client.send_method == "helius_sender" else 0,
-            rent_exemption_amount_raw=0,
+            protocol_fee_raw=order.protocol_fee_raw,
+            creator_fee_raw=order.creator_fee_raw,
+            tip_fee_raw=tip_fee_raw,
+            rent_exemption_amount_raw=TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
             unattributed_sol_amount_raw=0,
-            sol_amount_raw=net_sol_swap_amount_raw+order.platform_fee_raw+order.transaction_fee_raw,
+            sol_amount_raw=sol_amount_raw,
         )
         
         # Record simulated trade for price tracking

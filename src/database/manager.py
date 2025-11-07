@@ -141,9 +141,10 @@ class DatabaseManager:
                 (id, mint, platform, entry_net_price_decimal, token_decimals, total_token_swapin_amount_raw,
                  total_token_swapout_amount_raw, entry_ts, exit_strategy, highest_price, max_no_price_change_time, last_price_change_ts, is_active,
                  exit_reason, exit_net_price_decimal, exit_ts, transaction_fee_raw, platform_fee_raw, tip_fee_raw,
+                 rent_exemption_amount_raw, unattributed_sol_amount_raw,
                  realized_pnl_sol_decimal, realized_net_pnl_sol_decimal, buy_amount, total_net_sol_swapout_amount_raw, total_net_sol_swapin_amount_raw,
-                 created_ts, updated_ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 total_sol_swapout_amount_raw, total_sol_swapin_amount_raw, created_ts, updated_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )
@@ -174,9 +175,12 @@ class DatabaseManager:
                     transaction_fee_raw = ?,
                     platform_fee_raw = ?,
                     tip_fee_raw = ?,
+                    rent_exemption_amount_raw = ?,
+                    unattributed_sol_amount_raw = ?,
                     realized_pnl_sol_decimal = ?,
                     realized_net_pnl_sol_decimal = ?,
                     total_net_sol_swapin_amount_raw = ?,
+                    total_sol_swapin_amount_raw = ?,
                     updated_ts = ?
                 WHERE id = ?
             """,
@@ -192,10 +196,13 @@ class DatabaseManager:
                     position.transaction_fee_raw or 0,
                     position.platform_fee_raw or 0,
                     position.tip_fee_raw or 0,
+                    position.rent_exemption_amount_raw or 0,
+                    position.unattributed_sol_amount_raw or 0,
                     position.realized_pnl_sol_decimal,
                     position.realized_net_pnl_sol_decimal,
                     position.total_net_sol_swapin_amount_raw or 0,  # Direct value, not accumulation
-                    position.entry_ts,
+                    position.total_sol_swapin_amount_raw or 0,  # Direct value, not accumulation
+                    int(time()*1000),
                     position_id,
                 ),
             )
@@ -298,7 +305,7 @@ class DatabaseManager:
             run_id: Bot run identifier
         """
         # Use trade_result.block_time or current time as fallback
-        timestamp = trade_result.block_time or int(time() * 1000)
+        timestamp = trade_result.block_time or int(time())
 
         row = TradeConverter.to_row(
             trade_result, mint, timestamp, position_id, trade_type, run_id
@@ -310,8 +317,8 @@ class DatabaseManager:
                 INSERT INTO trades 
                 (mint, timestamp, position_id, success, platform, trade_type,
                  tx_signature, error_message, token_swap_amount_raw, net_sol_swap_amount_raw,
-                 transaction_fee_raw, platform_fee_raw, tip_fee_raw, price_decimal, net_price_decimal, trade_duration_ms, time_to_block_ms, run_id, block_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 transaction_fee_raw, platform_fee_raw, tip_fee_raw, rent_exemption_amount_raw, unattributed_sol_amount_raw, sol_swap_amount_raw, price_decimal, net_price_decimal, trade_duration_ms, time_to_block_ms, run_id, block_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )

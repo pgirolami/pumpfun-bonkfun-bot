@@ -114,11 +114,15 @@ class PositionConverter:
             position.transaction_fee_raw or 0,
             position.platform_fee_raw or 0,
             position.tip_fee_raw or 0,
+            position.rent_exemption_amount_raw or 0,
+            position.unattributed_sol_amount_raw or 0,
             position.realized_pnl_sol_decimal,
             position.realized_net_pnl_sol_decimal,
             position.buy_amount,
             position.total_net_sol_swapout_amount_raw,
             position.total_net_sol_swapin_amount_raw,
+            position.total_sol_swapout_amount_raw,
+            position.total_sol_swapin_amount_raw,
             position.entry_ts,  # created_ts (same as entry_ts for new positions)
             position.entry_ts,  # updated_ts (will be updated on changes)
         )
@@ -158,11 +162,15 @@ class PositionConverter:
             transaction_fee_raw=row[16],
             platform_fee_raw=row[17],
             tip_fee_raw=row[18],
-            realized_pnl_sol_decimal=row[19],
-            realized_net_pnl_sol_decimal=row[20],
-            buy_amount=row[21],
-            total_net_sol_swapout_amount_raw=row[22],
-            total_net_sol_swapin_amount_raw=row[23],
+            rent_exemption_amount_raw=row[19],
+            unattributed_sol_amount_raw=row[20],
+            realized_pnl_sol_decimal=row[21],
+            realized_net_pnl_sol_decimal=row[22],
+            buy_amount=row[23],
+            total_net_sol_swapout_amount_raw=row[24],
+            total_net_sol_swapin_amount_raw=row[25],
+            total_sol_swapout_amount_raw=row[26],
+            total_sol_swapin_amount_raw=row[27],
             min_gain_percentage=min_gain_percentage,  # Set from current configuration
             min_gain_time_window=min_gain_time_window,  # Set from current configuration
             monitoring_start_ts=None,  # Will be set when monitoring starts
@@ -208,6 +216,9 @@ class TradeConverter:
             trade_result.transaction_fee_raw,
             trade_result.platform_fee_raw,
             trade_result.tip_fee_raw,
+            trade_result.rent_exemption_amount_raw,
+            trade_result.unattributed_sol_amount_raw,
+            trade_result.sol_swap_amount_raw,
             trade_result.price_sol_decimal(),
             trade_result.net_price_sol_decimal(),
             trade_result.trade_duration_ms,
@@ -233,14 +244,17 @@ class TradeConverter:
             platform=Platform(row[4]),
             tx_signature=row[6],
             error_message=row[7],
-            block_time=(row[18] if len(row) > 18 else row[1]),
+            block_time=(row[19] or row[1]),
             token_swap_amount_raw=row[8],
             net_sol_swap_amount_raw=row[9],
             transaction_fee_raw=row[10],
             platform_fee_raw=row[11],
             tip_fee_raw=row[12],
-            trade_duration_ms=row[15],  # trade_duration_ms
-            time_to_block_ms=row[16],
+            rent_exemption_amount_raw=row[13],
+            unattributed_sol_amount_raw=row[14],
+            sol_swap_amount_raw=row[15],
+            trade_duration_ms=row[18],  # trade_duration_ms
+            time_to_block_ms=row[19],
         )
 
 

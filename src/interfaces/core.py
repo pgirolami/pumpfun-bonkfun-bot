@@ -26,8 +26,11 @@ class BalanceChangeResult:
         0  # Token amount in raw units: positive for buys, negative for sells
     )
     net_sol_swap_amount_raw: int = 0  # SOL amount in lamports that was actually used for token purchase (excluding rent exemption since we get that back after closing the ATA)
-    platform_fee_raw: int = (
-        0  # Platform fee in lamports (includes creator + platform fees)
+    protocol_fee_raw: int = (
+        0  # Protocol fee in lamports
+    )
+    creator_fee_raw: int = (
+        0  # Creator fee in lamports
     )
     transaction_fee_raw: int = (
         0  # Base + priority transaction fee in lamports (from meta.fee)
@@ -51,22 +54,26 @@ class BalanceChangeResult:
         sol_amount_decimal = self.sol_amount_raw / LAMPORTS_PER_SOL
         rent_exemption_decimal = self.rent_exemption_amount_raw / LAMPORTS_PER_SOL
         transaction_fee_decimal = self.transaction_fee_raw / LAMPORTS_PER_SOL
-        platform_fee_decimal = self.platform_fee_raw / LAMPORTS_PER_SOL
+        protocol_fee_decimal = self.protocol_fee_raw / LAMPORTS_PER_SOL
+        creator_fee_decimal = self.creator_fee_raw / LAMPORTS_PER_SOL
         net_sol_swap_amount_decimal = self.net_sol_swap_amount_raw / LAMPORTS_PER_SOL
         token_swap_amount_decimal = self.token_swap_amount_raw / (10**TOKEN_DECIMALS)
-
+        unattributed_sol_amount_decimal = self.unattributed_sol_amount_raw / LAMPORTS_PER_SOL
+        
         net_price_decimal = abs(self.net_sol_swap_amount_raw / self.token_swap_amount_raw) * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
         tip_fee_decimal = self.tip_fee_raw / LAMPORTS_PER_SOL
 
         return (
             f"BalanceChangeResult("
             f"token_swap_amount={self.token_swap_amount_raw} raw units ({token_swap_amount_decimal:.6f} tokens), "
-            f"net_sol_swap_amount ={self.net_sol_swap_amount_raw} lamports ({net_sol_swap_amount_decimal:.6f} SOL), "
+            f"sol_amount={self.sol_amount_raw} lamports ({sol_amount_decimal:.6f} SOL) "
+            f"rent_exemption_amount={self.rent_exemption_amount_raw} lamports ({rent_exemption_decimal:.6f} SOL), "
             f"transaction_fee={self.transaction_fee_raw} lamports ({transaction_fee_decimal:.6f} SOL), "
             f"tip_fee={self.tip_fee_raw} lamports ({tip_fee_decimal:.6f} SOL), "
-            f"platform_fee={self.platform_fee_raw} lamports ({platform_fee_decimal:.6f} SOL), "
-            f"rent_exemption_amount={self.rent_exemption_amount_raw} lamports ({rent_exemption_decimal:.6f} SOL) "
-            f"=> sol_amount={self.sol_amount_raw} lamports ({sol_amount_decimal:.6f} SOL) "
+            f"protocol_fee_raw={self.protocol_fee_raw} lamports ({protocol_fee_decimal:.6f} SOL), "
+            f"creator_fee_raw={self.creator_fee_raw} lamports ({creator_fee_decimal:.6f} SOL), "
+            f"net_sol_swap_amount ={self.net_sol_swap_amount_raw} lamports ({net_sol_swap_amount_decimal:.6f} SOL), "
+            f"unattributed_sol_amount={self.unattributed_sol_amount_raw} lamports ({unattributed_sol_amount_decimal:.6f} SOL), "
             f"=> net_price={net_price_decimal} SOL"
             f")"
         )

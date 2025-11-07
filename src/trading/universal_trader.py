@@ -801,9 +801,12 @@ class UniversalTrader:
                     transaction_fee_raw=buy_result.transaction_fee_raw,
                     platform_fee_raw=buy_result.platform_fee_raw,
                     tip_fee_raw=buy_result.tip_fee_raw,
+                    rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
+                    unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
                     exit_strategy=self.exit_strategy,
                     buy_amount=self.buy_amount,
                     total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw,  # Raw value (negative for buys)
+                    total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # Raw value (negative for buys)
                     take_profit_percentage=self.take_profit_percentage,
                     stop_loss_percentage=self.stop_loss_percentage,
                     trailing_stop_percentage=self.trailing_stop_percentage,
@@ -830,9 +833,13 @@ class UniversalTrader:
                     transaction_fee_raw=buy_result.transaction_fee_raw,  # Still incurred fees
                     platform_fee_raw=buy_result.platform_fee_raw,  # Still incurred fees
                     tip_fee_raw=buy_result.tip_fee_raw,  # Still incurred fees
+                    rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
+                    unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
                     buy_amount=self.buy_amount,  # Still intended to buy this amount
                     total_net_sol_swapout_amount_raw=0,  # No SOL spent
                     total_net_sol_swapin_amount_raw=0,  # No SOL received
+                    total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # SOL spent
+                    total_sol_swapin_amount_raw=0,  # No SOL received
                 )
             if self.database_manager:
                 try:

@@ -93,22 +93,29 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
         creator_vault_index = None
         bonding_curve_index = None
         
+        # Get bonding curve from instruction accounts
+        bonding_curve = instruction_accounts.get("bonding_curve")
+        
         for i, account_key in enumerate(tx.transaction.transaction.message.account_keys):
             if account_key.pubkey == fee_account:
                 fee_index = i
             elif account_key.pubkey == creator_vault:
                 creator_vault_index = i
+            elif bonding_curve and account_key.pubkey == bonding_curve:
+                bonding_curve_index = i
         
+        # Calculate net_sol_swap_amount to bonding curve balance change
+        # On buy: bonding curve receives SOL => positive change
+        bonding_curve_swap_amount_raw = int(post_balances[bonding_curve_index]) - int(pre_balances[bonding_curve_index])        
+
         # Calculate actual fees from balance changes
         protocol_fee_raw = 0
         creator_fee_raw = 0
         token_swap_amount_raw = 0
         
-        if fee_index is not None and fee_index < len(pre_balances) and fee_index < len(post_balances):
-            protocol_fee_raw = int(post_balances[fee_index]) - int(pre_balances[fee_index])
+        protocol_fee_raw = int(post_balances[fee_index]) - int(pre_balances[fee_index])
         
-        if creator_vault_index is not None and creator_vault_index < len(pre_balances) and creator_vault_index < len(post_balances):
-            creator_fee_raw = int(post_balances[creator_vault_index]) - int(pre_balances[creator_vault_index])
+        creator_fee_raw = int(post_balances[creator_vault_index]) - int(pre_balances[creator_vault_index])
         
         # Calculate token amount from user's token account balance changes
         if user_token_account_index is not None:
@@ -146,13 +153,24 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
                     if tip_balance_change > 0:
                         tip_fee_raw += tip_balance_change
         
-        net_sol_swap_amount_raw = sol_amount_raw + total_platform_fee_raw + transaction_fee + tip_fee_raw - rent_exemption_amount_raw
-        
+
+        net_sol_swap_amount_raw = -bonding_curve_swap_amount_raw #- total_platform_fee_raw
+
+        unattributed_sol_amount_raw = sol_amount_raw - (net_sol_swap_amount_raw - transaction_fee - tip_fee_raw + rent_exemption_amount_raw)
+
+        if unattributed_sol_amount_raw != 0:
+            logger.warning(f"[{str(token_info.mint)[:8]}] Unattributed SOL amount in balance check : {unattributed_sol_amount_raw} lamports in transaction {str(tx.transaction.transaction.signatures[0])}")
+
+        # All this has been checked, rechecked and checked again
+        # See https://docs.google.com/spreadsheets/d/1UN6nxlqMq0SU2wCmwCoprO5WGA3pacxuwBaIl9LmnpQ/edit?gid=219123703#gid=219123703
+
         return BalanceChangeResult(
             token_swap_amount_raw=token_swap_amount_raw,  # Positive for buys, negative for sells
             net_sol_swap_amount_raw=net_sol_swap_amount_raw,  # Negative for buys, positive for sells
-            rent_exemption_amount_raw=rent_exemption_amount_raw, #positive for buys
-            platform_fee_raw=total_platform_fee_raw,
+            rent_exemption_amount_raw=rent_exemption_amount_raw,
+            unattributed_sol_amount_raw=unattributed_sol_amount_raw,
+            protocol_fee_raw=protocol_fee_raw,
+            creator_fee_raw=creator_fee_raw,
             transaction_fee_raw=transaction_fee,
             tip_fee_raw=tip_fee_raw,
             sol_amount_raw=sol_amount_raw,

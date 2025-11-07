@@ -173,8 +173,10 @@ class PlatformAwareBuyer(Trader):
                 transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 net_sol_swap_amount_raw=balance_changes.net_sol_swap_amount_raw if balance_changes else None,
-                platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
+                platform_fee_raw=balance_changes.protocol_fee_raw + balance_changes.creator_fee_raw,
                 tip_fee_raw=balance_changes.tip_fee_raw if balance_changes else None,
+                rent_exemption_amount_raw=balance_changes.rent_exemption_amount_raw,
+                unattributed_sol_amount_raw=balance_changes.unattributed_sol_amount_raw,
                 trade_duration_ms=trade_duration_ms,
                 time_to_block_ms=time_to_block_ms,
                 sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
@@ -190,6 +192,7 @@ class PlatformAwareBuyer(Trader):
             logger.exception("Buy operation failed")
             logger.info(f"Failed buy trade took {trade_duration_ms}ms")
             return TradeResult(
+                block_time=confirm_result.block_ts,
                 success=False, 
                 platform=token_info.platform, 
                 error_message=str(e),
@@ -375,8 +378,10 @@ class PlatformAwareSeller(Trader):
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 net_sol_swap_amount_raw=balance_changes.net_sol_swap_amount_raw if balance_changes else None,
                 sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
-                platform_fee_raw=balance_changes.platform_fee_raw if balance_changes else None,
+                platform_fee_raw=balance_changes.protocol_fee_raw + balance_changes.creator_fee_raw,
                 tip_fee_raw=balance_changes.tip_fee_raw if balance_changes else None,
+                rent_exemption_amount_raw=balance_changes.rent_exemption_amount_raw,
+                unattributed_sol_amount_raw=balance_changes.unattributed_sol_amount_raw,
                 trade_duration_ms=trade_duration_ms,
                 time_to_block_ms=time_to_block_ms,
             )
@@ -392,6 +397,7 @@ class PlatformAwareSeller(Trader):
             logger.exception(e)
             logger.info(f"Failed sell trade took {trade_duration_ms}ms")
             return TradeResult(
+                block_time=confirm_result.block_ts,
                 success=False, 
                 platform=token_info.platform, 
                 error_message=str(e),

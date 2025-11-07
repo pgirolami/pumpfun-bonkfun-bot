@@ -83,6 +83,8 @@ class Position:
     transaction_fee_raw: int | None = None  # Replaces buy_fee_raw and sell_fee_raw
     platform_fee_raw: int | None = None  # New field
     tip_fee_raw: int | None = None
+    rent_exemption_amount_raw: int | None = None
+    unattributed_sol_amount_raw: int | None = None
     
     # PnL tracking
     realized_pnl_sol_decimal: float | None = None  # From get_net_pnl()["realized_pnl_sol_decimal"]
@@ -92,6 +94,9 @@ class Position:
     buy_amount: float | None = None  # Intended SOL amount to invest
     total_net_sol_swapout_amount_raw: int | None = None  # Total SOL spent on buys
     total_net_sol_swapin_amount_raw: int | None = None  # Total SOL received from sells (starts at 0)
+
+    total_sol_swapout_amount_raw: int | None = None  # Total SOL spent on buys
+    total_sol_swapin_amount_raw: int | None = None  # Total SOL received from sells (starts at 0)
 
     @staticmethod
     def generate_position_id(mint: Pubkey, platform: Platform, entry_ts: int) -> str:
@@ -120,8 +125,11 @@ class Position:
         transaction_fee_raw: int | None,
         platform_fee_raw: int | None,
         tip_fee_raw: int | None,
+        rent_exemption_amount_raw: int | None,
+        unattributed_sol_amount_raw: int | None,
         exit_strategy: str,
         buy_amount: float,
+        total_sol_swapout_amount_raw: int | None,
         total_net_sol_swapout_amount_raw: int | None,
         take_profit_percentage: float | None,
         stop_loss_percentage: float | None,
@@ -184,6 +192,8 @@ class Position:
             transaction_fee_raw=transaction_fee_raw,
             platform_fee_raw=platform_fee_raw,
             tip_fee_raw=tip_fee_raw,
+            rent_exemption_amount_raw=rent_exemption_amount_raw,
+            unattributed_sol_amount_raw=unattributed_sol_amount_raw,
             trailing_stop_percentage=trailing_stop_percentage,
             highest_price=entry_net_price_decimal,
             #TODO review the following for replays
@@ -193,6 +203,8 @@ class Position:
             buy_amount=buy_amount,
             total_net_sol_swapout_amount_raw=total_net_sol_swapout_amount_raw,
             total_net_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
+            total_sol_swapout_amount_raw=total_sol_swapout_amount_raw,
+            total_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
         )
         
         # Apply exit strategy configuration to override raw percentages
@@ -383,8 +395,10 @@ class Position:
         # Update swap amounts from the final sell
         if sell_result.token_swap_amount_raw:
             self.total_token_swapout_amount_raw = (self.total_token_swapout_amount_raw or 0) + sell_result.token_swap_amount_raw
-        if sell_result.sol_swap_amount_raw:
+        if sell_result.net_sol_swap_amount_raw:
             self.total_net_sol_swapin_amount_raw = (self.total_net_sol_swapin_amount_raw or 0) + sell_result.net_sol_swap_amount_raw
+        if sell_result.sol_swap_amount_raw:
+            self.total_sol_swapin_amount_raw = (self.total_sol_swapin_amount_raw or 0) + sell_result.sol_swap_amount_raw
         
         # Update highest price if exit price is higher
         exit_price = sell_result.net_price_sol_decimal()
@@ -395,6 +409,8 @@ class Position:
         self.transaction_fee_raw = (self.transaction_fee_raw or 0) + (sell_result.transaction_fee_raw or 0)
         self.platform_fee_raw = (self.platform_fee_raw or 0) + (sell_result.platform_fee_raw or 0)
         self.tip_fee_raw = (self.tip_fee_raw or 0) + (sell_result.tip_fee_raw or 0)
+        self.rent_exemption_amount_raw = (self.rent_exemption_amount_raw or 0) + (sell_result.rent_exemption_amount_raw or 0)
+        self.unattributed_sol_amount_raw = (self.unattributed_sol_amount_raw or 0) + (sell_result.unattributed_sol_amount_raw or 0)
             
         # Calculate realized PnL using get_net_pnl method
         pnl_dict = self._get_pnl()  # No parameter needed since position is now inactive

@@ -25,7 +25,8 @@ class Order(ABC):
     
     # Fees (populated after execution)
     transaction_fee_raw: int | None = None
-    platform_fee_raw: int | None = None
+    protocol_fee_raw: int | None = None
+    creator_fee_raw: int | None = None
 
     block_ts: int | None = None
     
