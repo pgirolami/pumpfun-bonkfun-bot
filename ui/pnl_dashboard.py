@@ -14,8 +14,12 @@ from flask_compress import Compress  # type: ignore
 
 from ui.shared import process_database
 
-# Set template folder to ui/templates (relative to this file)
-app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
+# Set template folder and static folder to ui/templates and ui/static (relative to this file)
+app = Flask(
+    __name__,
+    template_folder=str(Path(__file__).parent / "templates"),
+    static_folder=str(Path(__file__).parent / "static"),
+)
 Compress(app)  # Enable gzip compression
 
 # Path to data directory (relative to project root)
