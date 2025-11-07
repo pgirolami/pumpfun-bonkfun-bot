@@ -41,14 +41,14 @@ start_timestamp = 0  # Unix epoch milliseconds
 
 # Database paths (labels will be automatically derived from filenames)
 databases = [
-    "/Users/philippe/Documents/crypto/pumpfun-bonkfun-bot/data/bot-helius-rpc-with-size-limit_DapP34Bq_live.db",
-    "/Users/philippe/Documents/crypto/pumpfun-bonkfun-bot/data/bot-helius-rpc_66yiD5Cs_live.db",    
-    # "/tmp/bot-heliussender_66yiD5Cs_dryrun.db",
-    # "/tmp/bot-old-heliussender-avg_pnl_5_66yiD5Cs_dryrun.db",
-    # "/tmp/bot-old-heliussender-avg_pnl_66yiD5Cs_dryrun.db",
-    # "/tmp/bot-old-heliussender_66yiD5Cs_dryrun.db",
-    # "/tmp/bot-old_66yiD5Cs_dryrun.db",
-    # "/tmp/bot-sniper-pumpportal_66yiD5Cs_dryrun.db",
+    # "/Users/philippe/Documents/crypto/pumpfun-bonkfun-bot/data/bot-helius-rpc-with-size-limit_DapP34Bq_live.db",
+    # "/Users/philippe/Documents/crypto/pumpfun-bonkfun-bot/data/bot-helius-rpc_66yiD5Cs_live.db",    
+    "/tmp/bot-heliussender_66yiD5Cs_dryrun.db",
+    "/tmp/bot-old-heliussender-avg_pnl_5_66yiD5Cs_dryrun.db",
+    "/tmp/bot-old-heliussender-avg_pnl_66yiD5Cs_dryrun.db",
+    "/tmp/bot-old-heliussender_66yiD5Cs_dryrun.db",
+    "/tmp/bot-old_66yiD5Cs_dryrun.db",
+    "/tmp/bot-sniper-pumpportal_66yiD5Cs_dryrun.db",
 ]
 
 # %%
