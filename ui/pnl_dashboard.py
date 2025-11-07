@@ -63,11 +63,6 @@ def register_running_bot_database(db_path: str) -> None:
         abs_path = str((PROJECT_ROOT / db_path).resolve())
     
     _running_bot_databases.add(abs_path)
-    
-    # Debug logging
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Registered database: '{db_path}' -> '{abs_path}' (total registered: {len(_running_bot_databases)})")
 
 
 def unregister_running_bot_database(db_path: str) -> None:
@@ -112,18 +107,12 @@ def find_databases(only_running: bool = True) -> list[str]:
         # Normalize registered paths and match against found databases
         # Both should already be absolute paths, but ensure consistency
         registered_abs = {str(Path(p).resolve()) for p in _running_bot_databases}
-        
-        # Debug logging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"Registered databases (normalized): {list(registered_abs)}")
-        logger.info(f"Found databases in {DATA_DIR}: {all_databases}")
-        
         matched = [db for db in all_databases if db in registered_abs]
-        logger.info(f"Matched databases: {matched}")
         
-        # If no matches, show what didn't match
+        # Log warning only if no matches found but databases exist
         if not matched and all_databases:
+            import logging
+            logger = logging.getLogger(__name__)
             logger.warning(f"No matches found. Registered: {list(registered_abs)}, Found: {all_databases}")
         
         return matched
@@ -158,17 +147,6 @@ def api_data() -> str:
 
     # Find databases (filtered by only_running setting)
     databases = find_databases(only_running=only_running)
-    
-    # Debug logging
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"API request: only_running={only_running}, registered={len(_running_bot_databases)}, found={len(databases)}")
-    if _running_bot_databases:
-        logger.info(f"Registered databases: {list(_running_bot_databases)}")
-    all_dbs = find_databases(only_running=False)
-    logger.info(f"Total databases in data directory: {len(all_dbs)}")
-    if all_dbs:
-        logger.info(f"All databases: {all_dbs[:3]}...")  # Show first 3
 
     if not databases:
         # Return empty result instead of 404, with informative message
@@ -190,17 +168,10 @@ def api_data() -> str:
 
     # Process all databases
     results = []
+    import logging
+    logger = logging.getLogger(__name__)
     for db_path in databases:
         try:
-            # Check if database has any positions at all (without timestamp filter)
-            from ui.shared import query_positions
-            all_positions = query_positions(db_path, 0)  # 0 = no filter
-            logger.info(f"Database {Path(db_path).name}: {len(all_positions)} total positions")
-            
-            if start_timestamp > 0:
-                filtered_positions = query_positions(db_path, start_timestamp)
-                logger.info(f"Database {Path(db_path).name}: {len(filtered_positions)} positions after start_timestamp filter")
-            
             result = process_database(db_path, start_timestamp)
             if result:
                 label, timestamps, cumulative_pnl, stats = result
@@ -214,7 +185,6 @@ def api_data() -> str:
                         "stats": stats,
                     }
                 )
-                logger.info(f"Successfully processed database {Path(db_path).name}: {stats['num_positions']} positions")
             else:
                 # Database exists but has no positions (or all filtered out by start_timestamp)
                 logger.warning(f"Database {Path(db_path).name} returned no data (no positions or all filtered by start_timestamp={start_timestamp})")
