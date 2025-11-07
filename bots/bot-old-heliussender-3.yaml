@@ -3,20 +3,20 @@
 
 # Bot identification and connection settings
 env_file: ".env"
-private_key: "${SOLANA_PRIVATE_KEY}"
 
-# RPC configuration
 rpc:
   rpc_endpoint: "${HELIUS_RPC_ENDPOINT}"
   wss_endpoint: "${HELIUS_WSS_ENDPOINT}"
-  send_method: "solana"  # Options: "solana" (standard RPC) or "helius_sender" (Helius Sender)
+  send_method: "helius_sender"  # Options: "solana" (standard RPC) or "helius_sender" (Helius Sender)
   # Helius Sender configuration (only used when send_method: "helius_sender")
   helius_sender:
     routing: "swqos_only"  # Options: "swqos_only" (default, requires 0.000005 SOL tip) or "dual" (requires 0.001 SOL tip)
     tip_amount_sol: 0.000005  # Tip amount in SOL (defaults: 0.000005 for swqos_only, 0.001 for dual)
-    endpoint: "http://lon-sender.helius-rpc.com/fast"  # Optional override (defaults to London HTTPS endpoint)
+    endpoint: "https://lon-sender.helius-rpc.com/fast"  # Optional override (defaults to London HTTPS endpoint)
 
-enabled: false # You can turn off the bot w/o removing its config
+private_key: "${SOLANA_PRIVATE_KEY}"
+
+enabled: true # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
@@ -29,33 +29,30 @@ pumpportal:
 # Testing configuration (optional)
 testing:
   dry_run: true  # Set to true to simulate transactions without sending to blockchain
-  dry_run_wait_time_seconds: 1.8  # Simulate RPC latency in dry-run mode
+  dry_run_wait_time_seconds: 1.3  # Simulate RPC latency in dry-run mode
 
 
 # Trading parameters
 # Control trade execution: amount of SOL per trade and acceptable price deviation
 trade:
-  buy_amount: 0.01 # Amount of SOL to spend when buying (in SOL)
+  buy_amount: 0.1 # Amount of SOL to spend when buying (in SOL)
   buy_slippage: 0.5 # Maximum acceptable price deviation (0.3 = 30%)
   sell_slippage: 0.99
-  max_wallet_loss_percentage: 5.0  # Stop buying if wallet loss exceeds 5%
-  max_active_mints: 1 # Maximum concurrent active positions (YOLO mode only)
+  max_active_mints: 4 # Maximum concurrent active positions (YOLO mode only)
 
-  # Market quality configuration (NEW FEATURE)
   market_quality:
-    algorithm: "pnl_avg"
-    enabled: false # Enable market quality-based buy pausing
-    lookback_minutes: 2 # Time window in minutes to analyze recent closed positions
+    enabled: true # Enable market quality-based buy pausing
+    lookback_minutes: 1 # Time window in minutes to analyze recent closed positions
     exploration_probability: 0.1 # Probability of buying regardless of quality (0.1 = 10% exploration)
-    min_trades_for_analysis: 10 # Minimum number of closed positions required for analysis (returns 1.0 if fewer)
+    min_trades_for_analysis: 2 # Minimum number of closed positions required for analysis (returns 1.0 if fewer)
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual", "trailing"
-  take_profit_percentage: 0.1 # Take profit (0.1 = 10%)
+  take_profit_percentage: 0.05 # Take profit (0.1 = 10%)
   stop_loss_percentage: 0.01 # Stop loss (0.1 = 10%)
   trailing_stop_percentage: 0.1 # Trailing stop at 20% from highest price (0.2 = 20%)
   max_hold_time: 6000 # Maximum hold time in seconds (600 = 10 minutes)
-  price_check_interval: 1 # Check price every 2 seconds
+  price_check_interval: 0.5 # Check price every 2 seconds
 
   # Volatility-based take profit adjustments (NEW FEATURE)
   enable_volatility_adjustment: true # Enable volatility-based TP adjustments
@@ -99,6 +96,8 @@ compute_units:
   # Override default CU limits for this platform
   # buy: 100_000    # Buy operations (ATA creation + trading)
   # sell: 60_000    # Sell operations (just trading)
+  account_data_size_buy: 512_000 # 512KB limit
+  account_data_size_sell: 512_000 # 512KB limit
 
 # Filters for token selection
 filters:
@@ -108,7 +107,7 @@ filters:
   max_token_age: 0.001 # Maximum token age in seconds for processing
   marry_mode: false # Only buy tokens, skip selling
   max_buys: null # Maximum number of buys (null = unlimited)
-  min_initial_buy_sol: 0.98 # Minimum initial SOL buy amount to consider a token (in SOL)
+  min_initial_buy_sol: 1.0 # Minimum initial SOL buy amount to consider a token (in SOL)
 
 # Retry and timeout settings
 retries:
