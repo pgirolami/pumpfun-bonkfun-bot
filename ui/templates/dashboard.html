@@ -10,16 +10,17 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             margin: 0;
-            padding: 20px;
+            padding: 0;
             background-color: #f5f5f5;
+            min-width: 1920px;
         }
         .container {
-            max-width: 1400px;
-            margin: 0 auto;
+            max-width: 100%;
+            margin: 0;
             background-color: white;
             padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-radius: 0;
+            box-shadow: none;
         }
         h1 {
             margin-top: 0;
@@ -121,10 +122,13 @@
                 </small>
             </div>
             <div style="margin-bottom: 10px;">
+                <button onclick="setFromStart()" style="margin-right: 5px;">From Start</button>
+                <button onclick="setPastHour()" style="margin-right: 5px;">Past Hour</button>
+                <button onclick="setPast6Hours()" style="margin-right: 5px;">Past 6 Hours</button>
+                <button onclick="setPast12Hours()" style="margin-right: 5px;">Past 12 Hours</button>
                 <button onclick="setPastDay()" style="margin-right: 5px;">Past Day</button>
                 <button onclick="setPastWeek()" style="margin-right: 5px;">Past Week</button>
                 <button onclick="setPastMonth()" style="margin-right: 5px;">Past Month</button>
-                <button onclick="setFromStart()" style="margin-right: 5px;">From Start</button>
             </div>
             <div style="margin-bottom: 10px;">
                 <label style="display: flex; align-items: center; cursor: pointer;">
@@ -191,6 +195,33 @@
             return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
         }
 
+        function setFromStart() {
+            // Clear the date input to use default (bot start time)
+            document.getElementById('start_date').value = '';
+            loadData();
+        }
+
+        function setPastHour() {
+            const now = new Date();
+            const pastHour = new Date(now.getTime() - 60 * 60 * 1000);
+            document.getElementById('start_date').value = formatDateForInput(pastHour);
+            loadData();
+        }
+
+        function setPast6Hours() {
+            const now = new Date();
+            const past6Hours = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+            document.getElementById('start_date').value = formatDateForInput(past6Hours);
+            loadData();
+        }
+
+        function setPast12Hours() {
+            const now = new Date();
+            const past12Hours = new Date(now.getTime() - 12 * 60 * 60 * 1000);
+            document.getElementById('start_date').value = formatDateForInput(past12Hours);
+            loadData();
+        }
+
         function setPastDay() {
             const now = new Date();
             const pastDay = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -209,12 +240,6 @@
             const now = new Date();
             const pastMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
             document.getElementById('start_date').value = formatDateForInput(pastMonth);
-            loadData();
-        }
-
-        function setFromStart() {
-            // Clear the date input to use default (bot start time)
-            document.getElementById('start_date').value = '';
             loadData();
         }
 
