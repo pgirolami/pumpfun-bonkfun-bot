@@ -16,7 +16,7 @@ rpc:
 
 private_key: "${SOLANA_PRIVATE_KEY}"
 
-enabled: true # You can turn off the bot w/o removing its config
+enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
@@ -42,13 +42,13 @@ trade:
 
   market_quality:
     enabled: true # Enable market quality-based buy pausing
-    lookback_minutes: 1 # Time window in minutes to analyze recent closed positions
-    exploration_probability: 0.1 # Probability of buying regardless of quality (0.1 = 10% exploration)
-    min_trades_for_analysis: 2 # Minimum number of closed positions required for analysis (returns 1.0 if fewer)
+    lookback_minutes: 35 # Time window in minutes to analyze recent closed positions
+    exploration_probability: 0.05 # Probability of buying regardless of quality (0.1 = 10% exploration)
+    min_trades_for_analysis: 10 # Minimum number of closed positions required for analysis (returns 1.0 if fewer)
 
   # Exit strategy configuration
   exit_strategy: "trailing" # Options: "time_based", "tp_sl", "manual", "trailing"
-  take_profit_percentage: 0.05 # Take profit (0.1 = 10%)
+  take_profit_percentage: 0.1 # Take profit (0.1 = 10%)
   stop_loss_percentage: 0.01 # Stop loss (0.1 = 10%)
   trailing_stop_percentage: 0.1 # Trailing stop at 20% from highest price (0.2 = 20%)
   max_hold_time: 6000 # Maximum hold time in seconds (600 = 10 minutes)

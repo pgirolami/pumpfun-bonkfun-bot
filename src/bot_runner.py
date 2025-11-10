@@ -75,11 +75,12 @@ async def start_bot(config_path: str):
         )
         return
 
+    # Derive wallet pubkey for database naming
+    wallet = Wallet(cfg["private_key"])
+    wallet_pubkey_short = str(wallet.pubkey)[:8]
+
     # Create database manager
     try:
-        # Derive wallet pubkey for database naming
-        wallet = Wallet(cfg["private_key"])
-        wallet_pubkey_short = str(wallet.pubkey)[:8]
                 
         # Create database path
         bot_name = cfg.get("name", "unknown")
@@ -95,8 +96,8 @@ async def start_bot(config_path: str):
             from ui.pnl_dashboard import register_running_bot_database
             register_running_bot_database(db_path)
             logging.debug(f"Registered database {db_path} with dashboard (bot process)")
-        except Exception as e:
-            logging.warning(f"Could not register database with dashboard: {e}")
+        except Exception:
+            logging.exception(f"Could not register database with dashboard")
             
     except Exception as e:
         logging.exception(f"Failed to initialize database: {e}")

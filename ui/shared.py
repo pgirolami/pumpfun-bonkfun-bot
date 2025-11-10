@@ -64,38 +64,44 @@ def extract_label(db_path: str) -> str:
     return stem
 
 
-def calculate_max_drawdown(cumulative_pnl: list[float]) -> float:
-    """Calculate maximum drawdown as a percentage from the peak.
+def calculate_max_drawdown(
+    cumulative_pnl: list[float], baseline_equity: float = 1.0
+) -> float:
+    """Calculate maximum drawdown as a percentage from the equity peak.
 
-    Max drawdown is the largest peak-to-trough decline in the cumulative PNL,
-    expressed as a percentage of the peak value. Drawdown is only calculated
-    when the value is below the peak, and is capped at 100%.
+    This function treats the cumulative PNL series as incremental changes on top
+    of a baseline account equity (defaulting to 1 SOL). Using a baseline avoids
+    artificially large drawdowns when profits are small or when the cumulative
+    PNL dips below zero, which previously caused the metric to report 100% for
+    most bots.
 
     Args:
-        cumulative_pnl: List of cumulative PNL values over time
+        cumulative_pnl: List of cumulative PNL values over time.
+        baseline_equity: The assumed starting equity used to normalise the
+            drawdown calculation. Defaults to 1.0 (1 SOL).
 
     Returns:
-        Maximum drawdown percentage (0-100, representing the largest drop from peak)
+        Maximum drawdown percentage from the equity peak.
     """
     if not cumulative_pnl:
         return 0.0
 
+    running_max_equity = baseline_equity + cumulative_pnl[0]
     max_drawdown_pct = 0.0
-    peak = cumulative_pnl[0]
 
-    for value in cumulative_pnl:
-        if value > peak:
-            # New peak reached, update peak
-            peak = value
-        elif value < peak:
-            # We're in a drawdown (below the peak)
-            # Only calculate drawdown if peak is positive
-            if peak > 0:
-                drawdown_pct = ((peak - value) / peak) * 100
-                # Cap at 100% (you can't lose more than 100% of the peak)
-                drawdown_pct = min(drawdown_pct, 100.0)
-                if drawdown_pct > max_drawdown_pct:
-                    max_drawdown_pct = drawdown_pct
+    for pnl in cumulative_pnl:
+        equity = baseline_equity + pnl
+        if equity > running_max_equity:
+            running_max_equity = equity
+            continue
+
+        if running_max_equity <= 0:
+            # Avoid division by zero or negative baseline
+            continue
+
+        drawdown_pct = ((running_max_equity - equity) / running_max_equity) * 100
+        if drawdown_pct > max_drawdown_pct:
+            max_drawdown_pct = drawdown_pct
 
     return max_drawdown_pct
 
