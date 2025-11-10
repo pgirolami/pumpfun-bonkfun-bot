@@ -94,10 +94,10 @@ class TokenTradeTracker:
             
             if tx_type == "buy" or tx_type == "create":
                 self.creator_token_swap_in += token_amount_raw
-                logger.info(f"[{str(self.mint)[:8]}] Creator [{self.creator_public_key[:8]}] buy: +{token_amount_raw} tokens (swap_in: {self.creator_token_swap_in}, swap_out: {self.creator_token_swap_out})")
+                logger.debug(f"[{str(self.mint)[:8]}] Creator [{self.creator_public_key[:8]}] buy: +{token_amount_raw} tokens (swap_in: {self.creator_token_swap_in}, swap_out: {self.creator_token_swap_out})")
             elif tx_type == "sell":
                 self.creator_token_swap_out -= token_amount_raw
-                logger.info(f"[{str(self.mint)[:8]}] Creator [{self.creator_public_key[:8]}] sell: +{token_amount_raw} tokens (swap_in: {self.creator_token_swap_in}, swap_out: {self.creator_token_swap_out})")
+                logger.debug(f"[{str(self.mint)[:8]}] Creator [{self.creator_public_key[:8]}] sell: +{token_amount_raw} tokens (swap_in: {self.creator_token_swap_in}, swap_out: {self.creator_token_swap_out})")
             else:
                 logger.warning(f"[{str(self.mint)[:8]}] Creator [{self.creator_public_key[:8]}] unknown trade type: {tx_type}")
 
@@ -119,7 +119,8 @@ class TokenTradeTracker:
         self.last_update_timestamp = timestamp
         self.price_update_event.set()
         
-        logger.debug(f"[{str(self.mint)[:8]}] apply_trade() -> (Trades) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} -> price={current_price:.10f}")
+        formatted_time = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S.%f")[:-3]
+        logger.debug(f"[{str(self.mint)[:8]}] TRADE [{trader_public_key}] at {formatted_time} token: {self.virtual_token_reserves}, SOL: {self.virtual_sol_reserves} -> price={current_price}")
     
     def record_simulated_trade(self, sol_swap_raw: int, token_swap_raw: int, timestamp: float) -> None:
         """Record a simulated trade to adjust future reserve calculations.
