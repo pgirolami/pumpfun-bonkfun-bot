@@ -23,14 +23,16 @@ class UniversalPumpPortalListener(BaseTokenListener):
         self,
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         platforms: list[Platform] | None = None,
+        excluded_wallets: set[str] | None = None,
     ):
         """Initialize universal PumpPortal listener.
 
         Args:
             pumpportal_url: PumpPortal WebSocket URL
             platforms: List of platforms to monitor (if None, monitor all supported platforms)
+            excluded_wallets: Set of wallet addresses whose trades should be offset (default None/empty set)
         """
-        super().__init__()
+        super().__init__(excluded_wallets=excluded_wallets)
         self.pumpportal_url = pumpportal_url
         self.ping_interval = 3  # seconds - faster connection loss detection
         

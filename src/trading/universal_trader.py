@@ -86,6 +86,7 @@ class UniversalTrader:
         compute_units: dict | None = None,
         # Testing configuration
         testing: dict | None = None,
+        offset_wallets: list[str] | None = None,
         # Database configuration
         database_manager: DatabaseManager | None = None,
         # Parallel position configuration
@@ -165,6 +166,14 @@ class UniversalTrader:
         self.enable_trade_tracking = enable_trade_tracking
         self.trade_staleness_threshold = trade_staleness_threshold
 
+        # Convert offset_wallets to set for efficient lookup, but only if dry_run is enabled
+        excluded_wallets = set(offset_wallets) if (offset_wallets and self.dry_run) else set()
+        if offset_wallets and not self.dry_run:
+            logger.warning(
+                "offset_wallets is configured but dry_run is disabled. "
+                "Excluded wallet offsets will only be active in dry_run mode."
+            )
+
         # Initialize the appropriate listener only if trade tracking is enabled
         if self.enable_trade_tracking:
             logger.info(f"Creating token listener for trade tracking (type: {listener_type})")
@@ -176,6 +185,7 @@ class UniversalTrader:
                 geyser_auth_type=geyser_auth_type,
                 pumpportal_url=pumpportal_url,
                 platforms=[self.platform],  # Only listen for our platform
+                excluded_wallets=excluded_wallets,
             )
             if self.token_listener is None:
                 logger.error(f"Failed to create token listener for type: {listener_type}")

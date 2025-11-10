@@ -21,6 +21,7 @@ class ListenerFactory:
         geyser_auth_type: str = "x-token",
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         platforms: list[Platform] | None = None,
+        excluded_wallets: set[str] | None = None,
     ) -> BaseTokenListener:
         """Create a token listener based on the specified type.
 
@@ -32,6 +33,7 @@ class ListenerFactory:
             geyser_auth_type: Geyser authentication type
             pumpportal_url: PumpPortal WebSocket URL (for pumpportal listener)
             platforms: List of platforms to monitor (if None, monitor all)
+            excluded_wallets: Set of wallet addresses whose trades should be offset (default None/empty set)
 
         Returns:
             Configured token listener
@@ -115,6 +117,7 @@ class ListenerFactory:
             listener = UniversalPumpPortalListener(
                 pumpportal_url=pumpportal_url,
                 platforms=platforms,
+                excluded_wallets=excluded_wallets,
             )
             logger.info(
                 f"Created Universal PumpPortal listener for platforms: {[p.value for p in (platforms or supported_pumpportal_platforms)]}"

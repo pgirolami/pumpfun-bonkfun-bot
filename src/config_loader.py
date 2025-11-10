@@ -137,6 +137,30 @@ def resolve_env_vars(config: dict) -> None:
         for k, v in d.items():
             if isinstance(v, dict):
                 resolve_all(v)
+            elif isinstance(v, list):
+                # Process list items recursively
+                resolved_list = []
+                for item in v:
+                    if isinstance(item, str):
+                        resolved_list.append(resolve_env(item))
+                    elif isinstance(item, dict):
+                        resolve_all(item)
+                        resolved_list.append(item)
+                    elif isinstance(item, list):
+                        # Handle nested lists
+                        nested_resolved = []
+                        for nested_item in item:
+                            if isinstance(nested_item, str):
+                                nested_resolved.append(resolve_env(nested_item))
+                            elif isinstance(nested_item, dict):
+                                resolve_all(nested_item)
+                                nested_resolved.append(nested_item)
+                            else:
+                                nested_resolved.append(nested_item)
+                        resolved_list.append(nested_resolved)
+                    else:
+                        resolved_list.append(item)
+                d[k] = resolved_list
             else:
                 d[k] = resolve_env(v)
 

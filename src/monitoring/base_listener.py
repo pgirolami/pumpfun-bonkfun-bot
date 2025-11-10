@@ -17,13 +17,15 @@ logger = get_logger(__name__)
 class BaseTokenListener(ABC):
     """Base abstract class for token listeners - now platform-agnostic."""
 
-    def __init__(self, platform: Platform | None = None):
+    def __init__(self, platform: Platform | None = None, excluded_wallets: set[str] | None = None):
         """Initialize the listener with optional platform specification.
 
         Args:
             platform: Platform to monitor (if None, monitor all platforms)
+            excluded_wallets: Set of wallet addresses whose trades should be offset (default None/empty set)
         """
         self.platform = platform
+        self.excluded_wallets = excluded_wallets or set()
         
         # Trade tracking state - index by mint
         self._trade_trackers: dict[str, TokenTradeTracker] = {}  # mint -> tracker
@@ -65,7 +67,7 @@ class BaseTokenListener(ABC):
             token_info: Token information containing reserves and creator data
         """
         # Create tracker with token information from creation
-        tracker = TokenTradeTracker(token_info)
+        tracker = TokenTradeTracker(token_info, excluded_wallets=self.excluded_wallets)
         self._trade_trackers[str(token_info.mint)] = tracker  # Index by mint
         
         # Subclasses should override to send WebSocket subscription

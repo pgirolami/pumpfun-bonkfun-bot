@@ -177,6 +177,7 @@ async def start_bot(config_path: str):
             compute_units=cfg.get("compute_units", {}),
             # Testing configuration
             testing=cfg.get("testing"),
+            offset_wallets=cfg.get("testing", {}).get("offset_wallets", []),
             # Database configuration
             database_manager=database_manager,
             # Blockhash caching configuration

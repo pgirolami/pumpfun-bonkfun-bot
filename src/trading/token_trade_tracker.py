@@ -23,11 +23,12 @@ class TokenTradeTracker:
     virtual_sol_reserves: int | None = None
     virtual_token_reserves: int | None = None
 
-    def __init__(self, token_info: TokenInfo):
+    def __init__(self, token_info: TokenInfo, excluded_wallets: set[str] | None = None):
         """Initialize tracker with token information from creation.
         
         Args:
             token_info: Token information containing reserves, creator, and initial buy data
+            excluded_wallets: Set of wallet addresses whose trades should be offset (default None/empty set)
         """
         self.mint = token_info.mint
         self.virtual_sol_reserves = token_info.virtual_sol_reserves
@@ -54,6 +55,11 @@ class TokenTradeTracker:
         self.simulated_sol_offset_raw = 0  # Cumulative SOL offset (signed)
         self.simulated_token_offset_raw = 0  # Cumulative token offset (signed)
         
+        # Offset tracking for excluded wallets (separate from dry-run offsets)
+        self.excluded_wallets = excluded_wallets or set()
+        self.excluded_wallet_sol_offset_raw = 0  # Cumulative SOL offset from excluded wallets
+        self.excluded_wallet_token_offset_raw = 0  # Cumulative token offset from excluded wallets
+        
         # Initialize price tracking with initial price
         if self.is_initialized():
             initial_price = self.calculate_price()
@@ -73,19 +79,49 @@ class TokenTradeTracker:
         sol_reserves_from_trade = int(trade_data.get("vSolInBondingCurve")*LAMPORTS_PER_SOL)
         token_reserves_from_trade = int(trade_data.get("vTokensInBondingCurve")*10**TOKEN_DECIMALS)
         
-        # Apply simulated trade offsets (zero if not in dry-run mode)
-        self.virtual_sol_reserves = sol_reserves_from_trade + self.simulated_sol_offset_raw
-        self.virtual_token_reserves = token_reserves_from_trade + self.simulated_token_offset_raw
+        # Extract trader public key and check if excluded
+        trader_public_key = str(trade_data.get("traderPublicKey", ""))
+        if trader_public_key and trader_public_key in self.excluded_wallets:
+            # Extract trade amounts from trade message and convert to raw units
+            sol_amount_decimal = trade_data.get("solAmount", 0.0)
+            token_amount_decimal = trade_data.get("tokenAmount", 0.0)
+            sol_amount_raw = int(sol_amount_decimal * LAMPORTS_PER_SOL)
+            token_amount_raw = int(token_amount_decimal * 10**TOKEN_DECIMALS)
+            
+            # Determine trade direction
+            tx_type = trade_data.get("txType", "")
+            
+            if tx_type == "buy" or tx_type == "create":
+                # BUY: the wallet provided SOL to the bonding curve so we need to subtract it to cancel out the transaction
+                self.excluded_wallet_sol_offset_raw += -sol_amount_raw
+                self.excluded_wallet_token_offset_raw += token_amount_raw
+            elif tx_type == "sell":
+                self.excluded_wallet_sol_offset_raw += sol_amount_raw
+                self.excluded_wallet_token_offset_raw += -token_amount_raw
+            else:
+                logger.warning(
+                    f"[{str(self.mint)[:8]}] Unknown txType '{tx_type}' for excluded wallet trade, skipping offset"
+                )
+            
+            logger.info(
+                f"[{str(self.mint)[:8]}] Excluded wallet trade detected: "
+                f"type={tx_type}, sol_amount={sol_amount_raw}, token_amount={token_amount_raw} | "
+                f"cumulative excluded offsets: SOL={self.excluded_wallet_sol_offset_raw}, "
+                f"tokens={self.excluded_wallet_token_offset_raw}"
+            )
+        
+        # Apply both simulated trade offsets (dry-run) and excluded wallet offsets
+        self.virtual_sol_reserves = sol_reserves_from_trade + self.simulated_sol_offset_raw + self.excluded_wallet_sol_offset_raw
+        self.virtual_token_reserves = token_reserves_from_trade + self.simulated_token_offset_raw + self.excluded_wallet_token_offset_raw
         
         if self.simulated_sol_offset_raw != 0 or self.simulated_token_offset_raw != 0:
             logger.debug(
-                f"[{str(self.mint)[:8]}] Applied offsets: "
+                f"[{str(self.mint)[:8]}] Applied offsets (simulated & excluded) "
                 f"original=({sol_reserves_from_trade} lamports, {token_reserves_from_trade} token raw inits) -> "
                 f"after offset=({self.virtual_sol_reserves} lamports, {self.virtual_token_reserves} token raw units)"
             )
         
-        # Track creator trades
-        trader_public_key = str(trade_data.get("traderPublicKey", ""))
+        # Track creator trades (reuse trader_public_key extracted earlier)
         # logger.info(f"[{str(self.mint)[:8]}] apply_trade() -> trader_public_key= {trader_public_key} vs self.creator_public_key= {self.creator_public_key}")
         if trader_public_key == self.creator_public_key:
             token_amount_decimal = trade_data.get("tokenAmount", 0.0)
@@ -163,7 +199,7 @@ class TokenTradeTracker:
         self.last_update_timestamp = timestamp
         self.price_update_event.set()
         
-        logger.info(
+        logger.debug(
             f"[{str(self.mint)[:8]}] Recorded simulated trade: "
             f"sol_swap={sol_swap_raw}, token_swap={token_swap_raw} | "
             f"cumulative offsets: SOL={self.simulated_sol_offset_raw}, "
