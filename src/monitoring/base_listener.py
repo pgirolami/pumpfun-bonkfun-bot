@@ -97,7 +97,7 @@ class BaseTokenListener(ABC):
         """
         return self._trade_trackers.get(mint)
     
-    def _handle_trade_message(self, trade_data: dict[str, Any]) -> None:
+    def _handle_trade_message(self, timestamp: float, trade_data: dict[str, Any]) -> None:
         """Process trade message and update tracker.
         
         Args:
@@ -109,10 +109,6 @@ class BaseTokenListener(ABC):
         
         tracker = self._trade_trackers.get(mint)
         if tracker:
-            # Use current time as timestamp (message receipt time in live mode)
-            # In replay mode, replay system will override this method or inject timestamps differently
-            import time
-            timestamp = time.time()
             tracker.apply_trade(trade_data, timestamp)
     
     async def _send_trade_subscription(self, mint: str) -> None:

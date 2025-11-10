@@ -5,6 +5,7 @@ Universal PumpPortal listener that works with multiple platforms.
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+import time
 
 import websockets
 
@@ -96,6 +97,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
 
             try:
                 async for message in websocket:
+                    timestamp = time.time()
                     try:
                         data = json.loads(message)
                         # Check if it's a token creation or trade message
@@ -108,7 +110,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
                                 logger.debug(f"Token creation message not processed: {data}")
                         elif data.get("txType") in ["buy", "sell"]:
                             # Process trade message
-                            self._handle_trade_message(data)
+                            self._handle_trade_message(timestamp, data)
                         elif data.get("message"):
                             # Handle acknowledgement messages
                             logger.debug(f"Received acknowledgement: {data['message']}")
