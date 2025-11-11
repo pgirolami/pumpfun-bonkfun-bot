@@ -96,16 +96,31 @@ CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp);
 CREATE INDEX IF NOT EXISTS idx_trades_success ON trades(success);
 CREATE INDEX IF NOT EXISTS idx_trades_run_id ON trades(run_id);
 
--- Price history table (prices calculated during monitoring)
-CREATE TABLE IF NOT EXISTS price_history (
+-- Drop the old price_history table
+DROP TABLE IF EXISTS price_history;
+
+-- Drop the old index if it exists
+DROP INDEX IF EXISTS idx_price_history_mint;
+
+-- Create the new pumpportal_messages table
+CREATE TABLE IF NOT EXISTS pumpportal_messages (
     mint TEXT NOT NULL,
     platform TEXT NOT NULL,
     timestamp INTEGER NOT NULL,  -- Unix epoch milliseconds
-    price_decimal REAL NOT NULL  -- Price in SOL (decimal)
+    message_type TEXT NOT NULL,  -- "buy", "sell", or "create"
+    virtual_sol_reserves REAL NOT NULL,  -- decimal SOL
+    virtual_token_reserves REAL NOT NULL,  -- decimal tokens
+    sol_amount_swapped REAL,  -- decimal SOL from trade (nullable for create messages)
+    token_amount_swapped REAL,  -- decimal tokens from trade (nullable for create messages)
+    price_reserves_decimal REAL NOT NULL,  -- price from reserves: virtual_sol_reserves / (virtual_token_reserves / 10^TOKEN_DECIMALS)
+    price_swap_decimal REAL,  -- price from swap: sol_amount_swapped / (token_amount_swapped / 10^TOKEN_DECIMALS) (nullable)
+    pool TEXT,  -- pool name from PumpPortal message (nullable)
+    trader_public_key TEXT  -- trader public key from PumpPortal message (nullable)
 );
 
 -- Create index for efficient queries
-CREATE INDEX IF NOT EXISTS idx_price_history_mint ON price_history(mint);
+CREATE INDEX IF NOT EXISTS idx_pumpportal_messages_mint_platform ON pumpportal_messages(mint, platform);
+
 
 -- Wallet balance history table (balance updates every minute)
 CREATE TABLE IF NOT EXISTS wallet_balances (

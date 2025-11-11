@@ -146,8 +146,7 @@ class PositionConverter:
             mint=Pubkey.from_string(row[1]),
             platform=Platform(row[2]),
             entry_net_price_decimal=row[3],
-            token_quantity_decimal=row[5]
-            / (10**TOKEN_DECIMALS),  # Calculate from raw amount
+            token_quantity_decimal=None if row[5] is None else row[5] / (10**TOKEN_DECIMALS),  # Calculate from raw amount
             total_token_swapin_amount_raw=row[5],
             total_token_swapout_amount_raw=row[6],
             entry_ts=row[7],
