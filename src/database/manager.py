@@ -446,7 +446,7 @@ class DatabaseManager:
             )
             conn.commit()
 
-        logger.debug(f"Price history inserted: {mint} at {price_decimal:.8f} SOL")
+        logger.debug(f"Price history inserted: {mint} at {price_decimal} SOL")
 
     async def insert_wallet_balance(
         self,
