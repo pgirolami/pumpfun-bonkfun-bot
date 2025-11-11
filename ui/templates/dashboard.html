@@ -248,6 +248,13 @@
             }
         }
 
+        function formatDurationMs(milliseconds) {
+            if (milliseconds === null || milliseconds === undefined || isNaN(milliseconds)) {
+                return '0ms';
+            }
+            return milliseconds.toFixed(0) + 'ms';
+        }
+
         function formatDateForInput(date) {
             // Format date as YYYY-MM-DD HH:MM:SS
             const year = date.getFullYear();
@@ -475,13 +482,7 @@
                 card.className = 'stats-card';
                 
                 const stats = db.stats;
-                const avgPnl = useNormalized ? stats.avg_normalized_pnl : stats.avg_pnl;
-                const totalPnl = useNormalized ? stats.total_normalized_pnl : stats.total_pnl;
                 const maxDrawdown = useNormalized ? stats.max_drawdown_normalized : stats.max_drawdown;
-                const avgPnlLabel = useNormalized ? 'Average Normalized PNL per Position' : 'Average PNL per Position';
-                const totalPnlLabel = useNormalized ? 'Total Cumulative Normalized PNL' : 'Total Cumulative PNL';
-                const avgPnlUnit = useNormalized ? '' : ' SOL';
-                const totalPnlUnit = useNormalized ? '' : ' SOL';
                 
                 card.innerHTML = `
                     <h3>${db.label}</h3>
@@ -489,14 +490,27 @@
                         <tr><td>Total Positions</td><td>${stats.num_positions}</td></tr>
                         <tr><td>Winning Positions</td><td>${stats.winning_positions}</td></tr>
                         <tr><td>Win Rate</td><td>${formatNumber(stats.win_rate, 2)}%</td></tr>
-                        <tr><td>${avgPnlLabel}</td><td>${formatNumber(avgPnl, 6)}${avgPnlUnit}</td></tr>
-                        <tr><td>${totalPnlLabel}</td><td>${formatNumber(totalPnl, 6)}${totalPnlUnit}</td></tr>
+                        <tr><td colspan="2"><strong>PNL Statistics</strong></td></tr>
+                        <tr><td>Average PNL per Position</td><td>${formatNumber(stats.avg_pnl, 6)} SOL</td></tr>
+                        <tr><td>Average Normalized PNL per Position</td><td>${formatNumber(stats.avg_normalized_pnl, 6)}</td></tr>
+                        <tr><td>Total Cumulative PNL</td><td>${formatNumber(stats.total_pnl, 6)} SOL</td></tr>
+                        <tr><td>Total Cumulative Normalized PNL</td><td>${formatNumber(stats.total_normalized_pnl, 6)}</td></tr>
                         <tr><td>Max Drawdown</td><td>${formatNumber(maxDrawdown, 2)}%</td></tr>
                         <tr><td colspan="2"><strong>Position Duration Statistics</strong></td></tr>
                         <tr><td>Average</td><td>${formatDuration(stats.avg_duration)}</td></tr>
                         <tr><td>Median</td><td>${formatDuration(stats.median_duration)}</td></tr>
                         <tr><td>P10</td><td>${formatDuration(stats.p10_duration)}</td></tr>
                         <tr><td>P90</td><td>${formatDuration(stats.p90_duration)}</td></tr>
+                        <tr><td colspan="2"><strong>Successful Buy Trade Durations</strong></td></tr>
+                        <tr><td>Average</td><td>${formatDurationMs(stats.buy_duration_avg)}</td></tr>
+                        <tr><td>P10</td><td>${formatDurationMs(stats.buy_duration_p10)}</td></tr>
+                        <tr><td>P50</td><td>${formatDurationMs(stats.buy_duration_p50)}</td></tr>
+                        <tr><td>P90</td><td>${formatDurationMs(stats.buy_duration_p90)}</td></tr>
+                        <tr><td colspan="2"><strong>Successful Sell Trade Durations</strong></td></tr>
+                        <tr><td>Average</td><td>${formatDurationMs(stats.sell_duration_avg)}</td></tr>
+                        <tr><td>P10</td><td>${formatDurationMs(stats.sell_duration_p10)}</td></tr>
+                        <tr><td>P50</td><td>${formatDurationMs(stats.sell_duration_p50)}</td></tr>
+                        <tr><td>P90</td><td>${formatDurationMs(stats.sell_duration_p90)}</td></tr>
                     </table>
                 `;
                 statsContainer.appendChild(card);

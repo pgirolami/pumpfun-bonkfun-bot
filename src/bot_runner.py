@@ -358,8 +358,12 @@ async def run_all_bots():
         p.join()
         logging.info(f"Process {p.name} completed")
 
-def start_dashboard_server() -> None:
-    """Start the PNL dashboard web server in a separate thread."""
+def start_dashboard_server(port: int = 5000) -> None:
+    """Start the PNL dashboard web server in a separate thread.
+    
+    Args:
+        port: Port number to run the dashboard server on (default: 5000)
+    """
     logging.info("Attempting to start PNL dashboard server...")
     try:
         import sys
@@ -388,7 +392,7 @@ def start_dashboard_server() -> None:
         def run_server() -> None:
             """Run Flask server in a thread."""
             try:
-                app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+                app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
             except Exception as e:
                 logging.error(f"Error running dashboard server: {e}")
                 import traceback
@@ -400,7 +404,7 @@ def start_dashboard_server() -> None:
         dashboard_thread.start()
         # Give it a moment to start
         time.sleep(0.5)
-        logging.info("PNL Dashboard server started at http://localhost:5000")
+        logging.info(f"PNL Dashboard server started at http://localhost:{port}")
     except Exception as e:
         logging.error(f"Could not start PNL dashboard server: {e}")
         import traceback
@@ -408,6 +412,11 @@ def start_dashboard_server() -> None:
 
 
 def main() -> None:
+    import sys
+    
+    # Check for dashboard-only flag
+    dashboard_only = "--dashboard-only" in sys.argv or "-d" in sys.argv
+    
     # Set up basic console logging for main process
     logging.basicConfig(
         level=logging.INFO,
@@ -421,7 +430,22 @@ def main() -> None:
     logging.getLogger("solana.rpc").setLevel(logging.WARNING)
 
     # Start PNL dashboard server
-    start_dashboard_server()
+    # Use port 5001 in dashboard-only mode, 5000 otherwise
+    dashboard_port = 5001 if dashboard_only else 5000
+    start_dashboard_server(port=dashboard_port)
+    
+    if dashboard_only:
+        logging.info("Dashboard-only mode: Starting dashboard server only (no bots will be started)")
+        logging.info(f"Dashboard available at http://localhost:{dashboard_port}")
+        logging.info("Press Ctrl+C to stop the dashboard server")
+        # Keep the process alive
+        try:
+            import time
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logging.info("Shutting down dashboard server...")
+        return
 
     # Log supported platforms and listeners
     try:

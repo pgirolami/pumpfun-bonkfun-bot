@@ -5,6 +5,7 @@ This module contains functions used by both the standalone visualization script
 and the web dashboard.
 """
 
+import math
 import sqlite3
 import statistics
 from datetime import datetime
@@ -47,6 +48,78 @@ def query_positions(
     ]
     conn.close()
     return results
+
+
+def query_trade_durations(
+    db_path: str, start_timestamp: int
+) -> tuple[list[float], list[float]]:
+    """Query successful trade durations from database.
+
+    Includes trades from positions that were closed after the start_timestamp,
+    or trades with timestamp >= start_timestamp if position_id is NULL.
+
+    Args:
+        db_path: Path to SQLite database file
+        start_timestamp: Unix epoch milliseconds - filter positions with entry_ts >= this
+
+    Returns:
+        Tuple of (buy_durations_ms, sell_durations_ms) in milliseconds
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    
+    # First, get position IDs for closed positions that match the start_timestamp filter
+    position_cursor = conn.execute(
+        """
+        SELECT id
+        FROM positions
+        WHERE realized_pnl_sol_decimal IS NOT NULL
+          AND entry_ts >= ?
+          AND exit_ts IS NOT NULL
+        """,
+        (start_timestamp,),
+    )
+    position_ids = [row["id"] for row in position_cursor]
+    
+    # Build query: include trades linked to positions OR trades with timestamp >= start_timestamp
+    if position_ids:
+        # Query successful trades for these positions
+        placeholders = ",".join("?" * len(position_ids))
+        query = f"""
+            SELECT trade_type, trade_duration_ms
+            FROM trades
+            WHERE success = 1
+              AND trade_duration_ms IS NOT NULL
+              AND trade_duration_ms > 0
+              AND (position_id IN ({placeholders}) OR (position_id IS NULL AND timestamp >= ?))
+            ORDER BY timestamp ASC
+        """
+        params = position_ids + [start_timestamp]
+    else:
+        # No positions found, just query by timestamp
+        query = """
+            SELECT trade_type, trade_duration_ms
+            FROM trades
+            WHERE success = 1
+              AND trade_duration_ms IS NOT NULL
+              AND trade_duration_ms > 0
+              AND timestamp >= ?
+            ORDER BY timestamp ASC
+        """
+        params = [start_timestamp]
+    
+    cursor = conn.execute(query, params)
+    buy_durations = []
+    sell_durations = []
+    for row in cursor:
+        duration_ms = row["trade_duration_ms"]
+        if duration_ms is not None and duration_ms > 0:
+            if row["trade_type"] == "buy":
+                buy_durations.append(float(duration_ms))
+            elif row["trade_type"] == "sell":
+                sell_durations.append(float(duration_ms))
+    conn.close()
+    return (buy_durations, sell_durations)
 
 
 def extract_label(db_path: str) -> str:
@@ -204,6 +277,136 @@ def process_database(
     )
     max_drawdown_normalized = calculate_max_drawdown(cumulative_normalized_pnl)
 
+    # Query trade durations for successful trades
+    buy_durations_ms, sell_durations_ms = query_trade_durations(db_path, start_timestamp)
+    
+    # Debug: Check if we're getting any durations
+    import logging
+    logger = logging.getLogger(__name__)
+    if not buy_durations_ms and not sell_durations_ms:
+        # Try a direct query to see what's in the database
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        debug_cursor = conn.execute(
+            """
+            SELECT COUNT(*) as total,
+                   COUNT(CASE WHEN success = 1 THEN 1 END) as successful,
+                   COUNT(CASE WHEN success = 1 AND trade_duration_ms IS NOT NULL AND trade_duration_ms > 0 THEN 1 END) as with_duration
+            FROM trades
+            WHERE timestamp >= ?
+            """,
+            (start_timestamp,),
+        )
+        debug_row = debug_cursor.fetchone()
+        logger.debug(f"Trade debug for {Path(db_path).name}: total={debug_row['total']}, successful={debug_row['successful']}, with_duration={debug_row['with_duration']}")
+        conn.close()
+    
+    # Calculate trade duration statistics for buys (keep in milliseconds)
+    def calc_percentiles(durations: list[float]) -> dict[str, float]:
+        """Calculate average, p10, p50, p90 for durations."""
+        if not durations:
+            return {
+                "avg": 0.0,
+                "p10": 0.0,
+                "p50": 0.0,
+                "p90": 0.0,
+            }
+        sorted_durs = sorted(durations)
+        n = len(sorted_durs)
+        return {
+            "avg": statistics.mean(sorted_durs),
+            "p10": sorted_durs[max(0, int(n * 0.10))],
+            "p50": sorted_durs[max(0, int(n * 0.50))],
+            "p90": sorted_durs[max(0, int(n * 0.90))],
+        }
+    
+    def fit_normal_distribution(durations: list[float]) -> dict[str, float]:
+        """Fit a normal distribution to the durations and calculate goodness-of-fit metrics.
+        
+        Returns the mean (μ), standard deviation (σ), and goodness-of-fit metrics.
+        
+        Args:
+            durations: List of duration values in milliseconds
+            
+        Returns:
+            Dictionary with 'mean', 'std_dev', 'r_squared', and 'ks_statistic' keys
+        """
+        if not durations or len(durations) < 2:
+            return {
+                "mean": 0.0,
+                "std_dev": 0.0,
+                "r_squared": 0.0,
+                "ks_statistic": 1.0,  # Worst possible fit
+            }
+        mean = statistics.mean(durations)
+        std_dev = statistics.stdev(durations) if len(durations) > 1 else 0.0
+        
+        # Calculate R-squared (coefficient of determination)
+        # R² = 1 - (SS_res / SS_tot)
+        # where SS_res = sum of squared residuals from the mean
+        # and SS_tot = sum of squared differences from the mean
+        if std_dev == 0.0:
+            r_squared = 1.0  # Perfect fit if all values are the same
+        else:
+            # For normal distribution fit, R² measures how well the normal distribution
+            # explains the variance in the data
+            # We calculate it as the proportion of variance explained
+            ss_tot = sum((x - mean) ** 2 for x in durations)
+            if ss_tot == 0:
+                r_squared = 1.0
+            else:
+                # For a normal distribution, the variance is σ²
+                # R² = 1 - (unexplained variance / total variance)
+                # Since we're fitting to the data itself, R² will be high
+                # A better metric is to compare empirical vs theoretical quantiles
+                # For simplicity, we use a simplified R² based on how close data is to normal
+                # Calculate empirical variance
+                empirical_var = statistics.variance(durations) if len(durations) > 1 else 0.0
+                theoretical_var = std_dev ** 2
+                if empirical_var == 0:
+                    r_squared = 1.0
+                else:
+                    # R² as proportion of variance explained by the normal model
+                    # This is a simplified metric - perfect normal would have R² = 1
+                    variance_ratio = min(theoretical_var / empirical_var, empirical_var / theoretical_var) if empirical_var > 0 else 1.0
+                    r_squared = variance_ratio
+        
+        # Calculate Kolmogorov-Smirnov statistic (simplified)
+        # KS statistic = max difference between empirical CDF and theoretical normal CDF
+        sorted_durations = sorted(durations)
+        n = len(sorted_durations)
+        ks_statistic = 0.0
+        
+        if std_dev > 0:
+            # Calculate empirical CDF and compare with theoretical normal CDF
+            for i, value in enumerate(sorted_durations):
+                # Empirical CDF at this point
+                empirical_cdf = (i + 1) / n
+                
+                # Theoretical normal CDF (using error function)
+                # For a normal distribution: CDF(x) = 0.5 * (1 + erf((x - μ) / (σ * sqrt(2))))
+                z_score = (value - mean) / std_dev
+                # Standard normal CDF using error function
+                theoretical_cdf = 0.5 * (1 + math.erf(z_score / math.sqrt(2)))
+                
+                # Calculate difference
+                diff = abs(empirical_cdf - theoretical_cdf)
+                ks_statistic = max(ks_statistic, diff)
+        else:
+            ks_statistic = 0.0  # Perfect fit if std_dev is 0
+        
+        return {
+            "mean": mean,
+            "std_dev": std_dev,
+            "r_squared": r_squared,
+            "ks_statistic": ks_statistic,
+        }
+    
+    buy_stats = calc_percentiles(buy_durations_ms)
+    sell_stats = calc_percentiles(sell_durations_ms)
+    buy_normal = fit_normal_distribution(buy_durations_ms)
+    sell_normal = fit_normal_distribution(sell_durations_ms)
+
     stats = {
         "total_pnl": total_pnl,
         "total_normalized_pnl": total_normalized_pnl,
@@ -218,6 +421,22 @@ def process_database(
         "median_duration": median_duration,
         "p10_duration": p10_duration,
         "p90_duration": p90_duration,
+        "buy_duration_avg": buy_stats["avg"],
+        "buy_duration_p10": buy_stats["p10"],
+        "buy_duration_p50": buy_stats["p50"],
+        "buy_duration_p90": buy_stats["p90"],
+        "buy_normal_mean": buy_normal["mean"],
+        "buy_normal_std_dev": buy_normal["std_dev"],
+        "buy_normal_r_squared": buy_normal["r_squared"],
+        "buy_normal_ks_statistic": buy_normal["ks_statistic"],
+        "sell_duration_avg": sell_stats["avg"],
+        "sell_duration_p10": sell_stats["p10"],
+        "sell_duration_p50": sell_stats["p50"],
+        "sell_duration_p90": sell_stats["p90"],
+        "sell_normal_mean": sell_normal["mean"],
+        "sell_normal_std_dev": sell_normal["std_dev"],
+        "sell_normal_r_squared": sell_normal["r_squared"],
+        "sell_normal_ks_statistic": sell_normal["ks_statistic"],
     }
 
     return (label, timestamps, cumulative_pnl, cumulative_normalized_pnl, stats)
