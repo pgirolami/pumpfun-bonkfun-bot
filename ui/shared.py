@@ -263,8 +263,22 @@ def process_database(
     total_pnl = cumulative_pnl[-1] if cumulative_pnl else 0.0
     num_positions = len(positions)
     winning_positions = sum(1 for pnl in pnl_values if pnl > 0)
+    losing_positions = num_positions - winning_positions
     win_rate = (winning_positions / num_positions * 100) if num_positions > 0 else 0.0
     avg_pnl = sum(pnl_values) / num_positions if num_positions > 0 else 0.0
+    
+    # Calculate average PNL for winning and losing positions
+    winning_pnl_values = [pnl for pnl in pnl_values if pnl > 0]
+    losing_pnl_values = [pnl for pnl in pnl_values if pnl <= 0]
+    avg_pnl_winning = (
+        sum(winning_pnl_values) / len(winning_pnl_values)
+        if winning_pnl_values else 0.0
+    )
+    avg_pnl_losing = (
+        sum(losing_pnl_values) / len(losing_pnl_values)
+        if losing_pnl_values else 0.0
+    )
+    
     max_drawdown = calculate_max_drawdown(cumulative_pnl)
 
     # Extract label from path
@@ -275,6 +289,25 @@ def process_database(
     avg_normalized_pnl = (
         sum(normalized_pnl_values) / num_positions if num_positions > 0 else 0.0
     )
+    
+    # Calculate average normalized PNL for winning and losing positions
+    winning_normalized_pnl_values = [
+        normalized_pnl for pnl, normalized_pnl in zip(pnl_values, normalized_pnl_values)
+        if pnl > 0
+    ]
+    losing_normalized_pnl_values = [
+        normalized_pnl for pnl, normalized_pnl in zip(pnl_values, normalized_pnl_values)
+        if pnl <= 0
+    ]
+    avg_normalized_pnl_winning = (
+        sum(winning_normalized_pnl_values) / len(winning_normalized_pnl_values)
+        if winning_normalized_pnl_values else 0.0
+    )
+    avg_normalized_pnl_losing = (
+        sum(losing_normalized_pnl_values) / len(losing_normalized_pnl_values)
+        if losing_normalized_pnl_values else 0.0
+    )
+    
     max_drawdown_normalized = calculate_max_drawdown(cumulative_normalized_pnl)
 
     # Query trade durations for successful trades
@@ -414,7 +447,11 @@ def process_database(
         "winning_positions": winning_positions,
         "win_rate": win_rate,
         "avg_pnl": avg_pnl,
+        "avg_pnl_winning": avg_pnl_winning,
+        "avg_pnl_losing": avg_pnl_losing,
         "avg_normalized_pnl": avg_normalized_pnl,
+        "avg_normalized_pnl_winning": avg_normalized_pnl_winning,
+        "avg_normalized_pnl_losing": avg_normalized_pnl_losing,
         "max_drawdown": max_drawdown,
         "max_drawdown_normalized": max_drawdown_normalized,
         "avg_duration": avg_duration,
