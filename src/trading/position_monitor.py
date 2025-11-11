@@ -210,17 +210,6 @@ class PositionMonitor:
         if self.position.monitoring_start_ts is None:
             self.position.set_monitoring_start_time(current_timestamp_ms)
         
-        # Store price in database if available
-        if self.database_manager:
-            try:
-                await self.database_manager.insert_price_history(
-                    mint=str(self.token_info.mint),
-                    platform=self.token_info.platform.value,
-                    price_decimal=current_price,
-                )
-            except Exception as e:
-                logger.exception(f"Failed to insert price history: {e}")
-        
         # Calculate volatility and adjust take profit if enabled
         if self.enable_volatility_adjustment:
             # Initialize volatility calculator on first valid price

@@ -186,6 +186,7 @@ class UniversalTrader:
                 pumpportal_url=pumpportal_url,
                 platforms=[self.platform],  # Only listen for our platform
                 excluded_wallets=excluded_wallets,
+                database_manager=self.database_manager,
             )
             if self.token_listener is None:
                 logger.error(f"Failed to create token listener for type: {listener_type}")

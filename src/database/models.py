@@ -258,25 +258,48 @@ class TradeConverter:
         )
 
 
-class PriceHistoryConverter:
-    """Converter for price history data to/from database rows."""
+class PumpPortalMessageConverter:
+    """Converter for PumpPortal message data to/from database rows."""
 
     @staticmethod
     def to_row(
         mint: str,
         platform: str,
         timestamp: int,
-        price_decimal: float,
+        message_type: str,
+        virtual_sol_reserves: float,
+        virtual_token_reserves: float,
+        sol_amount_swapped: float | None,
+        token_amount_swapped: float | None,
+        price_reserves_decimal: float,
+        price_swap_decimal: float | None,
     ) -> tuple:
-        """Convert price data to database row tuple.
+        """Convert PumpPortal message data to database row tuple.
 
         Args:
             mint: Token mint address
             platform: Platform name
             timestamp: Unix epoch milliseconds
-            price_decimal: Price in SOL (decimal)
+            message_type: Message type ("buy", "sell", or "create")
+            virtual_sol_reserves: Virtual SOL reserves (decimal)
+            virtual_token_reserves: Virtual token reserves (decimal)
+            sol_amount_swapped: SOL amount swapped in trade (decimal, nullable)
+            token_amount_swapped: Token amount swapped in trade (decimal, nullable)
+            price_reserves_decimal: Price calculated from reserves (SOL per token)
+            price_swap_decimal: Price calculated from swap amounts (SOL per token, nullable)
 
         Returns:
             Tuple of values for database insertion
         """
-        return (mint, platform, timestamp, price_decimal)
+        return (
+            mint,
+            platform,
+            timestamp,
+            message_type,
+            virtual_sol_reserves,
+            virtual_token_reserves,
+            sol_amount_swapped,
+            token_amount_swapped,
+            price_reserves_decimal,
+            price_swap_decimal,
+        )

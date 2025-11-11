@@ -22,6 +22,7 @@ class ListenerFactory:
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         platforms: list[Platform] | None = None,
         excluded_wallets: set[str] | None = None,
+        database_manager=None,
     ) -> BaseTokenListener:
         """Create a token listener based on the specified type.
 
@@ -34,6 +35,7 @@ class ListenerFactory:
             pumpportal_url: PumpPortal WebSocket URL (for pumpportal listener)
             platforms: List of platforms to monitor (if None, monitor all)
             excluded_wallets: Set of wallet addresses whose trades should be offset (default None/empty set)
+            database_manager: Optional database manager for storing PumpPortal messages
 
         Returns:
             Configured token listener
@@ -118,6 +120,7 @@ class ListenerFactory:
                 pumpportal_url=pumpportal_url,
                 platforms=platforms,
                 excluded_wallets=excluded_wallets,
+                database_manager=database_manager,
             )
             logger.info(
                 f"Created Universal PumpPortal listener for platforms: {[p.value for p in (platforms or supported_pumpportal_platforms)]}"

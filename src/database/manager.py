@@ -17,7 +17,6 @@ from utils.logger import get_logger
 
 from .models import (
     PositionConverter,
-    PriceHistoryConverter,
     TokenInfoConverter,
     TradeConverter,
 )
@@ -418,35 +417,65 @@ class DatabaseManager:
                 "sell_trades": row[4],
             }
 
-    # Price History Operations
-    async def insert_price_history(
+    # PumpPortal Messages Operations
+    async def insert_pumpportal_message(
         self,
         mint: str,
         platform: str,
-        price_decimal: float,
+        timestamp: int,
+        message_type: str,
+        virtual_sol_reserves: float,
+        virtual_token_reserves: float,
+        sol_amount_swapped: float | None,
+        token_amount_swapped: float | None,
+        price_reserves_decimal: float,
+        price_swap_decimal: float | None,
     ) -> None:
-        """Insert price history record.
+        """Insert PumpPortal message record.
 
         Args:
             mint: Token mint address
             platform: Platform name
-            price_decimal: Price in SOL (decimal)
+            timestamp: Unix epoch milliseconds
+            message_type: Message type ("buy", "sell", or "create")
+            virtual_sol_reserves: Virtual SOL reserves (decimal)
+            virtual_token_reserves: Virtual token reserves (decimal)
+            sol_amount_swapped: SOL amount swapped in trade (decimal, nullable)
+            token_amount_swapped: Token amount swapped in trade (decimal, nullable)
+            price_reserves_decimal: Price calculated from reserves (SOL per token)
+            price_swap_decimal: Price calculated from swap amounts (SOL per token, nullable)
         """
-        timestamp = int(time() * 1000)
-        row = PriceHistoryConverter.to_row(mint, platform, timestamp, price_decimal)
+        from database.models import PumpPortalMessageConverter
+
+        row = PumpPortalMessageConverter.to_row(
+            mint,
+            platform,
+            timestamp,
+            message_type,
+            virtual_sol_reserves,
+            virtual_token_reserves,
+            sol_amount_swapped,
+            token_amount_swapped,
+            price_reserves_decimal,
+            price_swap_decimal,
+        )
 
         async with self.get_connection() as conn:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO price_history 
-                (mint, platform, timestamp, price_decimal)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO pumpportal_messages 
+                (mint, platform, timestamp, message_type, virtual_sol_reserves, 
+                 virtual_token_reserves, sol_amount_swapped, token_amount_swapped,
+                 price_reserves_decimal, price_swap_decimal)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )
             conn.commit()
 
-        logger.debug(f"Price history inserted: {mint} at {price_decimal} SOL")
+        logger.debug(
+            f"PumpPortal message inserted: {mint} {message_type} at {price_reserves_decimal} SOL"
+        )
 
     async def insert_wallet_balance(
         self,

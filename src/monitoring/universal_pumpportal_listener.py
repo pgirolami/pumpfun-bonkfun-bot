@@ -24,6 +24,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
         platforms: list[Platform] | None = None,
         excluded_wallets: set[str] | None = None,
+        database_manager=None,
     ):
         """Initialize universal PumpPortal listener.
 
@@ -31,8 +32,10 @@ class UniversalPumpPortalListener(BaseTokenListener):
             pumpportal_url: PumpPortal WebSocket URL
             platforms: List of platforms to monitor (if None, monitor all supported platforms)
             excluded_wallets: Set of wallet addresses whose trades should be offset (default None/empty set)
+            database_manager: Optional database manager for storing PumpPortal messages
         """
         super().__init__(excluded_wallets=excluded_wallets)
+        self.database_manager = database_manager
         self.pumpportal_url = pumpportal_url
         self.ping_interval = 3  # seconds - faster connection loss detection
         
@@ -295,5 +298,101 @@ class UniversalPumpPortalListener(BaseTokenListener):
             logger.exception(f"Failed to send trade unsubscription for {mint}: {e}")
 
         self._subscribed_mints.remove(mint)
+
+    def _handle_trade_message(self, timestamp: float, trade_data: dict) -> None:
+        """Process trade message, write to database, and update tracker.
+        
+        Args:
+            timestamp: Unix timestamp when the trade occurred
+            trade_data: Trade message from PumpPortal
+        """
+        # Call parent method first to maintain existing trade tracking functionality
+        super()._handle_trade_message(timestamp, trade_data)
+        
+        # Write to database if database_manager is available
+        if not self.database_manager:
+            return
+        
+        # Create async task to write to database (non-blocking)
+        try:
+            asyncio.create_task(
+                self._write_pumpportal_message_to_db(timestamp, trade_data)
+            )
+        except Exception as e:
+            logger.exception(f"Failed to create task for writing PumpPortal message to database: {e}")
+    
+    async def _write_pumpportal_message_to_db(self, timestamp: float, trade_data: dict) -> None:
+        """Write PumpPortal message to database.
+        
+        Args:
+            timestamp: Unix timestamp when the trade occurred
+            trade_data: Trade message from PumpPortal
+        """
+        try:
+            # Extract required fields from trade message
+            mint = trade_data.get("mint")
+            if not mint:
+                return
+            
+            tx_type = trade_data.get("txType", "")
+            if tx_type not in ["buy", "sell", "create"]:
+                return
+            
+            # Extract reserves and swap amounts
+            v_sol = trade_data.get("vSolInBondingCurve")
+            v_tokens = trade_data.get("vTokensInBondingCurve")
+            sol_amount = trade_data.get("solAmount")
+            token_amount = trade_data.get("tokenAmount")
+            
+            # Determine platform from pool name
+            pool_name = trade_data.get("pool", "").lower()
+            platform = None
+            if pool_name in self.pool_to_processors:
+                # Use the first processor that supports this pool
+                processor = self.pool_to_processors[pool_name][0]
+                platform = processor.platform.value
+            
+            if not platform:
+                logger.debug(f"Could not determine platform for pool {pool_name}, skipping database write")
+                return
+            
+            if v_sol is None or v_tokens is None:
+                logger.debug(f"Missing reserves in trade message for {mint}, skipping database write")
+                return
+            
+            # Import TOKEN_DECIMALS for price calculation
+            from core.pubkeys import TOKEN_DECIMALS
+            
+            # Calculate price from reserves: virtual_sol_reserves / (virtual_token_reserves / 10^TOKEN_DECIMALS)
+            # This gives SOL per token
+            if v_tokens > 0:
+                price_reserves_decimal = (v_sol * (10 ** TOKEN_DECIMALS)) / v_tokens
+            else:
+                logger.debug(f"Zero token reserves for {mint}, skipping database write")
+                return
+            
+            # Calculate price from swap amounts: sol_amount_swapped / (token_amount_swapped / 10^TOKEN_DECIMALS)
+            price_swap_decimal = None
+            if sol_amount is not None and token_amount is not None and token_amount > 0:
+                price_swap_decimal = (sol_amount * (10 ** TOKEN_DECIMALS)) / token_amount
+            
+            # Convert timestamp to milliseconds
+            timestamp_ms = int(timestamp * 1000)
+            
+            # Write to database
+            await self.database_manager.insert_pumpportal_message(
+                mint=mint,
+                platform=platform,
+                timestamp=timestamp_ms,
+                message_type=tx_type,
+                virtual_sol_reserves=v_sol,
+                virtual_token_reserves=v_tokens,
+                sol_amount_swapped=sol_amount,
+                token_amount_swapped=token_amount,
+                price_reserves_decimal=price_reserves_decimal,
+                price_swap_decimal=price_swap_decimal,
+            )
+        except Exception as e:
+            logger.exception(f"Failed to write PumpPortal message to database: {e}")
 
     
