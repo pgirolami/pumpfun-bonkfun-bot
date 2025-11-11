@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS pumpportal_messages (
     sol_amount_swapped REAL,  -- decimal SOL from trade (nullable for create messages)
     token_amount_swapped REAL,  -- decimal tokens from trade (nullable for create messages)
     price_reserves_decimal REAL NOT NULL,  -- price from reserves: virtual_sol_reserves / (virtual_token_reserves / 10^TOKEN_DECIMALS)
-    price_swap_decimal REAL  -- price from swap: sol_amount_swapped / (token_amount_swapped / 10^TOKEN_DECIMALS) (nullable)
+    price_swap_decimal REAL,  -- price from swap: sol_amount_swapped / (token_amount_swapped / 10^TOKEN_DECIMALS) (nullable)
+    pool TEXT,  -- pool name from PumpPortal message (nullable)
+    trader_public_key TEXT  -- trader public key from PumpPortal message (nullable)
 );
 
 -- Create index for efficient queries

@@ -344,29 +344,21 @@ class UniversalPumpPortalListener(BaseTokenListener):
             sol_amount = trade_data.get("solAmount")
             token_amount = trade_data.get("tokenAmount")
             
-            # Determine platform from pool name
-            pool_name = trade_data.get("pool", "").lower()
-            platform = None
-            if pool_name in self.pool_to_processors:
-                # Use the first processor that supports this pool
-                processor = self.pool_to_processors[pool_name][0]
-                platform = processor.platform.value
+            # Extract pool and trader public key directly from message
+            pool = trade_data.get("pool")
+            trader_public_key = trade_data.get("traderPublicKey")
             
-            if not platform:
-                logger.debug(f"Could not determine platform for pool {pool_name}, skipping database write")
-                return
+            # Determine platform from pool name (still needed for queries)
+            platform = pool.lower() if pool else ""
             
             if v_sol is None or v_tokens is None:
-                logger.debug(f"Missing reserves in trade message for {mint}, skipping database write")
+                logger.warning(f"Missing reserves in trade message for {mint}, skipping database write")
                 return
-            
-            # Import TOKEN_DECIMALS for price calculation
-            from core.pubkeys import TOKEN_DECIMALS
-            
+                        
             # Calculate price from reserves: virtual_sol_reserves / (virtual_token_reserves / 10^TOKEN_DECIMALS)
             # This gives SOL per token
             if v_tokens > 0:
-                price_reserves_decimal = (v_sol * (10 ** TOKEN_DECIMALS)) / v_tokens
+                price_reserves_decimal = v_sol / v_tokens
             else:
                 logger.debug(f"Zero token reserves for {mint}, skipping database write")
                 return
@@ -374,7 +366,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
             # Calculate price from swap amounts: sol_amount_swapped / (token_amount_swapped / 10^TOKEN_DECIMALS)
             price_swap_decimal = None
             if sol_amount is not None and token_amount is not None and token_amount > 0:
-                price_swap_decimal = (sol_amount * (10 ** TOKEN_DECIMALS)) / token_amount
+                price_swap_decimal = sol_amount  / token_amount
             
             # Convert timestamp to milliseconds
             timestamp_ms = int(timestamp * 1000)
@@ -391,6 +383,8 @@ class UniversalPumpPortalListener(BaseTokenListener):
                 token_amount_swapped=token_amount,
                 price_reserves_decimal=price_reserves_decimal,
                 price_swap_decimal=price_swap_decimal,
+                pool=pool,
+                trader_public_key=trader_public_key,
             )
         except Exception as e:
             logger.exception(f"Failed to write PumpPortal message to database: {e}")
