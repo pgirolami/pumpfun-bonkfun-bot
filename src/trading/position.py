@@ -533,7 +533,7 @@ class Position:
         quantity_str = f"{self.token_quantity_decimal:.6f}" if self.token_quantity_decimal is not None else "None"
         quantity_raw_str = f"{self.get_current_token_balance_raw()}" if self.total_token_swapin_amount_raw is not None else "None"
         price_str = f"{self.entry_net_price_decimal}" if self.entry_net_price_decimal is not None else "None"
-        sol_str = f"{-self.total_net_sol_swapout_amount_raw / LAMPORTS_PER_SOL:.10f}" if self.total_net_sol_swapin_amount_raw is not None else "None"
+        sol_str = f"{-self.total_net_sol_swapout_amount_raw / LAMPORTS_PER_SOL}" if self.total_net_sol_swapin_amount_raw is not None else "None"
         sol_raw_str = f"{-self.total_net_sol_swapout_amount_raw}" if self.total_net_sol_swapout_amount_raw is not None else "None"
         last_price_change_ts_str = f"{datetime.fromtimestamp(self.last_price_change_ts):%Y-%m-%d %H:%M:%S.%f}" if self.last_price_change_ts is not None else "None"
         return f"Position({str(self.mint)}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} for net sol={sol_str} ({sol_raw_str}) - {status}) - last_price_change_ts={last_price_change_ts_str}"

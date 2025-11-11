@@ -63,12 +63,12 @@ class PlatformAwareBuyer(Trader):
             # Calculate token amount based on buy amount and starting price
             order.token_amount_raw = int((self.amount / starting_price_sol) * 10**TOKEN_DECIMALS)
             order.token_price_sol = starting_price_sol
-            # logger.info(f"Extreme fast mode: calculated {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens at starting price {starting_price_sol:.8f} SOL")
+            # logger.info(f"Extreme fast mode: calculated {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens at starting price {starting_price_sol} SOL")
         else:
             order.token_price_sol = await curve_manager.calculate_price(order.token_info.mint)
             order.token_amount_raw = int((self.amount / order.token_price_sol) * 10**TOKEN_DECIMALS) if order.token_price_sol > 0 else 0
 
-        # logger.info(f"Token price computed on-chain: {order.token_price_sol:.8f} SOL")
+        # logger.info(f"Token price computed on-chain: {order.token_price_sol} SOL")
 
         # Calculate minimum with slippage (for Let's Bonk)
         order.minimum_token_swap_amount_raw = int(order.token_amount_raw * (1 - self.slippage))
@@ -267,7 +267,7 @@ class PlatformAwareSeller(Trader):
 
         order.token_price_sol = await curve_manager.calculate_price(order.token_info.mint, token_info.bonding_curve)
 
-        # logger.info(f"Price per Token: {order.token_price_sol:.8f} SOL")
+        # logger.info(f"Price per Token: {order.token_price_sol} SOL")
 
         # Calculate expected SOL output
         expected_sol_output = token_balance_decimal * order.token_price_sol
@@ -279,9 +279,9 @@ class PlatformAwareSeller(Trader):
         )
 
         # logger.info(f"Selling {token_balance_decimal} tokens on {token_info.platform.value}")
-        # logger.info(f"Expected SOL output: {expected_sol_output:.8f} SOL")
+        # logger.info(f"Expected SOL output: {expected_sol_output} SOL")
         # logger.info(
-        #     f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {order.minimum_sol_swap_amount_raw / LAMPORTS_PER_SOL:.8f} SOL"
+        #     f"Minimum SOL output (with {self.slippage * 100:.1f}% slippage): {order.minimum_sol_swap_amount_raw / LAMPORTS_PER_SOL} SOL"
         # )
 
         # Get compute units and priority fee

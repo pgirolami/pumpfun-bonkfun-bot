@@ -228,7 +228,7 @@ class PositionMonitor:
                 self._volatility_calculator = VolatilityCalculator(self.volatility_window_seconds)
                 self._volatility_monitoring_started = True
                 logger.debug(
-                    f"[{self._mint_prefix(self.token_info.mint)}] Started volatility monitoring with first price: {current_price:.10f} SOL"
+                    f"[{self._mint_prefix(self.token_info.mint)}] Started volatility monitoring with first price: {current_price} SOL"
                 )
             
             # Add current price to volatility calculator
@@ -259,7 +259,7 @@ class PositionMonitor:
                             self.position.take_profit_price = volatility_adjusted_tp_price
                             logger.info(
                                 f"[{self._mint_prefix(self.token_info.mint)}] Take profit price adjusted due to {volatility_level} volatility: "
-                                f"{old_tp_price:.10f} -> {volatility_adjusted_tp_price:.10f} SOL "
+                                f"{old_tp_price} -> {volatility_adjusted_tp_price} SOL "
                                 f"(reduction: {((old_tp_price - volatility_adjusted_tp_price) / old_tp_price * 100):.1f}%)"
                             )
         
@@ -314,7 +314,7 @@ class PositionMonitor:
                 f"[{self._mint_prefix(self.token_info.mint)}] Exit condition met: {exit_reason.value}"
             )
             logger.info(
-                f"[{self._mint_prefix(self.token_info.mint)}] Current onchain price: {current_price:.10f} SOL"
+                f"[{self._mint_prefix(self.token_info.mint)}] Current onchain price: {current_price} SOL"
             )
             
             # Log PnL before exit

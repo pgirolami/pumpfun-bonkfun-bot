@@ -212,7 +212,7 @@ class LetsBonkCurveManager(CurveManager):
         logger.debug(
             f"Decoded pool state: virtual_base={pool_data['virtual_base']}, "
             f"virtual_quote={pool_data['virtual_quote']}, "
-            f"price={pool_data['price_per_token']:.8f} SOL"
+            f"price={pool_data['price_per_token']} SOL"
         )
 
         return pool_data

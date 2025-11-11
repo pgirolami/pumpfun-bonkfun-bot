@@ -89,7 +89,7 @@ class PumpFunCurveManager(CurveManager):
             if tracker and not tracker.is_stale(self.trade_staleness_threshold):
                 try:
                     price = tracker.calculate_price()
-                    logger.debug(f"Using trade tracker price: {price:.10f} SOL")
+                    logger.debug(f"Using trade tracker price: {price} SOL")
                     return price
                 except RuntimeError:
                     logger.debug("Trade tracker not initialized, falling back to RPC")
@@ -266,7 +266,7 @@ class PumpFunCurveManager(CurveManager):
         logger.debug(
             f"Decoded curve state: virtual_token_reserves={curve_data['virtual_token_reserves']}, "
             f"virtual_sol_reserves={curve_data['virtual_sol_reserves']}, "
-            f"price={curve_data['price_per_token']:.8f} SOL"
+            f"price={curve_data['price_per_token']} SOL"
         )
 
         return curve_data

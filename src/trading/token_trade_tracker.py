@@ -66,7 +66,7 @@ class TokenTradeTracker:
             self._last_price = initial_price
             self.last_price_change_timestamp = time.time()
  
-        logger.debug(f"[{str(self.mint)[:8]}] __init()__ -> (Init) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} => price={self.calculate_price():.10f} SOL")
+        logger.debug(f"[{str(self.mint)[:8]}] __init()__ -> (Init) Virtual token reserves: {self.virtual_token_reserves}, Virtual sol reserves: {self.virtual_sol_reserves} => price={self.calculate_price()} SOL")
     
     def apply_trade(self, trade_data: dict[str, Any], timestamp: float) -> None:
         """Update reserves from PumpPortal trade message.
@@ -146,7 +146,7 @@ class TokenTradeTracker:
         elif abs(current_price - self._last_price) > self._price_tolerance:
             # Price actually changed - update timestamp
             self.last_price_change_timestamp = timestamp
-            logger.debug(f"[{str(self.mint)[:8]}] Price changed: {self._last_price:.10f} -> {current_price:.10f} SOL")
+            logger.debug(f"[{str(self.mint)[:8]}] Price changed: {self._last_price} -> {current_price} SOL")
         
         # Always update last price for next comparison
         self._last_price = current_price
@@ -191,7 +191,7 @@ class TokenTradeTracker:
         elif abs(current_price - self._last_price) > self._price_tolerance:
             # Price actually changed - update timestamp
             self.last_price_change_timestamp = timestamp
-            logger.debug(f"[{str(self.mint)[:8]}] Price changed: {self._last_price:.10f} -> {current_price:.10f} SOL (simulated trade)")
+            logger.debug(f"[{str(self.mint)[:8]}] Price changed: {self._last_price} -> {current_price} SOL (simulated trade)")
         
         # Always update last price for next comparison
         self._last_price = current_price
