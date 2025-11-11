@@ -132,7 +132,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             creator_fee_raw=order.creator_fee_raw,
             transaction_fee_raw=order.transaction_fee_raw,
             tip_fee_raw=tip_fee_raw,
-            rent_exemption_amount_raw=-TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
+            rent_exemption_amount_raw=0 if is_slippage_failure else -TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
             unattributed_sol_amount_raw=0,
             sol_amount_raw=order.sol_amount_raw,
         )

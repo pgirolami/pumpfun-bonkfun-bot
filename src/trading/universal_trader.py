@@ -838,6 +838,7 @@ class UniversalTrader:
                     total_token_swapin_amount_raw=None,  # No tokens acquired
                     total_token_swapout_amount_raw=None,  # No tokens acquired
                     entry_ts=entry_ts,
+                    exit_ts=entry_ts,   #yes, = entry_ts
                     exit_strategy=self.exit_strategy,
                     is_active=False,  # Mark as inactive
                     exit_reason=ExitReason.FAILED_BUY,
