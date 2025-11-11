@@ -397,7 +397,7 @@ class PlatformAwareSeller(Trader):
             logger.exception(e)
             logger.info(f"Failed sell trade took {trade_duration_ms}ms")
             return TradeResult(
-                block_time=confirm_result.block_ts,
+                block_time=confirm_result.block_ts if confirm_result else None,
                 success=False, 
                 platform=token_info.platform, 
                 error_message=str(e),

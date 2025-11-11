@@ -277,9 +277,9 @@ class UniversalTrader:
                 database_manager=self.database_manager,
             )
         else:
-            if self.buy_amount > 0.01:
+            if self.buy_amount > 0.1:
                 raise ValueError(
-                    "Buy amount must NOT be greater than 0.01 SOL in live mode"
+                    "Buy amount must NOT be greater than 0.1 SOL in live mode"
                 )
 
             # Create platform-aware traders

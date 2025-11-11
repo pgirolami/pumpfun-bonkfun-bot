@@ -60,7 +60,7 @@ class BalanceChangeResult:
         token_swap_amount_decimal = self.token_swap_amount_raw / (10**TOKEN_DECIMALS)
         unattributed_sol_amount_decimal = self.unattributed_sol_amount_raw / LAMPORTS_PER_SOL
         
-        net_price_decimal = abs(self.net_sol_swap_amount_raw / self.token_swap_amount_raw) * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL
+        net_price_decimal = abs(self.net_sol_swap_amount_raw / self.token_swap_amount_raw) * (10**TOKEN_DECIMALS) / LAMPORTS_PER_SOL if self.token_swap_amount_raw else None
         tip_fee_decimal = self.tip_fee_raw / LAMPORTS_PER_SOL
 
         return (

@@ -359,7 +359,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         if config_override is not None:
             return config_override
         # Buy operations: ATA creation + buy instruction
-        return 100_000
+        return 110_000
 
     def get_sell_compute_unit_limit(self, config_override: int | None = None) -> int:
         """Get the recommended compute unit limit for pump.fun sell operations.
@@ -373,4 +373,4 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         if config_override is not None:
             return config_override
         # Sell operations: typically just sell instruction (ATA exists)
-        return 60_000
+        return 65_000
