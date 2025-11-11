@@ -79,7 +79,7 @@ def main() -> None:
         result = process_database(db_path, start_timestamp)
         if result:
             processed_data.append(result)
-            label, _, _, stats = result
+            label, _, _, _, stats = result
             print(f"📊 {label}:")
             print(f"   Total positions: {stats['num_positions']}")
             print(f"   Winning positions: {stats['winning_positions']}")
@@ -106,7 +106,7 @@ def main() -> None:
     fig = go.Figure()
 
     # Add cumulative PNL line for each database
-    for idx, (label, timestamps, cumulative_pnl, stats) in enumerate(processed_data):
+    for idx, (label, timestamps, cumulative_pnl, cumulative_normalized_pnl, stats) in enumerate(processed_data):
         color = COLORS[idx % len(COLORS)]
         fig.add_trace(
             go.Scatter(

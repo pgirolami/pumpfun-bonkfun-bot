@@ -174,7 +174,7 @@ def api_data() -> str:
         try:
             result = process_database(db_path, start_timestamp)
             if result:
-                label, timestamps, cumulative_pnl, stats = result
+                label, timestamps, cumulative_pnl, cumulative_normalized_pnl, stats = result
                 # Convert datetime objects to ISO format strings for JSON
                 timestamps_iso = [ts.isoformat() for ts in timestamps]
                 results.append(
@@ -182,6 +182,7 @@ def api_data() -> str:
                         "label": label,
                         "timestamps": timestamps_iso,
                         "cumulative_pnl": cumulative_pnl,
+                        "cumulative_normalized_pnl": cumulative_normalized_pnl,
                         "stats": stats,
                     }
                 )

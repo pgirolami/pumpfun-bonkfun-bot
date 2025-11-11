@@ -194,6 +194,12 @@
                     <span>Only show databases from currently running bots</span>
                 </label>
             </div>
+            <div style="margin-bottom: 10px;">
+                <label style="display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="normalized_pnl" style="margin-right: 8px; width: auto;">
+                    <span>Show normalized PNL (PNL / SOL swapped)</span>
+                </label>
+            </div>
             <button onclick="loadData()">Load Data</button>
         </div>
 
@@ -383,6 +389,9 @@
                     return;
                 }
                 
+                // Store data for checkbox toggle
+                window.currentDashboardData = data.databases;
+                
                 renderChart(data.databases);
                 renderStats(data.databases);
             } catch (error) {
@@ -397,29 +406,35 @@
         }
 
         function renderChart(databases) {
+            const useNormalized = document.getElementById('normalized_pnl').checked;
             const traces = databases.map((db, idx) => {
                 const color = COLORS[idx % COLORS.length];
+                const yValues = useNormalized ? db.cumulative_normalized_pnl : db.cumulative_pnl;
+                const yLabel = useNormalized ? 'Normalized PNL' : 'Cumulative PNL (SOL)';
                 return {
                     x: db.timestamps.map(ts => new Date(ts)),
-                    y: db.cumulative_pnl,
+                    y: yValues,
                     mode: 'lines+markers',
                     name: db.label,
                     line: { color: color, width: 2 },
                     marker: { size: 4, color: color },
-                    hovertemplate: `<b>${db.label}</b><br><b>%{x}</b><br>Cumulative PNL: %{y:.6f} SOL<extra></extra>`
+                    hovertemplate: `<b>${db.label}</b><br><b>%{x}</b><br>${yLabel}: %{y:.6f}<extra></extra>`
                 };
             });
+
+            const yAxisTitle = useNormalized ? 'Cumulative Normalized PNL' : 'Cumulative PNL (SOL)';
+            const chartTitle = useNormalized ? 'Cumulative Normalized PNL Over Time' : 'Cumulative PNL Over Time';
 
             const layout = {
                 title: {
                     text: databases.length === 1 
-                        ? `Cumulative PNL Over Time<br><sub>${databases[0].label}</sub>`
-                        : `Cumulative PNL Over Time<br><sub>Comparing ${databases.length} databases</sub>`,
+                        ? `${chartTitle}<br><sub>${databases[0].label}</sub>`
+                        : `${chartTitle}<br><sub>Comparing ${databases.length} databases</sub>`,
                     x: 0.5,
                     xanchor: 'center'
                 },
                 xaxis: { title: 'Time' },
-                yaxis: { title: 'Cumulative PNL (SOL)' },
+                yaxis: { title: yAxisTitle },
                 hovermode: 'x unified',
                 template: 'plotly_white',
                 showlegend: true,
@@ -453,21 +468,30 @@
         function renderStats(databases) {
             const statsContainer = document.getElementById('stats');
             statsContainer.innerHTML = '';
+            const useNormalized = document.getElementById('normalized_pnl').checked;
 
             databases.forEach(db => {
                 const card = document.createElement('div');
                 card.className = 'stats-card';
                 
                 const stats = db.stats;
+                const avgPnl = useNormalized ? stats.avg_normalized_pnl : stats.avg_pnl;
+                const totalPnl = useNormalized ? stats.total_normalized_pnl : stats.total_pnl;
+                const maxDrawdown = useNormalized ? stats.max_drawdown_normalized : stats.max_drawdown;
+                const avgPnlLabel = useNormalized ? 'Average Normalized PNL per Position' : 'Average PNL per Position';
+                const totalPnlLabel = useNormalized ? 'Total Cumulative Normalized PNL' : 'Total Cumulative PNL';
+                const avgPnlUnit = useNormalized ? '' : ' SOL';
+                const totalPnlUnit = useNormalized ? '' : ' SOL';
+                
                 card.innerHTML = `
                     <h3>${db.label}</h3>
                     <table class="stats-table">
                         <tr><td>Total Positions</td><td>${stats.num_positions}</td></tr>
                         <tr><td>Winning Positions</td><td>${stats.winning_positions}</td></tr>
                         <tr><td>Win Rate</td><td>${formatNumber(stats.win_rate, 2)}%</td></tr>
-                        <tr><td>Average PNL per Position</td><td>${formatNumber(stats.avg_pnl, 6)} SOL</td></tr>
-                        <tr><td>Total Cumulative PNL</td><td>${formatNumber(stats.total_pnl, 6)} SOL</td></tr>
-                        <tr><td>Max Drawdown</td><td>${formatNumber(stats.max_drawdown, 2)}%</td></tr>
+                        <tr><td>${avgPnlLabel}</td><td>${formatNumber(avgPnl, 6)}${avgPnlUnit}</td></tr>
+                        <tr><td>${totalPnlLabel}</td><td>${formatNumber(totalPnl, 6)}${totalPnlUnit}</td></tr>
+                        <tr><td>Max Drawdown</td><td>${formatNumber(maxDrawdown, 2)}%</td></tr>
                         <tr><td colspan="2"><strong>Position Duration Statistics</strong></td></tr>
                         <tr><td>Average</td><td>${formatDuration(stats.avg_duration)}</td></tr>
                         <tr><td>Median</td><td>${formatDuration(stats.median_duration)}</td></tr>
@@ -486,6 +510,18 @@
             // Auto-reload when checkbox changes
             document.getElementById('only_running').addEventListener('change', () => {
                 loadData();
+            });
+            
+            // Re-render chart and stats when normalized PNL checkbox changes
+            document.getElementById('normalized_pnl').addEventListener('change', () => {
+                // Re-render with existing data if available
+                if (window.currentDashboardData) {
+                    renderChart(window.currentDashboardData);
+                    renderStats(window.currentDashboardData);
+                } else {
+                    // Fallback to reloading if no data available
+                    loadData();
+                }
             });
             
             // Allow Enter key to trigger load

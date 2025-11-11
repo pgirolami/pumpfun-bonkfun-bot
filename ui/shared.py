@@ -13,7 +13,7 @@ from pathlib import Path
 
 def query_positions(
     db_path: str, start_timestamp: int
-) -> list[tuple[int, float, int | None]]:
+) -> list[tuple[int, float, int | None, int | None]]:
     """Query closed positions from database.
 
     Args:
@@ -21,13 +21,13 @@ def query_positions(
         start_timestamp: Unix epoch milliseconds - filter positions with entry_ts >= this
 
     Returns:
-        List of tuples (entry_ts, realized_pnl_sol_decimal, exit_ts) ordered by entry_ts
+        List of tuples (entry_ts, realized_pnl_sol_decimal, exit_ts, total_sol_swapout_amount_raw) ordered by entry_ts
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.execute(
         """
-        SELECT entry_ts, realized_pnl_sol_decimal, exit_ts
+        SELECT entry_ts, realized_pnl_sol_decimal, exit_ts, total_sol_swapout_amount_raw
         FROM positions
         WHERE realized_pnl_sol_decimal IS NOT NULL
           AND entry_ts >= ?
@@ -37,7 +37,12 @@ def query_positions(
         (start_timestamp,),
     )
     results = [
-        (row["entry_ts"], row["realized_pnl_sol_decimal"], row["exit_ts"])
+        (
+            row["entry_ts"],
+            row["realized_pnl_sol_decimal"],
+            row["exit_ts"],
+            row["total_sol_swapout_amount_raw"],
+        )
         for row in cursor
     ]
     conn.close()
@@ -108,7 +113,7 @@ def calculate_max_drawdown(
 
 def process_database(
     db_path: str, start_timestamp: int
-) -> tuple[str, list[datetime], list[float], dict[str, float | int]] | None:
+) -> tuple[str, list[datetime], list[float], list[float], dict[str, float | int]] | None:
     """Process a single database and return data for plotting.
 
     Args:
@@ -116,17 +121,18 @@ def process_database(
         start_timestamp: Start timestamp to filter positions
 
     Returns:
-        Tuple of (label, timestamps, cumulative_pnl, stats) or None if no data
+        Tuple of (label, timestamps, cumulative_pnl, cumulative_normalized_pnl, stats) or None if no data
     """
     positions = query_positions(db_path, start_timestamp)
 
     if not positions:
         return None
 
-    # Extract timestamps and PNL values
+    # Extract timestamps, PNL values, and swap amounts
     timestamps_ms = [pos[0] for pos in positions]
     pnl_values = [pos[1] for pos in positions]
     exit_timestamps_ms = [pos[2] for pos in positions]
+    swapout_amounts_raw = [pos[3] for pos in positions]
 
     # Convert timestamps to datetime objects
     timestamps = [datetime.fromtimestamp(ts / 1000.0) for ts in timestamps_ms]
@@ -137,6 +143,24 @@ def process_database(
     for pnl in pnl_values:
         running_total += pnl
         cumulative_pnl.append(running_total)
+
+    # Calculate normalized PNL (PNL / abs(total_sol_swapout_amount_raw))
+    # Convert raw amounts from lamports to SOL (divide by 1e9)
+    normalized_pnl_values = []
+    for pnl, swapout_raw in zip(pnl_values, swapout_amounts_raw):
+        if swapout_raw is not None and swapout_raw != 0:
+            swapout_sol = abs(swapout_raw) / 1e9  # Convert lamports to SOL
+            normalized_pnl = pnl / swapout_sol if swapout_sol > 0 else 0.0
+        else:
+            normalized_pnl = 0.0
+        normalized_pnl_values.append(normalized_pnl)
+
+    # Calculate cumulative normalized PNL
+    cumulative_normalized_pnl = []
+    running_normalized_total = 0.0
+    for normalized_pnl in normalized_pnl_values:
+        running_normalized_total += normalized_pnl
+        cumulative_normalized_pnl.append(running_normalized_total)
 
     # Calculate position durations (in seconds)
     durations_seconds = []
@@ -173,18 +197,28 @@ def process_database(
     # Extract label from path
     label = extract_label(db_path)
 
+    # Calculate normalized statistics
+    total_normalized_pnl = cumulative_normalized_pnl[-1] if cumulative_normalized_pnl else 0.0
+    avg_normalized_pnl = (
+        sum(normalized_pnl_values) / num_positions if num_positions > 0 else 0.0
+    )
+    max_drawdown_normalized = calculate_max_drawdown(cumulative_normalized_pnl)
+
     stats = {
         "total_pnl": total_pnl,
+        "total_normalized_pnl": total_normalized_pnl,
         "num_positions": num_positions,
         "winning_positions": winning_positions,
         "win_rate": win_rate,
         "avg_pnl": avg_pnl,
+        "avg_normalized_pnl": avg_normalized_pnl,
         "max_drawdown": max_drawdown,
+        "max_drawdown_normalized": max_drawdown_normalized,
         "avg_duration": avg_duration,
         "median_duration": median_duration,
         "p10_duration": p10_duration,
         "p90_duration": p90_duration,
     }
 
-    return (label, timestamps, cumulative_pnl, stats)
+    return (label, timestamps, cumulative_pnl, cumulative_normalized_pnl, stats)
 
