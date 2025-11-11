@@ -12,11 +12,11 @@ rpc:
   helius_sender:
     routing: "swqos_only"  # Options: "swqos_only" (default, requires 0.000005 SOL tip) or "dual" (requires 0.001 SOL tip)
     tip_amount_sol: 0.000005  # Tip amount in SOL (defaults: 0.000005 for swqos_only, 0.001 for dual)
-    endpoint: "https://lon-sender.helius-rpc.com/fast"  # Optional override (defaults to London HTTPS endpoint)
+    endpoint: "http://lon-sender.helius-rpc.com/fast"  # Optional override (defaults to London HTTPS endpoint)
 
 private_key: "${SOLANA_PRIVATE_KEY}"
 
-enabled: true # You can turn off the bot w/o removing its config
+enabled: false # You can turn off the bot w/o removing its config
 separate_process: true
 
 # Options: "pump_fun" (default), "lets_bonk"
@@ -30,6 +30,8 @@ pumpportal:
 testing:
   dry_run: true  # Set to true to simulate transactions without sending to blockchain
   dry_run_wait_time_seconds: 1.3  # Simulate RPC latency in dry-run mode
+  offset_wallets:
+    - ${PUBKEY_TO_IGNORE}
 
 # Trading parameters
 # Control trade execution: amount of SOL per trade and acceptable price deviation
