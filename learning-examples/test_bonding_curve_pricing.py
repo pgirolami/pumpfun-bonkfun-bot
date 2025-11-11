@@ -22,7 +22,7 @@ BondingCurveState = module.BondingCurveState
 PriceTracker = module.PriceTracker
 
 
-def calculate_token_amount_from_sol(curve: BondingCurveState, sol_amount: float, is_buy: bool) -> float:
+def calculate_token_amount_from_sol(curve: BondingCurveState, sol_or_token_amount: float, is_buy: bool) -> float:
     """Calculate token amount from SOL amount using bonding curve formula.
     
     For pump.fun bonding curve: k = virtual_sol * virtual_tokens (constant product)
@@ -39,20 +39,20 @@ def calculate_token_amount_from_sol(curve: BondingCurveState, sol_amount: float,
     """
     if is_buy:
         # Buy: SOL goes in, tokens come out
-        new_virtual_sol = curve.virtual_sol_reserves + sol_amount
+        new_virtual_sol = curve.virtual_sol_reserves + sol_or_token_amount
         # k = virtual_sol * virtual_tokens (constant)
         k = curve.virtual_sol_reserves * curve.virtual_token_reserves
         new_virtual_tokens = k / new_virtual_sol
-        token_amount = curve.virtual_token_reserves - new_virtual_tokens
+        result = curve.virtual_token_reserves - new_virtual_tokens
     else:
         # Sell: tokens go in, SOL comes out
-        new_virtual_sol = curve.virtual_sol_reserves - sol_amount
+        new_virtual_tokens = curve.virtual_token_reserves + sol_or_token_amount
         # k = virtual_sol * virtual_tokens (constant)
         k = curve.virtual_sol_reserves * curve.virtual_token_reserves
-        new_virtual_tokens = k / new_virtual_sol
-        token_amount = new_virtual_tokens - curve.virtual_token_reserves
+        new_virtual_sol = k / new_virtual_tokens
+        result = curve.virtual_sol_reserves - new_virtual_sol
     
-    return token_amount
+    return result
 
 
 def test_bonding_curve_basic():
@@ -72,32 +72,55 @@ def test_bonding_curve_basic():
     print(f"  Virtual Tokens: {curve.virtual_token_reserves:,.0f}")
     print(f"  Real SOL: {curve.real_sol_reserves}")
     print(f"  Real Tokens: {curve.real_token_reserves:,.0f}")
-    print(f"  Initial Price: {curve.calculate_price():.10f} SOL/token")
-    print(f"  Initial Price: ${curve.calculate_price() * 200:.6f} USD (at $200 SOL)")
+    print(f"  Initial Price: {curve.calculate_price()} SOL/token")
     print()
     
+    BUY_AMOUNT = 0.1
     # Simulate a buy trade (0.1 SOL for tokens)
-    print("Simulating buy trade: 0.1 SOL -> tokens")
-    token_amount = calculate_token_amount_from_sol(curve, 0.1, True)
-    print(f"  Calculated token amount: {token_amount:.0f} tokens")
-    curve.apply_trade(sol_amount=0.1, token_amount=token_amount, is_buy=True)
+    print(f"Simulating buy trade: {BUY_AMOUNT} SOL -> tokens")
+    token_amount = calculate_token_amount_from_sol(curve, BUY_AMOUNT, True)
+    print(f"  Calculated token amount: {token_amount:.0f} tokens => price of swap = {BUY_AMOUNT / token_amount} SOL/token")
+    curve.apply_trade(sol_amount=BUY_AMOUNT, token_amount=token_amount, is_buy=True)
     
     print(f"After buy trade:")
     print(f"  Virtual SOL: {curve.virtual_sol_reserves:.6f}")
     print(f"  Virtual Tokens: {curve.virtual_token_reserves:.0f}")
-    print(f"  New Price: {curve.calculate_price():.10f} SOL/token")
+    print(f"  New Price: {curve.calculate_price()} SOL/token")
     print()
     
     # Simulate another buy trade
-    print("Simulating another buy trade: 0.1 SOL -> tokens")
-    token_amount = calculate_token_amount_from_sol(curve, 0.1, True)
-    print(f"  Calculated token amount: {token_amount:.0f} tokens")
-    curve.apply_trade(sol_amount=0.1, token_amount=token_amount, is_buy=True)
+    print(f"Simulating another buy trade: {BUY_AMOUNT} SOL -> tokens")
+    small_token_amount = calculate_token_amount_from_sol(curve, BUY_AMOUNT, True)
+    print(f"  Calculated token amount: {small_token_amount:.0f} tokens => price of swap = {BUY_AMOUNT / small_token_amount} SOL/token")
+    curve.apply_trade(sol_amount=BUY_AMOUNT, token_amount=small_token_amount, is_buy=True)
     
     print(f"After second buy trade:")
     print(f"  Virtual SOL: {curve.virtual_sol_reserves:.6f}")
     print(f"  Virtual Tokens: {curve.virtual_token_reserves:.0f}")
-    print(f"  New Price: {curve.calculate_price():.10f} SOL/token")
+    print(f"  New Price: {curve.calculate_price()} SOL/token")
+    print()
+
+    # Simulate another buy trade
+    print(f"Simulating another buy trade: {10*BUY_AMOUNT} SOL -> tokens")
+    token_amount = calculate_token_amount_from_sol(curve, 10*BUY_AMOUNT, True)
+    print(f"  Calculated token amount: {token_amount:.0f} tokens => price of swap = {10*BUY_AMOUNT / token_amount} SOL/token")
+    curve.apply_trade(sol_amount=10*BUY_AMOUNT, token_amount=token_amount, is_buy=True)
+    
+    print(f"After third buy trade:")
+    print(f"  Virtual SOL: {curve.virtual_sol_reserves:.6f}")
+    print(f"  Virtual Tokens: {curve.virtual_token_reserves:.0f}")
+    print(f"  New Price: {curve.calculate_price()} SOL/token")
+    print()
+
+    print(f"Simulating sell trade: {small_token_amount} tokens -> SOL")
+    sol_amount = calculate_token_amount_from_sol(curve, small_token_amount, False)
+    print(f"  Calculated SOL amount: {sol_amount} SOL => price of swap = {sol_amount / small_token_amount} SOL/token")
+    curve.apply_trade(sol_amount=sol_amount, token_amount=small_token_amount, is_buy=False)
+    
+    print(f"After sell trade:")
+    print(f"  Virtual SOL: {curve.virtual_sol_reserves:.6f}")
+    print(f"  Virtual Tokens: {curve.virtual_token_reserves:.0f}")
+    print(f"  New Price: {curve.calculate_price()} SOL/token")
     print()
 
 
