@@ -308,6 +308,21 @@ def process_database(
         if losing_normalized_pnl_values else 0.0
     )
     
+    # Calculate required win rate to break even
+    # Expected value = win_rate * avg_normalized_pnl_winning + (1 - win_rate) * avg_normalized_pnl_losing = 0
+    # Solving: win_rate = -avg_normalized_pnl_losing / (avg_normalized_pnl_winning - avg_normalized_pnl_losing)
+    required_win_rate_break_even = None
+    if (
+        avg_normalized_pnl_winning > 0
+        and avg_normalized_pnl_losing < 0
+        and avg_normalized_pnl_winning != avg_normalized_pnl_losing
+    ):
+        denominator = avg_normalized_pnl_winning - avg_normalized_pnl_losing
+        if denominator != 0:
+            required_win_rate_break_even = -avg_normalized_pnl_losing / denominator
+            # Clamp to [0, 1] range
+            required_win_rate_break_even = max(0.0, min(1.0, required_win_rate_break_even))
+    
     max_drawdown_normalized = calculate_max_drawdown(cumulative_normalized_pnl)
 
     # Query trade durations for successful trades
@@ -452,6 +467,11 @@ def process_database(
         "avg_normalized_pnl": avg_normalized_pnl,
         "avg_normalized_pnl_winning": avg_normalized_pnl_winning,
         "avg_normalized_pnl_losing": avg_normalized_pnl_losing,
+        "required_win_rate_break_even": (
+            required_win_rate_break_even * 100.0
+            if required_win_rate_break_even is not None
+            else None
+        ),
         "max_drawdown": max_drawdown,
         "max_drawdown_normalized": max_drawdown_normalized,
         "avg_duration": avg_duration,

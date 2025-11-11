@@ -497,6 +497,11 @@
                         <tr><td>Average Normalized PNL per Position</td><td>${formatNumber(stats.avg_normalized_pnl, 6)}</td></tr>
                         <tr><td>Average Normalized PNL when Winning</td><td>${formatNumber(stats.avg_normalized_pnl_winning, 6)}</td></tr>
                         <tr><td>Average Normalized PNL when Losing</td><td>${formatNumber(stats.avg_normalized_pnl_losing, 6)}</td></tr>
+                        <tr><td>Required Win Rate to Break Even</td><td>${
+                            stats.required_win_rate_break_even !== null && stats.required_win_rate_break_even !== undefined
+                                ? formatNumber(stats.required_win_rate_break_even, 2) + '%'
+                                : 'N/A'
+                        }</td></tr>
                         <tr><td>Total Cumulative PNL</td><td>${formatNumber(stats.total_pnl, 6)} SOL</td></tr>
                         <tr><td>Total Cumulative Normalized PNL</td><td>${formatNumber(stats.total_normalized_pnl, 6)}</td></tr>
                         <tr><td>Max Drawdown</td><td>${formatNumber(maxDrawdown, 2)}%</td></tr>
