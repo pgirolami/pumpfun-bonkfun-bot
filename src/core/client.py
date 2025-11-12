@@ -22,7 +22,8 @@ from solders.instruction import Instruction
 from solders.keypair import Keypair
 from solders.message import Message
 from solders.pubkey import Pubkey
-from solders.solders import EncodedConfirmedTransactionWithStatusMeta, Signature
+from solders.solders import EncodedConfirmedTransactionWithStatusMeta
+from solders.signature import Signature
 from solders.system_program import TransferParams, transfer
 from solders.transaction import Transaction
 
@@ -562,6 +563,15 @@ class SolanaClient:
 
 
     @dataclass
+    class TransactionMetaInfo:
+        """Transaction metadata information extracted from transaction object."""
+        block_time: int | None = None  # Block time in Unix timestamp
+        block_slot: int | None = None  # Block slot number
+        success: bool = True  # Whether transaction succeeded
+        error_message: str | None = None  # Error message if failed
+        log_messages: list[str] | None = None  # Transaction log messages
+
+    @dataclass
     class ConfirmationResult:
         success: bool
         tx:Signature
@@ -577,6 +587,53 @@ class SolanaClient:
                 result += f", error_message='{self.error_message}'"
             result += ")"
             return result
+
+    def analyze_transaction_meta(
+        self, tx: EncodedConfirmedTransactionWithStatusMeta
+    ) -> "SolanaClient.TransactionMetaInfo":
+        """Analyze transaction metadata and extract information.
+
+        Args:
+            tx: Transaction object with meta information
+
+        Returns:
+            TransactionMetaInfo: Dataclass with extracted transaction metadata
+        """
+        block_time = None
+        block_slot = None
+        success = True
+        error_message = None
+        log_messages = None
+
+        if tx:
+            # Extract block time
+            if hasattr(tx, 'block_time') and tx.block_time:
+                block_time = int(tx.block_time)
+            
+            # Extract block slot
+            if hasattr(tx, 'slot'):
+                block_slot = int(tx.slot)
+
+            # Extract error and log messages from transaction meta
+            if tx.transaction and tx.transaction.meta:
+                meta = tx.transaction.meta
+                
+                # Check if transaction succeeded
+                if meta.err:
+                    success = False
+                    error_message = str(meta.err)
+                
+                # Extract log messages
+                if meta.log_messages:
+                    log_messages = list(meta.log_messages)
+
+        return SolanaClient.TransactionMetaInfo(
+            block_time=block_time,
+            block_slot=block_slot,
+            success=success,
+            error_message=error_message,
+            log_messages=log_messages,
+        )
 
     async def confirm_transaction(
         self, signature: Signature, commitment: Commitment = Confirmed
@@ -600,26 +657,26 @@ class SolanaClient:
             signature, commitment=commitment, sleep_seconds=1
         )
 
-        # Fetch transaction once to extract both error details and block time
-        error_string = None
-        block_time = None
-        
         # Extract error from confirmation response
+        error_string = None
         if resp.value[0].err:
             error_string = str(resp.value[0].err)
         
         # Fetch transaction for additional details (error logs and block time)
+        block_time = None
         try:
             tx = await client.get_transaction(signature, commitment=commitment)
             if tx and tx.value:
-                # Extract block time if available
-                if hasattr(tx.value, 'block_time') and tx.value.block_time:
-                    block_time = int(tx.value.block_time)
+                # Use analyze_transaction_meta to extract information
+                meta_info = self.analyze_transaction_meta(tx.value)
+                block_time = meta_info.block_time
                 
-                # Extract detailed error messages if transaction failed
-                if resp.value[0].err and tx.value.transaction and tx.value.transaction.meta:
-                    if tx.value.transaction.meta.log_messages:
-                        error_string = str(tx.value.transaction.meta.log_messages)
+                # Use detailed error messages from transaction if available
+                if meta_info.error_message:
+                    error_string = meta_info.error_message
+                elif meta_info.log_messages and error_string:
+                    # Prefer log messages if available
+                    error_string = "\n".join(meta_info.log_messages)
         except BaseException as e:
             logging.info(
                 "client.confirm_transaction - got exception while getting transaction details: %s",
@@ -640,16 +697,19 @@ class SolanaClient:
         retry=retry_if_not_exception_type(UnconfirmedTxError),
         after=after_log(logging.getLogger(), logging.INFO),
     )
-    async def get_transaction(self, signature: str) -> EncodedConfirmedTransactionWithStatusMeta:
+    async def get_transaction(self, signature: str | Signature) -> EncodedConfirmedTransactionWithStatusMeta:
         """Fetch a transaction by signature.
 
         Args:
-            signature: Transaction signature
+            signature: Transaction signature (string or Signature object)
 
         Returns:
             Parsed RPC response dictionary or None on failure
         """
         client = await self.get_client()
+        # Convert string to Signature object if needed
+        if isinstance(signature, str):
+            signature = Signature.from_string(signature)
         # Use jsonParsed encoding to access meta fields easily
         resp = await client.get_transaction(
             signature,

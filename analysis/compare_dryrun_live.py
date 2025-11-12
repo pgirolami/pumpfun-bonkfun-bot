@@ -29,17 +29,39 @@ Examples:
 """
 
 import argparse
+import asyncio
+import base64
 import csv
 import json
+import os
 import sqlite3
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from solders.pubkey import Pubkey
+from solders.signature import Signature
+from tqdm import tqdm
+
+# Add src to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from core.client import SolanaClient
+from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
+from interfaces.core import Platform, TokenInfo
+from platforms.letsbonk.address_provider import LetsBonkAddressProvider
+from platforms.letsbonk.balance_analyzer import LetsBonkBalanceAnalyzer
+from platforms.pumpfun.address_provider import PumpFunAddressProvider
+from platforms.pumpfun.balance_analyzer import PumpFunBalanceAnalyzer
+from utils.idl_parser import IDLParser
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def parse_timestamp(value: str | int | None) -> int | None:
@@ -175,6 +197,453 @@ def query_all_trades(
     trades = [dict(row) for row in cursor]
     conn.close()
     return trades
+
+
+@dataclass
+class AnalyzedTransaction:
+    """Analyzed transaction information."""
+    signature: str  # Full transaction signature
+    signature_short: str  # First 8 characters
+    wallet_pubkey: str  # Full wallet public key (fee payer)
+    wallet_pubkey_short: str  # First 8 characters
+    transaction_type: str  # Transaction type: "buy", "sell", or "create"
+    meta_info: Any  # TransactionMetaInfo from SolanaClient
+    balance_result: Any | None = None  # BalanceChangeResult (None if analysis failed)
+    analysis_error: str | None = None  # Error message if balance analysis failed
+
+
+async def query_token_transactions(
+    client: SolanaClient,
+    bonding_curve_address: Pubkey,
+    end_timestamp_ms: int,
+) -> list[str]:
+    """Query all transaction signatures for a token bonding curve up to end timestamp.
+    
+    Args:
+        client: Solana client instance
+        bonding_curve_address: Bonding curve address to query
+        end_timestamp_ms: End timestamp in milliseconds (exit_ts + 60000ms = 1 minute)
+        
+    Returns:
+        List of transaction signatures in chronological order (oldest first)
+    """
+    signatures = []
+    try:
+        solana_client = await client.get_client()
+        
+        # Get all signatures for the bonding curve address
+        # We'll need to paginate through results
+        # Convert end_timestamp_ms to Unix seconds for comparison
+        end_timestamp_s = end_timestamp_ms / 1000.0
+        
+        before = None
+        all_sig_infos = []
+        
+        # Collect all signatures (they come newest first)
+        while True:
+            response = await solana_client.get_signatures_for_address(
+                bonding_curve_address,
+                before=before,
+                limit=1000,
+            )
+            
+            if not response.value:
+                break
+            
+            # Add all signatures to our list
+            all_sig_infos.extend(response.value)
+            
+            # If we got fewer than limit, we're done
+            if len(response.value) < 1000:
+                break
+            
+            # Set before for next iteration (use last signature)
+            before = response.value[-1].signature
+        
+        # Filter by timestamp (oldest first)
+        # RPC returns signatures newest first, so we reverse to get chronological order
+        for sig_info in reversed(all_sig_infos):
+            if sig_info.block_time:
+                # Only include transactions up to end timestamp
+                if sig_info.block_time <= end_timestamp_s:
+                    signatures.append(str(sig_info.signature))
+            else:
+                # If no block_time, include it (might be pending or very recent)
+                signatures.append(str(sig_info.signature))
+        
+    except Exception as e:
+        print(f"Error querying transactions for {bonding_curve_address}: {e}")
+    
+    return signatures
+
+
+async def extract_instruction_accounts(
+    tx, idl_parser: IDLParser, program_id: Pubkey
+) -> dict[str, Pubkey] | None:
+    """Extract instruction accounts from a transaction.
+    
+    This is adapted from test_balance_analyzer.py
+    
+    Args:
+        tx: Transaction object
+        idl_parser: IDL parser instance
+        program_id: Program ID to match
+        
+    Returns:
+        Dictionary of instruction accounts or None if not found
+    """
+    if not tx or not tx.transaction:
+        return None
+
+    account_keys = tx.transaction.transaction.message.account_keys
+    instructions = tx.transaction.transaction.message.instructions
+
+    for ix in instructions:
+        # Handle both regular Instruction and UiPartiallyDecodedInstruction
+        instruction_program_id = None
+        
+        # Check if this is a UiPartiallyDecodedInstruction (from jsonParsed encoding)
+        if hasattr(ix, "program_id"):
+            # UiPartiallyDecodedInstruction has program_id directly
+            instruction_program_id = ix.program_id
+            if isinstance(instruction_program_id, str):
+                instruction_program_id = Pubkey.from_string(instruction_program_id)
+            elif hasattr(instruction_program_id, "pubkey"):
+                instruction_program_id = instruction_program_id.pubkey
+        elif hasattr(ix, "program_id_index"):
+            # Regular Instruction has program_id_index
+            program_id_index = ix.program_id_index
+            if program_id_index >= len(account_keys):
+                continue
+            instruction_program_id = account_keys[program_id_index].pubkey
+        else:
+            continue
+
+        # Check if this instruction is from the target program
+        if instruction_program_id != program_id:
+            continue
+
+        # Get instruction data and accounts
+        ix_data = None
+        account_indices = None
+
+        # Handle UiPartiallyDecodedInstruction
+        if hasattr(ix, "program_id"):
+            # For UiPartiallyDecodedInstruction, we need to get data and accounts differently
+            if hasattr(ix, "data") and ix.data:
+                # Data might be base58 encoded string
+                if isinstance(ix.data, str):
+                    try:
+                        import base58
+                        ix_data = base58.b58decode(ix.data)
+                    except Exception:
+                        continue
+                else:
+                    ix_data = bytes(ix.data)
+            
+            if hasattr(ix, "accounts") and ix.accounts:
+                # Accounts are already Pubkey objects or strings in UiPartiallyDecodedInstruction
+                # We need to find their indices in account_keys
+                account_indices = []
+                for acc in ix.accounts:
+                    acc_pubkey = acc
+                    if isinstance(acc, str):
+                        acc_pubkey = Pubkey.from_string(acc)
+                    elif hasattr(acc, "pubkey"):
+                        acc_pubkey = acc.pubkey
+                    
+                    # Find index in account_keys
+                    for i, key in enumerate(account_keys):
+                        if key.pubkey == acc_pubkey:
+                            account_indices.append(i)
+                            break
+        else:
+            # Regular Instruction
+            if hasattr(ix, "data"):
+                ix_data = bytes(ix.data)
+            if hasattr(ix, "accounts"):
+                account_indices = list(ix.accounts)
+
+        if not ix_data or not account_indices:
+            continue
+
+        # Convert account keys to bytes for IDL parser
+        account_keys_bytes = [bytes(key.pubkey) for key in account_keys]
+
+        decoded = idl_parser.decode_instruction(
+            ix_data, account_keys_bytes, account_indices
+        )
+
+        if decoded and decoded.get("instruction_name") in ["buy", "sell", "create"]:
+            # Extract accounts from decoded instruction
+            accounts_dict = decoded.get("accounts", {})
+            instruction_accounts = {}
+
+            # Convert string addresses to Pubkey objects
+            for key, value in accounts_dict.items():
+                if value:
+                    try:
+                        instruction_accounts[key] = Pubkey.from_string(value)
+                    except Exception as e:
+                        pass  # Skip invalid addresses
+
+            # Store instruction type for later use
+            instruction_accounts["_instruction_type"] = decoded.get("instruction_name")
+            return instruction_accounts
+
+    return None
+
+
+async def analyze_transaction(
+    client: SolanaClient,
+    signature: str,
+    mint: str,
+    platform: Platform,
+    address_provider: Any,
+    balance_analyzer: Any,
+    idl_parser: IDLParser | None,
+) -> AnalyzedTransaction | None:
+    """Analyze a single transaction using balance analyzer.
+    
+    Args:
+        client: Solana client instance
+        signature: Transaction signature
+        mint: Token mint address
+        platform: Platform enum
+        address_provider: Platform-specific address provider
+        balance_analyzer: Platform-specific balance analyzer
+        idl_parser: IDL parser instance
+        
+    Returns:
+        AnalyzedTransaction dataclass or None if analysis failed
+    """
+    try:
+        # Fetch transaction (client handles string to Signature conversion)
+        tx = await client.get_transaction(signature)
+        if not tx:
+            return None
+        
+        # Get meta information using client's analyze_transaction_meta
+        meta_info = client.analyze_transaction_meta(tx)
+        
+        # Get fee payer (first account) - this is the account that pays transaction fees
+        if not tx.transaction or not tx.transaction.transaction:
+            return None
+        
+        fee_payer = tx.transaction.transaction.message.account_keys[0].pubkey
+        fee_payer_str = str(fee_payer)
+        
+        # Extract instruction accounts (only if IDL parser is available)
+        program_id = address_provider.program_id
+        extracted_accounts = None
+        if idl_parser:
+            extracted_accounts = await extract_instruction_accounts(tx, idl_parser, program_id)
+        
+        # Identify the actual trader account (the one doing the buy/sell)
+        # This should be the "user" account from the instruction, not the fee payer
+        # The trader is the account whose token balance changes, which is extracted from the instruction
+        trader_account = extracted_accounts.get("user") if extracted_accounts else None
+        
+        # Final fallback: use fee payer if we can't identify the trader from instructions
+        # (In most cases, the fee payer IS the trader, so this is usually correct)
+        if not trader_account:
+            logger.warning(
+                f"Could not extract trader account from instruction for transaction {signature[:8]}..., "
+                f"falling back to fee payer {str(fee_payer)[:8]}... "
+                f"(This may result in incorrect token balance analysis if fee payer != trader)"
+            )
+            trader_account = fee_payer
+        
+        # Use trader account for balance analysis (this is the account whose token balances change)
+        wallet_pubkey = trader_account
+        wallet_pubkey_str = str(wallet_pubkey)
+        
+        # Create TokenInfo
+        mint_pubkey = Pubkey.from_string(mint)
+        user = trader_account
+        
+        # Derive bonding curve from mint
+        if platform == Platform.PUMP_FUN:
+            bonding_curve = address_provider.derive_pool_address(mint_pubkey)
+            associated_bonding_curve = address_provider.derive_associated_bonding_curve(
+                mint_pubkey, bonding_curve
+            )
+        else:  # LETS_BONK
+            bonding_curve = address_provider.derive_pool_address(mint_pubkey)
+            associated_bonding_curve = None
+        
+        # Override with extracted accounts if available
+        if extracted_accounts:
+            if "bonding_curve" in extracted_accounts:
+                bonding_curve = extracted_accounts["bonding_curve"]
+            if "associated_bonding_curve" in extracted_accounts:
+                associated_bonding_curve = extracted_accounts["associated_bonding_curve"]
+        
+        # Get creator from bonding curve if needed (for pump.fun)
+        creator = None
+        creator_vault = None
+        if platform == Platform.PUMP_FUN:
+            try:
+                curve_account = await client.get_account_info(bonding_curve)
+                if curve_account and curve_account.data:
+                    if isinstance(curve_account.data, list):
+                        curve_data = base64.b64decode(curve_account.data[0])
+                    else:
+                        curve_data = curve_account.data
+                    
+                    # Parse bonding curve state to get creator
+                    # This is a simplified version - you may need to adjust based on actual structure
+                    if len(curve_data) >= 150:  # New format with creator
+                        creator_bytes = curve_data[57:89]  # Creator is at offset 57-89
+                        creator = Pubkey.from_bytes(creator_bytes)
+                        creator_vault = address_provider.derive_creator_vault(creator)
+            except Exception:
+                pass
+        
+        # Fallback: try to get creator from extracted accounts
+        if not creator:
+            if extracted_accounts and "creator" in extracted_accounts:
+                creator = extracted_accounts["creator"]
+            elif extracted_accounts and "user" in extracted_accounts:
+                creator = extracted_accounts["user"]
+            
+            if creator and platform == Platform.PUMP_FUN:
+                creator_vault = address_provider.derive_creator_vault(creator)
+        
+        if not creator_vault and extracted_accounts:
+            creator_vault = extracted_accounts.get("creator_vault")
+        
+        token_info = TokenInfo(
+            name="",
+            symbol="",
+            uri="",
+            mint=mint_pubkey,
+            platform=platform,
+            bonding_curve=bonding_curve,
+            associated_bonding_curve=associated_bonding_curve,
+            creator_vault=creator_vault,
+            user=user,
+            creator=creator,
+        )
+        
+        # Build instruction accounts - use buy as default since we'll classify based on balance result
+        instruction_type = (
+            extracted_accounts.get("_instruction_type") if extracted_accounts else "buy"
+        )
+        
+        # Build instruction accounts (use buy as default, we'll classify based on balance result)
+        # Prioritize extracted accounts from the actual instruction over derived accounts
+        if extracted_accounts:
+            # Start with extracted accounts as base (these are from the actual transaction)
+            instruction_accounts = {}
+            # Copy all extracted accounts except the instruction type marker
+            for key, value in extracted_accounts.items():
+                if key != "_instruction_type":
+                    instruction_accounts[key] = value
+            
+            # Map IDL account names to our expected names
+            # The IDL uses "associated_user" for the user's token account
+            if "associated_user" in instruction_accounts and "user_token_account" not in instruction_accounts:
+                instruction_accounts["user_token_account"] = instruction_accounts["associated_user"]
+            
+            # Also map "fee_recipient" to "fee" if needed
+            if "fee_recipient" in instruction_accounts and "fee" not in instruction_accounts:
+                instruction_accounts["fee"] = instruction_accounts["fee_recipient"]
+            
+            # Log if user_token_account is still missing from extracted accounts (important for token balance analysis)
+            if "user_token_account" not in instruction_accounts:
+                logger.debug(
+                    f"user_token_account not found in extracted accounts for {signature[:8]}..., "
+                    f"will derive from user account"
+                )
+            
+            # Fill in any missing accounts using address provider
+            if platform == Platform.PUMP_FUN:
+                derived_accounts = address_provider.get_buy_instruction_accounts(
+                    token_info, user
+                )
+            else:  # LETS_BONK
+                derived_accounts = address_provider.get_buy_instruction_accounts(
+                    token_info, user
+                )
+            
+            # Only add derived accounts if they're not already in extracted accounts
+            for key, value in derived_accounts.items():
+                if key not in instruction_accounts:
+                    instruction_accounts[key] = value
+        else:
+            # No extracted accounts available, derive them
+            if platform == Platform.PUMP_FUN:
+                instruction_accounts = address_provider.get_buy_instruction_accounts(
+                    token_info, user
+                )
+            else:  # LETS_BONK
+                instruction_accounts = address_provider.get_buy_instruction_accounts(
+                    token_info, user
+                )
+        
+        # Ensure user_token_account is set (critical for token balance analysis)
+        if "user_token_account" not in instruction_accounts or instruction_accounts.get("user_token_account") is None:
+            logger.warning(
+                f"user_token_account is missing or None for transaction {signature[:8]}..., "
+                f"token balance analysis may fail. Trader account: {str(trader_account)[:8]}..."
+            )
+        
+        # Analyze balance changes first
+        balance_result = None
+        analysis_error = None
+        try:
+            balance_result = balance_analyzer.analyze_balance_changes(
+                tx, token_info, wallet_pubkey, instruction_accounts
+            )
+        except Exception as e:
+            analysis_error = str(e)
+        
+        # Classify transaction type based on token amount from balance result
+        # Positive token amount = buy, negative = sell
+        if balance_result and balance_result.token_swap_amount_raw is not None:
+            if balance_result.token_swap_amount_raw > 0:
+                transaction_type = "buy"
+            elif balance_result.token_swap_amount_raw < 0:
+                transaction_type = "sell"
+            else:
+                # token_swap_amount_raw == 0, check if it's a create transaction
+                if instruction_type == "create":
+                    transaction_type = "create"
+                else:
+                    # Default to buy if we can't determine
+                    transaction_type = "buy"
+        else:
+            # No balance result or token amount, check instruction type
+            if instruction_type == "create":
+                transaction_type = "create"
+            elif instruction_type == "sell":
+                transaction_type = "sell"
+            else:
+                transaction_type = "buy"
+        
+        return AnalyzedTransaction(
+            signature=signature,
+            signature_short=signature[:8],
+            wallet_pubkey=wallet_pubkey_str,
+            wallet_pubkey_short=wallet_pubkey_str[:8],
+            transaction_type=transaction_type,
+            meta_info=meta_info,
+            balance_result=balance_result,
+            analysis_error=analysis_error,
+        )
+        
+    except Exception as e:
+        # Return a minimal AnalyzedTransaction with error
+        return AnalyzedTransaction(
+            signature=signature,
+            signature_short=signature[:8],
+            wallet_pubkey="",
+            wallet_pubkey_short="",
+            meta_info=None,
+            balance_result=None,
+            analysis_error=str(e),
+        )
 
 
 def match_positions(
@@ -602,6 +1071,415 @@ def export_csv(
         print(f"✓ Exported {len(trade_comparisons)} trade comparisons to {trades_file}")
 
 
+def generate_token_transaction_html(
+    analyzed_transactions: list[AnalyzedTransaction],
+    mint: str,
+    exit_timestamp_ms: int,
+    output_dir: Path,
+) -> str:
+    """Generate HTML file for token transaction report.
+    
+    Args:
+        analyzed_transactions: List of AnalyzedTransaction dataclass instances
+        mint: Token mint address
+        exit_timestamp_ms: Exit timestamp in milliseconds
+        output_dir: Output directory for HTML file
+        
+    Returns:
+        Filename of generated HTML file (relative to output_dir)
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mint_short = mint[:8] + "..." if len(mint) > 8 else mint
+    # Sanitize mint_short for filename (replace dots and special chars)
+    filename_safe = mint_short.replace(".", "_").replace("/", "_").replace("\\", "_")
+    html_filename = f"token_{filename_safe}_transactions.html"
+    html_file = output_dir / html_filename
+    
+    def format_value(val, is_sol=False, is_percentage=False, decimals=6):
+        """Format a value for HTML display."""
+        if val is None:
+            return "<span style='color: #999;'>N/A</span>"
+        if is_percentage:
+            return f"{val*100:.2f}%"
+        if is_sol:
+            return f"{val:.{decimals}f} SOL"
+        return str(val)
+    
+    def format_block_time(block_time: int | None) -> str:
+        """Format block time for display."""
+        if block_time is None:
+            return "N/A"
+        dt = datetime.fromtimestamp(block_time)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Generate HTML
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Transaction Report - {mint_short}</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1400px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }}
+        .info {{
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-left: 4px solid #4CAF50;
+        }}
+        .data-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }}
+        .data-table th {{
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: bold;
+        }}
+        .data-table td {{
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+        }}
+        .data-table tr:hover {{
+            background-color: #f5f5f5;
+        }}
+        .success {{
+            color: #4CAF50;
+            font-weight: bold;
+        }}
+        .failure {{
+            color: #f44336;
+            font-weight: bold;
+        }}
+        .balance-info {{
+            font-size: 0.9em;
+            color: #666;
+        }}
+        a {{
+            color: #2196F3;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Transaction Report - <a href="https://solscan.io/account/{mint}" target="_blank" style="color: #2196F3; text-decoration: none;">{mint_short}</a></h1>
+        <div class="info">
+            <p><strong>Token Mint:</strong> <a href="https://solscan.io/account/{mint}" target="_blank" style="color: #2196F3;">{mint}</a></p>
+            <p><strong>Exit Timestamp:</strong> {format_block_time(exit_timestamp_ms / 1000.0)}</p>
+            <p><strong>Total Transactions:</strong> {len(analyzed_transactions)}</p>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Block Time & Number</th>
+                    <th>Signature</th>
+                    <th>Wallet</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Balance Information</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+    
+    for tx in analyzed_transactions:
+        # Block time and slot (2 lines in same row)
+        block_time_str = "N/A"
+        block_slot_str = "N/A"
+        if tx.meta_info:
+            if tx.meta_info.block_time:
+                block_time_str = format_block_time(tx.meta_info.block_time)
+            if tx.meta_info.block_slot:
+                block_slot_str = str(tx.meta_info.block_slot)
+        
+        # Transaction type
+        tx_type = tx.transaction_type.upper() if tx.transaction_type else "UNKNOWN"
+        type_color = {
+            "BUY": "#4CAF50",
+            "SELL": "#f44336",
+            "CREATE": "#2196F3",
+        }.get(tx_type, "#999")
+        type_html = f'<span style="color: {type_color}; font-weight: bold;">{tx_type}</span>'
+        
+        # Status (using icons)
+        if tx.meta_info and tx.meta_info.success:
+            status_html = '<span class="success" style="font-size: 1.2em;">✓</span>'
+        else:
+            error_msg = tx.meta_info.error_message if tx.meta_info else tx.analysis_error or "Unknown error"
+            status_html = f'<span class="failure" style="font-size: 1.2em;">✗</span><br><small style="color: #999;">{error_msg[:100]}</small>'
+        
+        # Balance information
+        balance_html = "N/A"
+        if tx.balance_result:
+            br = tx.balance_result
+            balance_parts = []
+            if br.sol_amount_raw is not None:
+                sol_change = br.sol_amount_raw / LAMPORTS_PER_SOL
+                balance_parts.append(f"SOL: {format_value(sol_change, is_sol=True)}")
+            if br.token_swap_amount_raw is not None:
+                token_change = br.token_swap_amount_raw / (10 ** TOKEN_DECIMALS)
+                balance_parts.append(f"Tokens: {format_value(token_change)}")
+            if br.transaction_fee_raw is not None:
+                tx_fee = br.transaction_fee_raw / LAMPORTS_PER_SOL
+                balance_parts.append(f"Tx Fee: {format_value(tx_fee, is_sol=True)}")
+            if br.protocol_fee_raw is not None:
+                protocol_fee = br.protocol_fee_raw / LAMPORTS_PER_SOL
+                balance_parts.append(f"Protocol Fee: {format_value(protocol_fee, is_sol=True)}")
+            if br.creator_fee_raw is not None:
+                creator_fee = br.creator_fee_raw / LAMPORTS_PER_SOL
+                balance_parts.append(f"Creator Fee: {format_value(creator_fee, is_sol=True)}")
+            if br.tip_fee_raw is not None and br.tip_fee_raw > 0:
+                tip_fee = br.tip_fee_raw / LAMPORTS_PER_SOL
+                balance_parts.append(f"Tip: {format_value(tip_fee, is_sol=True)}")
+            if br.unattributed_sol_amount_raw is not None and br.unattributed_sol_amount_raw != 0:
+                unattributed_sol = br.unattributed_sol_amount_raw / LAMPORTS_PER_SOL
+                balance_parts.append(f"Unattributed SOL: {format_value(unattributed_sol, is_sol=True)}")
+            
+            if balance_parts:
+                balance_html = '<div class="balance-info">' + "<br>".join(balance_parts) + "</div>"
+        elif tx.analysis_error:
+            balance_html = f'<span style="color: #f44336;">Analysis Error: {tx.analysis_error[:100]}</span>'
+        
+        html += f"""
+                <tr>
+                    <td>{block_time_str}<br>{block_slot_str}</td>
+                    <td><a href="https://solscan.io/tx/{tx.signature}" target="_blank">{tx.signature_short}</a></td>
+                    <td><a href="https://solscan.io/account/{tx.wallet_pubkey}" target="_blank">{tx.wallet_pubkey_short}</a></td>
+                    <td>{type_html}</td>
+                    <td>{status_html}</td>
+                    <td>{balance_html}</td>
+                </tr>
+"""
+    
+    html += """
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+"""
+    
+    # Write HTML file
+    with open(html_file, "w", encoding="utf-8") as f:
+        f.write(html)
+    
+    return html_filename
+
+
+async def generate_transaction_reports_for_live_positions(
+    live_positions: list[dict[str, Any]],
+    output_dir: Path,
+) -> dict[str, str]:
+    """Generate transaction HTML reports for all LIVE positions.
+    
+    Args:
+        live_positions: List of LIVE position dictionaries
+        output_dir: Output directory for HTML files
+        
+    Returns:
+        Dictionary mapping mint addresses to HTML filenames (for positions with reports)
+    """
+    # Get RPC endpoint from environment (try multiple possible variable names)
+    rpc_endpoint = (
+        os.getenv("SOLANA_RPC_HTTP")
+        or os.getenv("SOLANA_NODE_RPC_ENDPOINT")
+        or os.getenv("HELIUS_RPC_ENDPOINT")
+    )
+    if not rpc_endpoint:
+        print("❌ Warning: RPC endpoint not found in environment variables")
+        print("   Please set one of: SOLANA_RPC_HTTP, SOLANA_NODE_RPC_ENDPOINT, or HELIUS_RPC_ENDPOINT")
+        return {}
+    
+    # Get WebSocket endpoint (try multiple possible variable names)
+    wss_endpoint = (
+        os.getenv("SOLANA_RPC_WEBSOCKET")
+        or os.getenv("SOLANA_NODE_WSS_ENDPOINT")
+        or os.getenv("HELIUS_WSS_ENDPOINT")
+        or ""
+    )
+    
+    rpc_config = {
+        "rpc_endpoint": rpc_endpoint,
+        "wss_endpoint": wss_endpoint,
+        "send_method": "solana",
+    }
+    
+    client = SolanaClient(rpc_config)
+    reports_generated = {}
+    
+    # Load IDL parsers
+    idl_path_pumpfun = Path(__file__).parent.parent / "idl" / "pump_fun_idl.json"
+    idl_path_letsbonk = Path(__file__).parent.parent / "idl" / "letsbonk_idl.json"  # Adjust if needed
+    
+    idl_parser_pumpfun = None
+    idl_parser_letsbonk = None
+    
+    if idl_path_pumpfun.exists():
+        idl_parser_pumpfun = IDLParser(str(idl_path_pumpfun), verbose=False)
+    if idl_path_letsbonk.exists():
+        idl_parser_letsbonk = IDLParser(str(idl_path_letsbonk), verbose=False)
+    
+    print(f"\n📊 Generating transaction reports for {len(live_positions)} LIVE positions...")
+    
+    total_positions = len(live_positions)
+    successful_reports = 0
+    skipped_positions = 0
+    total_transactions_analyzed = 0
+    
+    for i, position in enumerate(live_positions, 1):
+        mint = position["mint"]
+        platform_str = position["platform"]
+        exit_ts = position.get("exit_ts")
+        mint_short = mint[:8] + "..."
+        
+        if not exit_ts:
+            print(f"   [{i}/{total_positions}] ⏭️  Skipping {mint_short} (no exit timestamp)")
+            skipped_positions += 1
+            continue
+        
+        try:
+            # Determine platform
+            if platform_str == "pump_fun":
+                platform = Platform.PUMP_FUN
+                address_provider = PumpFunAddressProvider()
+                balance_analyzer = PumpFunBalanceAnalyzer()
+                idl_parser = idl_parser_pumpfun
+            elif platform_str == "lets_bonk":
+                platform = Platform.LETS_BONK
+                address_provider = LetsBonkAddressProvider()
+                balance_analyzer = LetsBonkBalanceAnalyzer()
+                idl_parser = idl_parser_letsbonk  # Can be None for LetsBonk
+            else:
+                print(f"   [{i}/{total_positions}] ⏭️  Skipping {mint_short} (unsupported platform: {platform_str})")
+                skipped_positions += 1
+                continue
+            
+            # IDL parser is required for PumpFun, optional for LetsBonk
+            if platform == Platform.PUMP_FUN and not idl_parser:
+                print(f"   [{i}/{total_positions}] ⏭️  Skipping {mint_short} (IDL parser not available for PumpFun)")
+                skipped_positions += 1
+                continue
+            
+            print(f"   [{i}/{total_positions}] 🔍 Processing {mint_short} ({platform_str})...")
+            
+            # Derive bonding curve address
+            mint_pubkey = Pubkey.from_string(mint)
+            bonding_curve = address_provider.derive_pool_address(mint_pubkey)
+            
+            # Query transactions up to exit_ts + 60000ms (1 minute)
+            print(f"      📡 Querying transactions for bonding curve...")
+            end_timestamp_ms = exit_ts + 60000
+            signatures = await query_token_transactions(client, bonding_curve, end_timestamp_ms)
+            
+            if not signatures:
+                print(f"      ⚠️  No transactions found")
+                skipped_positions += 1
+                continue
+            
+            print(f"      📋 Found {len(signatures)} transactions, analyzing...")
+            
+            # Analyze each transaction with progress bar
+            analyzed_transactions = []
+            failed_analyses = 0
+            
+            # Create progress bar for this token's transactions
+            with tqdm(
+                total=len(signatures),
+                desc=f"      ⚙️  {mint_short}",
+                unit="tx",
+                leave=False,
+                ncols=100,
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+            ) as pbar:
+                for idx, sig in enumerate(signatures):
+                    analyzed = await analyze_transaction(
+                        client,
+                        sig,
+                        mint,
+                        platform,
+                        address_provider,
+                        balance_analyzer,
+                        idl_parser,
+                    )
+                    
+                    if analyzed:
+                        # Mark the first (oldest) transaction as CREATE
+                        if idx == 0:
+                            analyzed.transaction_type = "create"
+                        analyzed_transactions.append(analyzed)
+                        if analyzed.analysis_error:
+                            failed_analyses += 1
+                            pbar.set_postfix({"failed": failed_analyses})
+                    else:
+                        failed_analyses += 1
+                        pbar.set_postfix({"failed": failed_analyses})
+                    
+                    pbar.update(1)
+            
+            # Transactions are already in chronological order from RPC (oldest first)
+            # No need to sort - maintain the order they were retrieved
+            
+            # Print summary for this token
+            if failed_analyses > 0:
+                print(f"      ✅ Analyzed {len(analyzed_transactions)}/{len(signatures)} transactions ({failed_analyses} failed)")
+            else:
+                print(f"      ✅ Analyzed {len(analyzed_transactions)}/{len(signatures)} transactions")
+            
+            total_transactions_analyzed += len(analyzed_transactions)
+            
+            # Generate HTML report
+            if analyzed_transactions:
+                html_filename = generate_token_transaction_html(
+                    analyzed_transactions,
+                    mint,
+                    exit_ts,
+                    output_dir,
+                )
+                reports_generated[mint] = html_filename
+                successful_reports += 1
+                print(f"      📄 Generated report: {html_filename}")
+            else:
+                print(f"      ⚠️  No transactions could be analyzed")
+                skipped_positions += 1
+                
+        except Exception as e:
+            print(f"      ❌ Error processing {mint_short}: {e}")
+            skipped_positions += 1
+            continue
+    
+    # Print summary
+    print(f"\n📊 Transaction Report Generation Summary:")
+    print(f"   Total positions processed: {total_positions}")
+    print(f"   Successful reports: {successful_reports}")
+    print(f"   Skipped positions: {skipped_positions}")
+    print(f"   Total transactions analyzed: {total_transactions_analyzed}")
+    
+    await client.close()
+    return reports_generated
+
+
 def generate_html_report(
     position_comparisons: list[dict[str, Any]],
     trade_comparisons: list[dict[str, Any]],
@@ -611,6 +1489,7 @@ def generate_html_report(
     unmatched_live_trades: list[dict[str, Any]],
     summary_stats: dict[str, Any],
     output_dir: Path,
+    transaction_reports: dict[str, str] | None = None,
 ) -> None:
     """Generate interactive HTML report with visualizations.
 
@@ -853,10 +1732,18 @@ def generate_html_report(
             return f"{val:.{decimals}f} SOL"
         return str(val)
     
-    def generate_positions_table(comparisons):
-        """Generate HTML table for position comparisons."""
+    def generate_positions_table(comparisons, transaction_reports=None):
+        """Generate HTML table for position comparisons.
+        
+        Args:
+            comparisons: List of position comparison dictionaries
+            transaction_reports: Dictionary mapping mint addresses to HTML filenames
+        """
         if not comparisons:
             return "<p>No matched positions.</p>"
+        
+        if transaction_reports is None:
+            transaction_reports = {}
         
         # Sort by exit timestamp (use dry-run exit_ts, fallback to live if not available)
         sorted_comparisons = sorted(
@@ -869,6 +1756,7 @@ def generate_html_report(
             <thead>
                 <tr>
                     <th>Mint</th>
+                    <th>Transactions</th>
                     <th>Entry Time (Dry-run)</th>
                     <th>Entry Time (Live)</th>
                     <th>Exit Time (Dry-run)</th>
@@ -966,9 +1854,19 @@ def generate_html_report(
             normalized_dryrun_class = "positive" if (normalized_dryrun or 0) > 0 else "negative" if (normalized_dryrun or 0) < 0 else ""
             normalized_live_class = "positive" if (normalized_live or 0) > 0 else "negative" if (normalized_live or 0) < 0 else ""
             
+            # Transaction report link (only for LIVE positions)
+            mint = comp["mint"]
+            transaction_link = ""
+            if mint in transaction_reports:
+                report_filename = transaction_reports[mint]
+                transaction_link = f'<a href="{report_filename}" target="_blank">View Transactions</a>'
+            else:
+                transaction_link = "N/A"
+            
             html += f"""
                 <tr>
                     <td title="{comp['mint']}">{mint_short}</td>
+                    <td>{transaction_link}</td>
                     <td>{entry_time_dryrun}</td>
                     <td>{entry_time_live}</td>
                     <td>{exit_time_dryrun}</td>
@@ -1136,7 +2034,7 @@ def generate_html_report(
     
     <h2>Position Comparisons</h2>
     <div class="table-container">
-        {generate_positions_table(position_comparisons)}
+        {generate_positions_table(position_comparisons, transaction_reports or {})}
     </div>
     
     <h2>Trade Comparisons</h2>
@@ -1479,6 +2377,11 @@ def main():
         default=None,
         help="Optional path to save console output to a log file (default: output only to console)",
     )
+    parser.add_argument(
+        "--generate-transaction-reports",
+        action="store_true",
+        help="Generate individual HTML transaction reports for each LIVE position (expensive, requires RPC access)",
+    )
 
     args = parser.parse_args()
 
@@ -1638,6 +2541,16 @@ def main():
     print(f"\nExporting results to {output_dir}...")
     export_csv(position_comparisons, trade_comparisons, output_dir)
 
+    # Generate transaction reports if requested
+    transaction_reports = {}
+    if args.generate_transaction_reports:
+        # Collect all LIVE positions (matched and unmatched)
+        all_live_positions = [live_pos for _, live_pos in matched_positions] + unmatched_live_pos
+        transaction_reports = asyncio.run(
+            generate_transaction_reports_for_live_positions(all_live_positions, output_dir)
+        )
+        print(f"\n✓ Generated {len(transaction_reports)} transaction reports")
+
     # Generate HTML report
     print("Generating HTML report...")
     generate_html_report(
@@ -1649,6 +2562,7 @@ def main():
         unmatched_live_trade,
         summary_stats,
         output_dir,
+        transaction_reports=transaction_reports if transaction_reports else None,
     )
 
     print("\n✓ Comparison complete!")

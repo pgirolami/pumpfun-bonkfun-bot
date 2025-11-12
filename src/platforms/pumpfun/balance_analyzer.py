@@ -68,15 +68,16 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
         sol_amount_raw = int(post_balances[wallet_index]) - int(pre_balances[wallet_index])
 
         # Calculate rent exemption amount for user's token account
-        user_token_account = instruction_accounts["user_token_account"]
+        user_token_account = instruction_accounts.get("user_token_account")
         rent_exemption_amount_raw = 0
         
         # Find the user token account in the transaction
         user_token_account_index = None
-        for i, account_key in enumerate(tx.transaction.transaction.message.account_keys):
-            if account_key.pubkey == user_token_account:
-                user_token_account_index = i
-                break
+        if user_token_account:
+            for i, account_key in enumerate(tx.transaction.transaction.message.account_keys):
+                if account_key.pubkey == user_token_account:
+                    user_token_account_index = i
+                    break
         
         # Calculate the actual SOL balance change for the token account
         if user_token_account_index is not None:
@@ -85,8 +86,8 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
 
         # Extract real fees from transaction balance changes
         # Use addresses from instruction_accounts
-        creator_vault = instruction_accounts["creator_vault"]
-        fee_account = instruction_accounts["fee"]
+        creator_vault = instruction_accounts.get("creator_vault")
+        fee_account = instruction_accounts.get("fee")
         
         # Find the account indices
         fee_index = None
@@ -97,25 +98,29 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
         bonding_curve = instruction_accounts.get("bonding_curve")
         
         for i, account_key in enumerate(tx.transaction.transaction.message.account_keys):
-            if account_key.pubkey == fee_account:
+            if fee_account and account_key.pubkey == fee_account:
                 fee_index = i
-            elif account_key.pubkey == creator_vault:
+            elif creator_vault and account_key.pubkey == creator_vault:
                 creator_vault_index = i
             elif bonding_curve and account_key.pubkey == bonding_curve:
                 bonding_curve_index = i
         
         # Calculate net_sol_swap_amount to bonding curve balance change
         # On buy: bonding curve receives SOL => positive change
-        bonding_curve_swap_amount_raw = int(post_balances[bonding_curve_index]) - int(pre_balances[bonding_curve_index])        
+        bonding_curve_swap_amount_raw = 0
+        if bonding_curve_index is not None:
+            bonding_curve_swap_amount_raw = int(post_balances[bonding_curve_index]) - int(pre_balances[bonding_curve_index])
 
         # Calculate actual fees from balance changes
         protocol_fee_raw = 0
         creator_fee_raw = 0
         token_swap_amount_raw = 0
         
-        protocol_fee_raw = int(post_balances[fee_index]) - int(pre_balances[fee_index])
+        if fee_index is not None:
+            protocol_fee_raw = int(post_balances[fee_index]) - int(pre_balances[fee_index])
         
-        creator_fee_raw = int(post_balances[creator_vault_index]) - int(pre_balances[creator_vault_index])
+        if creator_vault_index is not None:
+            creator_fee_raw = int(post_balances[creator_vault_index]) - int(pre_balances[creator_vault_index])
         
         # Calculate token amount from user's token account balance changes
         if user_token_account_index is not None:
@@ -129,13 +134,19 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
             
             for token_balance in token_pre_balances:
                 if (hasattr(token_balance, 'account_index') and 
-                    token_balance.account_index == user_token_account_index):
+                    token_balance.account_index == user_token_account_index and
+                    hasattr(token_balance, 'ui_token_amount') and
+                    token_balance.ui_token_amount and
+                    hasattr(token_balance.ui_token_amount, 'amount')):
                     user_token_pre_balance = int(token_balance.ui_token_amount.amount)
                     break
             
             for token_balance in token_post_balances:
                 if (hasattr(token_balance, 'account_index') and 
-                    token_balance.account_index == user_token_account_index):
+                    token_balance.account_index == user_token_account_index and
+                    hasattr(token_balance, 'ui_token_amount') and
+                    token_balance.ui_token_amount and
+                    hasattr(token_balance.ui_token_amount, 'amount')):
                     user_token_post_balance = int(token_balance.ui_token_amount.amount)
                     break
             

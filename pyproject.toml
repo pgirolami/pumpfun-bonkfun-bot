@@ -24,6 +24,7 @@ dependencies = [
     "plotly>=5.0.0",
     "flask>=3.0.0",
     "flask-compress>=1.14",
+    "tqdm>=4.66.0",
 ]
 
 [project.optional-dependencies]
