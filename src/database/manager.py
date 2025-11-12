@@ -432,6 +432,7 @@ class DatabaseManager:
         price_swap_decimal: float | None,
         pool: str | None = None,
         trader_public_key: str | None = None,
+        signature: str | None = None,
     ) -> None:
         """Insert PumpPortal message record.
 
@@ -448,6 +449,7 @@ class DatabaseManager:
             price_swap_decimal: Price calculated from swap amounts (SOL per token, nullable)
             pool: Pool name from PumpPortal message (nullable)
             trader_public_key: Trader's public key from PumpPortal message (nullable)
+            signature: Transaction signature from PumpPortal message (nullable)
         """
         from database.models import PumpPortalMessageConverter
 
@@ -464,6 +466,7 @@ class DatabaseManager:
             price_swap_decimal,
             pool,
             trader_public_key,
+            signature,
         )
 
         async with self.get_connection() as conn:
@@ -472,8 +475,8 @@ class DatabaseManager:
                 INSERT INTO pumpportal_messages 
                 (mint, platform, timestamp, message_type, virtual_sol_reserves, 
                  virtual_token_reserves, sol_amount_swapped, token_amount_swapped,
-                 price_reserves_decimal, price_swap_decimal, pool, trader_public_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 price_reserves_decimal, price_swap_decimal, pool, trader_public_key, signature)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )

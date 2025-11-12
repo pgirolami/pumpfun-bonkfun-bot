@@ -344,9 +344,10 @@ class UniversalPumpPortalListener(BaseTokenListener):
             sol_amount = trade_data.get("solAmount")
             token_amount = trade_data.get("tokenAmount")
             
-            # Extract pool and trader public key directly from message
+            # Extract pool, trader public key, and signature directly from message
             pool = trade_data.get("pool")
             trader_public_key = trade_data.get("traderPublicKey")
+            signature = trade_data.get("signature")
             
             # Determine platform from pool name (still needed for queries)
             platform = pool.lower() if pool else ""
@@ -385,6 +386,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
                 price_swap_decimal=price_swap_decimal,
                 pool=pool,
                 trader_public_key=trader_public_key,
+                signature=signature,
             )
         except Exception as e:
             logger.exception(f"Failed to write PumpPortal message to database: {e}")

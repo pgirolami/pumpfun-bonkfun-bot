@@ -274,6 +274,7 @@ class PumpPortalMessageConverter:
         price_swap_decimal: float | None,
         pool: str | None = None,
         trader_public_key: str | None = None,
+        signature: str | None = None,
     ) -> tuple:
         """Convert PumpPortal message data to database row tuple.
 
@@ -290,6 +291,7 @@ class PumpPortalMessageConverter:
             price_swap_decimal: Price calculated from swap amounts (SOL per token, nullable)
             pool: Pool name from PumpPortal message (nullable)
             trader_public_key: Trader's public key from PumpPortal message (nullable)
+            signature: Transaction signature from PumpPortal message (nullable)
 
         Returns:
             Tuple of values for database insertion
@@ -307,4 +309,5 @@ class PumpPortalMessageConverter:
             price_swap_decimal,
             pool,
             trader_public_key,
+            signature,
         )
