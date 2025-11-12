@@ -28,6 +28,8 @@ from solders.system_program import TransferParams, transfer
 from solders.transaction import Transaction
 
 from utils.logger import get_logger
+from utils.error_parser import parse_transaction_error
+from interfaces.core import Platform
 from tenacity import (
     after_log,
     retry,
@@ -569,6 +571,9 @@ class SolanaClient:
         block_slot: int | None = None  # Block slot number
         success: bool = True  # Whether transaction succeeded
         error_message: str | None = None  # Error message if failed
+        error_code: int | None = None  # Error code if failed (e.g., 6002)
+        error_type: str | None = None  # Error type classification (e.g., "slippage", "invalid_input")
+        is_slippage_error: bool = False  # Whether this is a slippage error
         log_messages: list[str] | None = None  # Transaction log messages
 
     @dataclass
@@ -589,12 +594,13 @@ class SolanaClient:
             return result
 
     def analyze_transaction_meta(
-        self, tx: EncodedConfirmedTransactionWithStatusMeta
+        self, tx: EncodedConfirmedTransactionWithStatusMeta, platform: Platform | None = None
     ) -> "SolanaClient.TransactionMetaInfo":
         """Analyze transaction metadata and extract information.
 
         Args:
             tx: Transaction object with meta information
+            platform: Optional platform to use for error classification
 
         Returns:
             TransactionMetaInfo: Dataclass with extracted transaction metadata
@@ -603,6 +609,9 @@ class SolanaClient:
         block_slot = None
         success = True
         error_message = None
+        error_code = None
+        error_type = None
+        is_slippage_error = False
         log_messages = None
 
         if tx:
@@ -622,6 +631,20 @@ class SolanaClient:
                 if meta.err:
                     success = False
                     error_message = str(meta.err)
+                    
+                    # Parse error to extract code and classify type
+                    parsed_error = parse_transaction_error(error_message, platform)
+                    error_code = parsed_error.code
+                    is_slippage_error = parsed_error.is_slippage
+                    
+                    # Set error type based on classification
+                    if is_slippage_error:
+                        error_type = "slippage"
+                    elif parsed_error.name:
+                        # Use error name as type (e.g., "TooMuchSolRequired", "InvalidInput")
+                        error_type = parsed_error.name.lower().replace(" ", "_")
+                    elif error_code is not None:
+                        error_type = "unknown"
                 
                 # Extract log messages
                 if meta.log_messages:
@@ -632,6 +655,9 @@ class SolanaClient:
             block_slot=block_slot,
             success=success,
             error_message=error_message,
+            error_code=error_code,
+            error_type=error_type,
+            is_slippage_error=is_slippage_error,
             log_messages=log_messages,
         )
 
@@ -668,12 +694,18 @@ class SolanaClient:
             tx = await client.get_transaction(signature, commitment=commitment)
             if tx and tx.value:
                 # Use analyze_transaction_meta to extract information
-                meta_info = self.analyze_transaction_meta(tx.value)
+                # Note: platform is None here, but error parser will check all platforms
+                meta_info = self.analyze_transaction_meta(tx.value, platform=None)
                 block_time = meta_info.block_time
                 
                 # Use detailed error messages from transaction if available
                 if meta_info.error_message:
                     error_string = meta_info.error_message
+                    # Enhance error message with classification if it's a slippage error
+                    if meta_info.is_slippage_error:
+                        error_string = f"[SLIPPAGE ERROR] {error_string}"
+                    elif meta_info.error_type:
+                        error_string = f"[{meta_info.error_type.upper()}] {error_string}"
                 elif meta_info.log_messages and error_string:
                     # Prefer log messages if available
                     error_string = "\n".join(meta_info.log_messages)

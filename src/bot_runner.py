@@ -17,6 +17,7 @@ from config_loader import (
 )
 from trading.universal_trader import UniversalTrader
 from utils.logger import setup_file_logging
+from utils.error_parser import get_error_parser
 from database.manager import DatabaseManager
 from core.wallet import Wallet
 
@@ -74,6 +75,50 @@ async def start_bot(config_path: str):
             f"Listener '{listener_type}' is not compatible with platform '{platform.value}'. Supported listeners: {supported}"
         )
         return
+
+    # For Pump.fun, fetch fee recipients from global config and store in PumpFunAddresses
+    if platform.value == "pump_fun":
+        try:
+            from core.client import SolanaClient
+            from platforms.pumpfun.address_provider import PumpFunAddresses
+            from platforms.pumpfun.curve_manager import PumpFunCurveManager
+            from utils.idl_parser import get_idl_manager
+            import base64
+            
+            # Create a temporary client to fetch global config
+            temp_client = SolanaClient(cfg["rpc"], blockhash_update_interval=10.0)
+            idl_manager = get_idl_manager()
+            idl_parser = idl_manager.get_parser(platform, verbose=False)
+            curve_manager = PumpFunCurveManager(temp_client, idl_parser)
+            
+            # Fetch and parse global account
+            global_account = await temp_client.get_account_info(PumpFunAddresses.GLOBAL)
+            if global_account and global_account.data:
+                data = global_account.data
+                if isinstance(data, list):
+                    data = base64.b64decode(data[0])
+                
+                # Parse using curve manager
+                global_data = curve_manager._parse_global_account_data(data)
+                
+                # Extract main fee_recipient and fee_recipients array
+                main_fee_recipient = global_data.get("fee_recipient")
+                fee_recipients_array = global_data.get("fee_recipients", [])
+                
+                # Combine: main fee_recipient + fee_recipients array
+                if main_fee_recipient and fee_recipients_array:
+                    all_fee_recipients = [main_fee_recipient] + fee_recipients_array
+                    PumpFunAddresses.set_fee_recipients(all_fee_recipients)
+                    logging.info(
+                        f"Loaded {len(all_fee_recipients)} fee recipients from Pump.fun global config "
+                        f"(1 main + {len(fee_recipients_array)} in array)"
+                    )
+                else:
+                    logging.warning("Failed to parse fee recipients from global config, using default")
+            else:
+                logging.warning("Failed to fetch global config, using default fee")
+        except Exception as e:
+            logging.warning(f"Failed to fetch Pump.fun fee recipients: {e}, using default fee")
 
     # Derive wallet pubkey for database naming
     wallet = Wallet(cfg["private_key"])
@@ -428,6 +473,13 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("solana.rpc").setLevel(logging.WARNING)
+
+    # Initialize error parser at startup (loads IDL error definitions)
+    try:
+        error_parser = get_error_parser()
+        logging.info("Error parser initialized successfully")
+    except Exception as e:
+        logging.warning(f"Failed to initialize error parser: {e}")
 
     # Start PNL dashboard server
     # Use port 5001 in dashboard-only mode, 5000 otherwise

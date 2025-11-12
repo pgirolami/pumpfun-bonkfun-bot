@@ -100,24 +100,33 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
 #        logger.info(f"Analyzing balance changes for buy order {order}")
 
-        is_slippage_failure = order.tx_signature.startswith("DRYRUN_BUY_FAILED_")
-        
-        net_sol_swapped_raw=order.sol_amount_raw
-
-        # Get platform fee percentage from curve manager
-        platform_constants = await self.curve_manager.get_platform_constants()
-        protocol_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("fee_percentage", 0.95))/100 
-        creator_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("creator_fee_percentage", 0.3))/100 
-        # Still charge transaction fees even on slippage failure
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
-        order.protocol_fee_raw = -int(net_sol_swapped_raw * protocol_fee_percentage)
-        order.creator_fee_raw = -int(net_sol_swapped_raw * creator_fee_percentage)
-        
-        tip_fee_raw = self.client.tip_amount_lamports if self.client.send_method == "helius_sender" else 0
+
+        net_sol_swapped_raw=0
+        rent_exemption_amount_raw=0
+        is_slippage_failure = order.tx_signature.startswith("DRYRUN_BUY_FAILED_")
+        if is_slippage_failure:
+            order.protocol_fee_raw=0
+            order.creator_fee_raw=0
+            tip_fee_raw=0
+            order.token_amount_raw=0
+        else:        
+            net_sol_swapped_raw=order.sol_amount_raw
+
+            # Get platform fee percentage from curve manager
+            platform_constants = await self.curve_manager.get_platform_constants()
+            protocol_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("fee_percentage", 0.95))/100 
+            creator_fee_percentage = 0 if is_slippage_failure else float(platform_constants.get("creator_fee_percentage", 0.3))/100 
+            # Still charge transaction fees even on slippage failure
+            order.protocol_fee_raw = -int(net_sol_swapped_raw * protocol_fee_percentage)
+            order.creator_fee_raw = -int(net_sol_swapped_raw * creator_fee_percentage)
+            
+            tip_fee_raw = self.client.tip_amount_lamports if self.client.send_method == "helius_sender" else 0
+            rent_exemption_amount_raw=-TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE
 
         # minus the fees because sol_amount_raw is negative
-        order.sol_amount_raw = 0 if is_slippage_failure else (
-            -TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE
+        order.sol_amount_raw = (
+            rent_exemption_amount_raw
             +net_sol_swapped_raw
             -order.protocol_fee_raw
             -order.creator_fee_raw
@@ -132,7 +141,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             creator_fee_raw=order.creator_fee_raw,
             transaction_fee_raw=order.transaction_fee_raw,
             tip_fee_raw=tip_fee_raw,
-            rent_exemption_amount_raw=0 if is_slippage_failure else -TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
+            rent_exemption_amount_raw=rent_exemption_amount_raw,
             unattributed_sol_amount_raw=0,
             sol_amount_raw=order.sol_amount_raw,
         )

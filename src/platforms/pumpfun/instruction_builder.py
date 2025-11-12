@@ -13,6 +13,7 @@ from spl.token.instructions import CloseAccountParams, close_account, create_ide
 
 from core.pubkeys import TOKEN_DECIMALS, SystemAddresses
 from interfaces.core import AddressProvider, InstructionBuilder, Platform, TokenInfo
+from platforms.pumpfun.address_provider import PumpFunAddresses
 from utils.idl_parser import IDLParser
 from utils.logger import get_logger
 
@@ -66,6 +67,14 @@ class PumpFunInstructionBuilder(InstructionBuilder):
 
         # Get all required accounts
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
+        
+        # Add user_token_account (derived from ATA for new transactions)
+        accounts_info["user_token_account"] = address_provider.derive_user_token_account(user, token_info.mint)
+        
+        # For Pump.fun, randomly select one of the 7 fee_recipients (excluding main fee_recipient)
+        # to increase transaction priority
+        selected_fee_recipient = PumpFunAddresses.select_random_fee_recipient()
+        accounts_info["fee"] = selected_fee_recipient
 
         # 1. Create idempotent ATA instruction (won't fail if ATA already exists)
         ata_instruction = create_idempotent_associated_token_account(
@@ -184,6 +193,14 @@ class PumpFunInstructionBuilder(InstructionBuilder):
 
         # Get all required accounts
         accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
+        
+        # Add user_token_account (derived from ATA for new transactions)
+        accounts_info["user_token_account"] = address_provider.derive_user_token_account(user, token_info.mint)
+        
+        # For Pump.fun, randomly select one of the 7 fee_recipients (excluding main fee_recipient)
+        # to increase transaction priority
+        selected_fee_recipient = PumpFunAddresses.select_random_fee_recipient()
+        accounts_info["fee"] = selected_fee_recipient
 
         # Build sell instruction accounts
         sell_accounts = [
@@ -283,6 +300,9 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             List of account addresses that will be accessed
         """
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
+        
+        # Add user_token_account (derived from ATA for new transactions)
+        accounts_info["user_token_account"] = address_provider.derive_user_token_account(user, token_info.mint)
 
         return [
             accounts_info["mint"],
@@ -312,6 +332,9 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             List of account addresses that will be accessed
         """
         accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
+        
+        # Add user_token_account (derived from ATA for new transactions)
+        accounts_info["user_token_account"] = address_provider.derive_user_token_account(user, token_info.mint)
 
         return [
             accounts_info["mint"],

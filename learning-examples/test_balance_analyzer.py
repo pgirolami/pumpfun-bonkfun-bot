@@ -194,8 +194,9 @@ async def main():
     # tx_signature = "4egaySCTrsepC83PwS9Z182baKSZSBg3vXtyEXKiMjzAvLKxcv2fMNdJnK13BPJK6SdMesYb8Ktqcapj4WSsXBQt"
 
     #sell
-    token_mint = "CxtvoNDCGNKm3XdfTTqSEd2XfDFiRroy93EvjrxKpump"
-    tx_signature = "4kjAn1m8AAgGu4PzMmU84uCbjThAaydkCPubCvc7SNo6RpWogmRKTBxw16BkrNNdjRdnLu9LCwJzxLF5WuFZXcvq"
+    token_mint = "ALpr9tr6BG4rZ6esLbs2ZU8erJk17YmAD16Kq5cwpump"
+    tx_signature = "4er5ekQwNXa8Sq5u5MvGzRCcYWQNYJGdFKVB6X6ZX6yRmNeK5nHRozCH9rh1WwjdyNkCeKUyJeCmcS9vjPceisgJ"
+    tx_signature = "26teNrBVGXyQoNNWHumvHdJNCwko7Vdx74kHggUzgU2LwmhJkZHUEsk88jWBcp6sPRFAx4FScDvnwtrmZuae3ryo"
 
 
     # Get RPC endpoint from environment
@@ -222,6 +223,41 @@ async def main():
         sys.exit(1)
 
     idl_parser = IDLParser(str(idl_path), verbose=False)
+    
+    # Fetch fee recipients from global config and store in PumpFunAddresses (like bot_runner does)
+    print("Fetching fee recipients from Pump.fun global config...")
+    try:
+        from platforms.pumpfun.address_provider import PumpFunAddresses
+        from platforms.pumpfun.curve_manager import PumpFunCurveManager
+        
+        # Create curve manager to parse global account
+        curve_manager = PumpFunCurveManager(client, idl_parser)
+        
+        # Fetch and parse global account
+        global_account = await client.get_account_info(PumpFunAddresses.GLOBAL)
+        if global_account and global_account.data:
+            data = global_account.data
+            if isinstance(data, list):
+                data = base64.b64decode(data[0])
+            
+            # Parse using curve manager
+            global_data = curve_manager._parse_global_account_data(data)
+            
+            # Extract main fee_recipient and fee_recipients array
+            main_fee_recipient = global_data.get("fee_recipient")
+            fee_recipients_array = global_data.get("fee_recipients", [])
+            
+            # Combine: main fee_recipient + fee_recipients array
+            if main_fee_recipient and fee_recipients_array:
+                all_fee_recipients = [main_fee_recipient] + fee_recipients_array
+                PumpFunAddresses.set_fee_recipients(all_fee_recipients)
+                print(f"  Loaded {len(all_fee_recipients)} fee recipients (1 main + {len(fee_recipients_array)} in array) : {all_fee_recipients}")
+            else:
+                print("  Warning: Failed to parse fee recipients from global config, using default")
+        else:
+            print("  Warning: Failed to fetch global config, using default fee")
+    except Exception as e:
+        print(f"  Warning: Failed to fetch Pump.fun fee recipients: {e}, using default fee")
 
     try:
         print(f"Fetching transaction: {tx_signature}")
@@ -346,7 +382,7 @@ async def main():
         
         # Determine if this is a buy or sell transaction
         instruction_type = (
-            extracted_accounts.get("_instruction_type") if extracted_accounts else "buy"
+            extracted_accounts.get("_instruction_type") if extracted_accounts else "unknown"
         )
         
         if instruction_type == "sell":
@@ -358,11 +394,21 @@ async def main():
                 token_info, user
             )
 
+        print(instruction_accounts)
         # Override with any accounts we extracted from the transaction if available
+        # Note: user_token_account should be extracted from transaction, not derived
         if extracted_accounts:
-            for key in ["user_token_account", "fee", "creator_vault"]:
+            for key in ["fee", "creator_vault"]:
                 if key in extracted_accounts:
                     instruction_accounts[key] = extracted_accounts[key]
+        
+        # Extract user_token_account from transaction instruction (not from ATA derivation)
+        # This works even if the account was created with CreateAccountWithSeed
+        user_token_account = address_provider.extract_user_token_account_from_transaction(tx)
+        if user_token_account:
+            instruction_accounts["user_token_account"] = user_token_account
+        else:
+            print("  Warning: Could not extract user_token_account from transaction")
         
         print(f"Transaction type: {instruction_type}")
 

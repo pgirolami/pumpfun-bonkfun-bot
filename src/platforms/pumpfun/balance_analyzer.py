@@ -7,6 +7,7 @@ from solders.pubkey import Pubkey
 from core.client import HELIUS_TIP_ACCOUNTS
 from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from interfaces.core import BalanceAnalyzer, BalanceChangeResult, TokenInfo
+from platforms.pumpfun.address_provider import PumpFunAddressProvider
 from solders.solders import EncodedConfirmedTransactionWithStatusMeta
 from utils.logger import get_logger
 
@@ -68,7 +69,12 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
         sol_amount_raw = int(post_balances[wallet_index]) - int(pre_balances[wallet_index])
 
         # Calculate rent exemption amount for user's token account
-        user_token_account = instruction_accounts.get("user_token_account")
+        # Extract user_token_account from transaction instruction using IDL account index
+        # This works even if the account was created with CreateAccountWithSeed instead of standard ATA
+        # We don't derive it from ATA since the actual account used may be different
+        address_provider = PumpFunAddressProvider()
+        user_token_account = address_provider.extract_user_token_account_from_transaction(tx)
+        
         rent_exemption_amount_raw = 0
         
         # Find the user token account in the transaction
@@ -87,19 +93,25 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
         # Extract real fees from transaction balance changes
         # Use addresses from instruction_accounts
         creator_vault = instruction_accounts.get("creator_vault")
-        fee_account = instruction_accounts.get("fee")
+        
+        # Get all fee recipients from PumpFunAddresses (set at bot startup)
+        from platforms.pumpfun.address_provider import PumpFunAddresses
+        fee_recipients = PumpFunAddresses.get_fee_recipients()
         
         # Find the account indices
-        fee_index = None
+        fee_indices = []  # List of indices for all fee recipients
         creator_vault_index = None
         bonding_curve_index = None
         
         # Get bonding curve from instruction accounts
         bonding_curve = instruction_accounts.get("bonding_curve")
         
+        # Create a set of fee recipient pubkeys for fast lookup
+        fee_recipients_set = set(fee_recipients) if fee_recipients else set()
+        
         for i, account_key in enumerate(tx.transaction.transaction.message.account_keys):
-            if fee_account and account_key.pubkey == fee_account:
-                fee_index = i
+            if account_key.pubkey in fee_recipients_set:
+                fee_indices.append(i)
             elif creator_vault and account_key.pubkey == creator_vault:
                 creator_vault_index = i
             elif bonding_curve and account_key.pubkey == bonding_curve:
@@ -112,12 +124,15 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
             bonding_curve_swap_amount_raw = int(post_balances[bonding_curve_index]) - int(pre_balances[bonding_curve_index])
 
         # Calculate actual fees from balance changes
+        # Sum up fees from all fee recipient accounts
         protocol_fee_raw = 0
         creator_fee_raw = 0
         token_swap_amount_raw = 0
         
-        if fee_index is not None:
-            protocol_fee_raw = int(post_balances[fee_index]) - int(pre_balances[fee_index])
+        for fee_index in fee_indices:
+            fee_balance_change = int(post_balances[fee_index]) - int(pre_balances[fee_index])
+            if fee_balance_change > 0:
+                protocol_fee_raw += fee_balance_change
         
         if creator_vault_index is not None:
             creator_fee_raw = int(post_balances[creator_vault_index]) - int(pre_balances[creator_vault_index])
@@ -167,7 +182,7 @@ class PumpFunBalanceAnalyzer(BalanceAnalyzer):
 
         net_sol_swap_amount_raw = -bonding_curve_swap_amount_raw #- total_platform_fee_raw
 
-        unattributed_sol_amount_raw = sol_amount_raw - (net_sol_swap_amount_raw - transaction_fee - tip_fee_raw + rent_exemption_amount_raw)
+        unattributed_sol_amount_raw = sol_amount_raw - (net_sol_swap_amount_raw - transaction_fee - tip_fee_raw - total_platform_fee_raw+ rent_exemption_amount_raw)
 
         if unattributed_sol_amount_raw != 0:
             logger.warning(f"[{str(token_info.mint)[:8]}] Unattributed SOL amount in balance check : {unattributed_sol_amount_raw} lamports in transaction {str(tx.transaction.transaction.signatures[0])}")

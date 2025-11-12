@@ -71,6 +71,36 @@ class IDLParser:
     def get_instruction_names(self) -> list[str]:
         """Get a list of all available instruction names."""
         return [instr["name"] for instr in self.instructions.values()]
+    
+    def get_instruction_account_indices(self, instruction_name: str) -> dict[str, int] | None:
+        """Get account name to index mapping for a specific instruction.
+        
+        Args:
+            instruction_name: Name of the instruction (e.g., "buy", "sell", "create")
+            
+        Returns:
+            Dictionary mapping account names to their indices in the instruction account list,
+            or None if instruction not found
+        """
+        # Find the instruction by name
+        instruction = None
+        for instr in self.instructions.values():
+            if instr["name"] == instruction_name:
+                instruction = instr
+                break
+        
+        if not instruction:
+            return None
+        
+        # Build mapping of account name to index
+        account_indices = {}
+        instruction_accounts = instruction.get("accounts", [])
+        for i, account_def in enumerate(instruction_accounts):
+            account_name = account_def.get("name")
+            if account_name:
+                account_indices[account_name] = i
+        
+        return account_indices
 
     def validate_instruction_data_length(
         self, ix_data: bytes, discriminator: bytes

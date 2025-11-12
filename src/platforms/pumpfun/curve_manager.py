@@ -510,4 +510,20 @@ class PumpFunCurveManager(CurveManager):
         fields["enable_migrate"] = bool(data[offset])
         offset += 1
         
+        # pool_migration_fee (u64)
+        fields["pool_migration_fee"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # creator_fee_basis_points (u64)
+        fields["creator_fee_basis_points"] = struct.unpack("<Q", data[offset:offset + 8])[0]
+        offset += 8
+        
+        # fee_recipients (array of 7 pubkeys)
+        fee_recipients = []
+        for _ in range(7):
+            fee_recipient = Pubkey.from_bytes(data[offset:offset + 32])
+            fee_recipients.append(fee_recipient)
+            offset += 32
+        fields["fee_recipients"] = fee_recipients
+        
         return fields

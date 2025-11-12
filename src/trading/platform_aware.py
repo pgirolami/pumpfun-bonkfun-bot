@@ -12,6 +12,7 @@ from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from core.wallet import Wallet
 from interfaces.core import AddressProvider, Platform, TokenInfo
 from platforms import get_platform_implementations
+from platforms.pumpfun.address_provider import PumpFunAddressProvider
 from trading.base import Trader, TradeResult
 from trading.position import Position
 from trading.trade_order import BuyOrder, SellOrder
@@ -133,6 +134,20 @@ class PlatformAwareBuyer(Trader):
             # Get instruction accounts for balance analysis
             implementations = get_platform_implementations(order.token_info.platform, self.client)
             instruction_accounts = implementations.address_provider.get_buy_instruction_accounts(order.token_info, self.wallet.pubkey)
+            
+            # Extract user_token_account from transaction instruction (not from ATA derivation)
+            # This works even if the account was created with CreateAccountWithSeed
+            if order.token_info.platform == Platform.PUMP_FUN:
+                address_provider = PumpFunAddressProvider()
+                user_token_account = address_provider.extract_user_token_account_from_transaction(tx)
+                if user_token_account:
+                    instruction_accounts["user_token_account"] = user_token_account
+                else:
+                    logger.warning(
+                        f"Could not extract user_token_account from transaction {order.tx_signature[:8]}..., "
+                        f"token balance analysis may fail"
+                    )
+            
             return implementations.balance_analyzer.analyze_balance_changes(
                 tx, order.token_info, self.wallet.pubkey, instruction_accounts
             )
@@ -338,6 +353,20 @@ class PlatformAwareSeller(Trader):
             # Get instruction accounts for balance analysis
             implementations = get_platform_implementations(order.token_info.platform, self.client)
             instruction_accounts = implementations.address_provider.get_sell_instruction_accounts(order.token_info, self.wallet.pubkey)
+            
+            # Extract user_token_account from transaction instruction (not from ATA derivation)
+            # This works even if the account was created with CreateAccountWithSeed
+            if order.token_info.platform == Platform.PUMP_FUN:
+                address_provider = PumpFunAddressProvider()
+                user_token_account = address_provider.extract_user_token_account_from_transaction(tx_with_meta)
+                if user_token_account:
+                    instruction_accounts["user_token_account"] = user_token_account
+                else:
+                    logger.warning(
+                        f"Could not extract user_token_account from transaction {order.tx_signature[:8]}..., "
+                        f"token balance analysis may fail"
+                    )
+            
             return implementations.balance_analyzer.analyze_balance_changes(
                 tx_with_meta, order.token_info, self.wallet.pubkey, instruction_accounts
             )

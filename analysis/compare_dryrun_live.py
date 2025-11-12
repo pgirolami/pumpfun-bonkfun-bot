@@ -53,7 +53,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from core.client import SolanaClient
 from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
-from interfaces.core import Platform, TokenInfo
+from interfaces.core import AddressProvider, BalanceAnalyzer, BalanceChangeResult, Platform, TokenInfo
 from platforms.letsbonk.address_provider import LetsBonkAddressProvider
 from platforms.letsbonk.balance_analyzer import LetsBonkBalanceAnalyzer
 from platforms.pumpfun.address_provider import PumpFunAddressProvider
@@ -104,6 +104,7 @@ def query_all_positions(
     db_path: str,
     start_timestamp: int | None = None,
     end_timestamp: int | None = None,
+    mint: str | None = None,
 ) -> list[dict[str, Any]]:
     """Query all closed positions from database.
 
@@ -111,6 +112,7 @@ def query_all_positions(
         db_path: Path to SQLite database file
         start_timestamp: Optional start timestamp in milliseconds (filters by entry_ts >= start_timestamp)
         end_timestamp: Optional end timestamp in milliseconds (filters by entry_ts <= end_timestamp)
+        mint: Optional mint address to filter by
 
     Returns:
         List of position dictionaries with all fields
@@ -118,7 +120,7 @@ def query_all_positions(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     
-    # Build query with optional timestamp filters
+    # Build query with optional timestamp and mint filters
     query = """
         SELECT 
             id, mint, platform, entry_net_price_decimal, token_decimals,
@@ -143,6 +145,9 @@ def query_all_positions(
     if end_timestamp is not None:
         query += " AND entry_ts <= ?"
         params.append(end_timestamp)
+    if mint is not None:
+        query += " AND mint = ?"
+        params.append(mint)
     
     query += " ORDER BY entry_ts ASC"
     
@@ -156,6 +161,7 @@ def query_all_trades(
     db_path: str,
     start_timestamp: int | None = None,
     end_timestamp: int | None = None,
+    mint: str | None = None,
 ) -> list[dict[str, Any]]:
     """Query all trades from database.
 
@@ -163,6 +169,7 @@ def query_all_trades(
         db_path: Path to SQLite database file
         start_timestamp: Optional start timestamp in milliseconds (filters by timestamp >= start_timestamp)
         end_timestamp: Optional end timestamp in milliseconds (filters by timestamp <= end_timestamp)
+        mint: Optional mint address to filter by
 
     Returns:
         List of trade dictionaries with all fields
@@ -170,7 +177,7 @@ def query_all_trades(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     
-    # Build query with optional timestamp filters
+    # Build query with optional timestamp and mint filters
     query = """
         SELECT 
             mint, timestamp, position_id, success, platform, trade_type,
@@ -190,6 +197,9 @@ def query_all_trades(
     if end_timestamp is not None:
         query += " AND timestamp <= ?"
         params.append(end_timestamp)
+    if mint is not None:
+        query += " AND mint = ?"
+        params.append(mint)
     
     query += " ORDER BY timestamp ASC"
     
@@ -207,8 +217,8 @@ class AnalyzedTransaction:
     wallet_pubkey: str  # Full wallet public key (fee payer)
     wallet_pubkey_short: str  # First 8 characters
     transaction_type: str  # Transaction type: "buy", "sell", or "create"
-    meta_info: Any  # TransactionMetaInfo from SolanaClient
-    balance_result: Any | None = None  # BalanceChangeResult (None if analysis failed)
+    meta_info: SolanaClient.TransactionMetaInfo  # TransactionMetaInfo from SolanaClient
+    balance_result: BalanceChangeResult | None = None  # BalanceChangeResult (None if analysis failed)
     analysis_error: str | None = None  # Error message if balance analysis failed
 
 
@@ -399,8 +409,8 @@ async def analyze_transaction(
     signature: str,
     mint: str,
     platform: Platform,
-    address_provider: Any,
-    balance_analyzer: Any,
+    address_provider: AddressProvider,
+    balance_analyzer: BalanceAnalyzer,
     idl_parser: IDLParser | None,
 ) -> AnalyzedTransaction | None:
     """Analyze a single transaction using balance analyzer.
@@ -424,7 +434,8 @@ async def analyze_transaction(
             return None
         
         # Get meta information using client's analyze_transaction_meta
-        meta_info = client.analyze_transaction_meta(tx)
+        # Pass platform for error classification
+        meta_info = client.analyze_transaction_meta(tx, platform=platform)
         
         # Get fee payer (first account) - this is the account that pays transaction fees
         if not tx.transaction or not tx.transaction.transaction:
@@ -542,20 +553,13 @@ async def analyze_transaction(
                     instruction_accounts[key] = value
             
             # Map IDL account names to our expected names
-            # The IDL uses "associated_user" for the user's token account
-            if "associated_user" in instruction_accounts and "user_token_account" not in instruction_accounts:
-                instruction_accounts["user_token_account"] = instruction_accounts["associated_user"]
+            # Note: We do NOT map "associated_user" to "user_token_account" here because
+            # the actual account used may be different (could be CreateAccountWithSeed)
+            # user_token_account will be extracted directly from the transaction instruction
             
             # Also map "fee_recipient" to "fee" if needed
             if "fee_recipient" in instruction_accounts and "fee" not in instruction_accounts:
                 instruction_accounts["fee"] = instruction_accounts["fee_recipient"]
-            
-            # Log if user_token_account is still missing from extracted accounts (important for token balance analysis)
-            if "user_token_account" not in instruction_accounts:
-                logger.debug(
-                    f"user_token_account not found in extracted accounts for {signature[:8]}..., "
-                    f"will derive from user account"
-                )
             
             # Fill in any missing accounts using address provider
             if platform == Platform.PUMP_FUN:
@@ -568,6 +572,7 @@ async def analyze_transaction(
                 )
             
             # Only add derived accounts if they're not already in extracted accounts
+            # Note: user_token_account is NOT in derived_accounts, must be extracted from transaction
             for key, value in derived_accounts.items():
                 if key not in instruction_accounts:
                     instruction_accounts[key] = value
@@ -582,12 +587,58 @@ async def analyze_transaction(
                     token_info, user
                 )
         
-        # Ensure user_token_account is set (critical for token balance analysis)
-        if "user_token_account" not in instruction_accounts or instruction_accounts.get("user_token_account") is None:
-            logger.warning(
-                f"user_token_account is missing or None for transaction {signature[:8]}..., "
-                f"token balance analysis may fail. Trader account: {str(trader_account)[:8]}..."
-            )
+        # Extract user_token_account from transaction instruction (not from ATA derivation)
+        # This works even if the account was created with CreateAccountWithSeed
+        if platform == Platform.PUMP_FUN:
+            user_token_account = address_provider.extract_user_token_account_from_transaction(tx)
+            if user_token_account:
+                instruction_accounts["user_token_account"] = user_token_account
+            else:
+                logger.warning(
+                    f"Could not extract user_token_account from transaction {signature[:8]}..., "
+                    f"token balance analysis may fail"
+                )
+        
+        # For Pump.fun, fetch fee_recipients from global config and add to instruction_accounts
+        # Include both main fee_recipient and the 7 fee_recipients (8 total)
+        if platform == Platform.PUMP_FUN:
+            try:
+                from platforms.pumpfun.address_provider import PumpFunAddresses
+                global_account = await client.get_account_info(PumpFunAddresses.GLOBAL)
+                if global_account and global_account.data:
+                    # Parse global account data
+                    data = global_account.data
+                    if isinstance(data, list):
+                        data = base64.b64decode(data[0])
+                    
+                    # Parse main fee_recipient (offset 8 + 1 + 32 = 41)
+                    main_fee_recipient = Pubkey.from_bytes(data[41:73])
+                    
+                    # Parse fee_recipients array (offset 146)
+                    # The array size is fixed at 7 in the IDL, but we'll handle it flexibly
+                    offset = 146
+                    fee_recipients_array = []
+                    # Read 7 fee recipients as per IDL structure
+                    for _ in range(7):
+                        fee_recipient = Pubkey.from_bytes(data[offset:offset + 32])
+                        fee_recipients_array.append(fee_recipient)
+                        offset += 32
+                    
+                    # Combine: main fee_recipient + fee_recipients array
+                    all_fee_recipients = [main_fee_recipient] + fee_recipients_array
+                    instruction_accounts["fee_recipients"] = all_fee_recipients
+            except Exception as e:
+                logger.debug(f"Failed to fetch fee_recipients from global config: {e}")
+                # Continue without fee_recipients, will fall back to single fee account
+        
+        # user_token_account should now be set from extract_user_token_account_from_transaction
+        # Log if it's still missing (shouldn't happen for pump.fun)
+        if platform == Platform.PUMP_FUN:
+            if "user_token_account" not in instruction_accounts or instruction_accounts.get("user_token_account") is None:
+                logger.warning(
+                    f"user_token_account is missing or None for transaction {signature[:8]}..., "
+                    f"token balance analysis may fail. Trader account: {str(trader_account)[:8]}..."
+                )
         
         # Analyze balance changes first
         balance_result = None
@@ -599,28 +650,7 @@ async def analyze_transaction(
         except Exception as e:
             analysis_error = str(e)
         
-        # Classify transaction type based on token amount from balance result
-        # Positive token amount = buy, negative = sell
-        if balance_result and balance_result.token_swap_amount_raw is not None:
-            if balance_result.token_swap_amount_raw > 0:
-                transaction_type = "buy"
-            elif balance_result.token_swap_amount_raw < 0:
-                transaction_type = "sell"
-            else:
-                # token_swap_amount_raw == 0, check if it's a create transaction
-                if instruction_type == "create":
-                    transaction_type = "create"
-                else:
-                    # Default to buy if we can't determine
-                    transaction_type = "buy"
-        else:
-            # No balance result or token amount, check instruction type
-            if instruction_type == "create":
-                transaction_type = "create"
-            elif instruction_type == "sell":
-                transaction_type = "sell"
-            else:
-                transaction_type = "buy"
+        transaction_type=instruction_type
         
         return AnalyzedTransaction(
             signature=signature,
@@ -1076,6 +1106,7 @@ def generate_token_transaction_html(
     mint: str,
     exit_timestamp_ms: int,
     output_dir: Path,
+    creator_address: str | None = None,
 ) -> str:
     """Generate HTML file for token transaction report.
     
@@ -1084,6 +1115,9 @@ def generate_token_transaction_html(
         mint: Token mint address
         exit_timestamp_ms: Exit timestamp in milliseconds
         output_dir: Output directory for HTML file
+        creator_address: Creator wallet address (if known)
+        creator_cumulative_sol_swapped: Cumulative gross SOL received by creator from all buys
+        creator_cumulative_tokens_swapped: Cumulative gross tokens received by creator from all buys
         
     Returns:
         Filename of generated HTML file (relative to output_dir)
@@ -1112,6 +1146,46 @@ def generate_token_transaction_html(
         dt = datetime.fromtimestamp(block_time)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     
+    # Track creator's cumulative PNL for each transaction
+    # We'll calculate cumulative PNL and normalized PNL for each row
+    creator_sol_spent_cumulative = 0  # Cumulative SOL spent by creator
+    creator_sol_received_cumulative = 0  # Cumulative SOL received by creator
+    creator_cumulative_pnl_by_tx: dict[str, float] = {}  # Map signature -> cumulative PNL
+    creator_normalized_pnl_by_tx: dict[str, float] = {}  # Map signature -> normalized PNL
+    
+    # Process transactions to track creator cumulative PNL
+    for tx in analyzed_transactions:
+        if not tx.balance_result:
+            continue
+            
+        br = tx.balance_result
+        
+        # Update cumulative SOL flows
+        if creator_address and tx.wallet_pubkey == creator_address:
+            # Creator's own transactions
+            if br.sol_amount_raw < 0:
+                # Creator spending SOL (on create or buy)
+                creator_sol_spent_cumulative += abs(br.sol_amount_raw)
+            elif br.sol_amount_raw > 0:
+                # Creator receiving SOL (on sell)
+                creator_sol_received_cumulative += br.sol_amount_raw
+        else:
+            # Transactions from other wallets: creator receives creator_fee_raw
+            if br.creator_fee_raw > 0:
+                creator_sol_received_cumulative += br.creator_fee_raw
+        
+        # Calculate cumulative PNL for this transaction
+        cumulative_pnl = creator_sol_received_cumulative - creator_sol_spent_cumulative
+        creator_cumulative_pnl_by_tx[tx.signature] = cumulative_pnl
+        
+        # Calculate normalized PNL (PNL / investment)
+        if creator_sol_spent_cumulative > 0:
+            normalized_pnl = (cumulative_pnl / creator_sol_spent_cumulative) * 100
+            creator_normalized_pnl_by_tx[tx.signature] = normalized_pnl
+        else:
+            # No investment yet, normalized PNL is undefined
+            creator_normalized_pnl_by_tx[tx.signature] = None
+    
     # Generate HTML
     html = f"""<!DOCTYPE html>
 <html>
@@ -1127,20 +1201,42 @@ def generate_token_transaction_html(
             max-width: 1400px;
             margin: 0 auto;
             background-color: white;
-            padding: 20px;
+            padding: 15px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }}
         h1 {{
             color: #333;
             border-bottom: 2px solid #4CAF50;
-            padding-bottom: 10px;
+            padding-bottom: 3px;
+            margin: 5px 0;
+            font-size: 1.2em;
         }}
         .info {{
-            margin: 20px 0;
-            padding: 15px;
+            margin: 5px 0;
+            padding: 5px 10px;
             background-color: #f9f9f9;
-            border-left: 4px solid #4CAF50;
+            border-left: 3px solid #4CAF50;
+            font-size: 0.85em;
+        }}
+        .info p {{
+            margin: 2px 0;
+            line-height: 1.3;
+        }}
+        .creator-info {{
+            margin: 5px 0;
+            padding: 5px 10px;
+            background-color: #fff3cd;
+            border-left: 3px solid #ffc107;
+            font-size: 0.85em;
+        }}
+        .creator-info h3 {{
+            margin: 3px 0 5px 0;
+            font-size: 1.0em;
+        }}
+        .creator-info p {{
+            margin: 2px 0;
+            line-height: 1.3;
         }}
         .data-table {{
             width: 100%;
@@ -1185,11 +1281,9 @@ def generate_token_transaction_html(
 <body>
     <div class="container">
         <h1>Transaction Report - <a href="https://solscan.io/account/{mint}" target="_blank" style="color: #2196F3; text-decoration: none;">{mint_short}</a></h1>
-        <div class="info">
-            <p><strong>Token Mint:</strong> <a href="https://solscan.io/account/{mint}" target="_blank" style="color: #2196F3;">{mint}</a></p>
-            <p><strong>Exit Timestamp:</strong> {format_block_time(exit_timestamp_ms / 1000.0)}</p>
-            <p><strong>Total Transactions:</strong> {len(analyzed_transactions)}</p>
-        </div>
+"""
+    
+    html += """
         <table class="data-table">
             <thead>
                 <tr>
@@ -1199,6 +1293,8 @@ def generate_token_transaction_html(
                     <th>Type</th>
                     <th>Status</th>
                     <th>Balance Information</th>
+                    <th>Creator Cumulative PNL</th>
+                    <th>Creator Normalized PNL</th>
                 </tr>
             </thead>
             <tbody>
@@ -1228,7 +1324,15 @@ def generate_token_transaction_html(
             status_html = '<span class="success" style="font-size: 1.2em;">✓</span>'
         else:
             error_msg = tx.meta_info.error_message if tx.meta_info else tx.analysis_error or "Unknown error"
-            status_html = f'<span class="failure" style="font-size: 1.2em;">✗</span><br><small style="color: #999;">{error_msg[:100]}</small>'
+            # Add error type badge if available
+            error_badge = ""
+            if tx.meta_info:
+                if tx.meta_info.is_slippage_error:
+                    error_badge = '<span style="background-color: #ff9800; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-left: 5px;">SLIPPAGE</span>'
+                elif tx.meta_info.error_type:
+                    error_type_display = tx.meta_info.error_type.upper().replace("_", " ")
+                    error_badge = f'<span style="background-color: #666; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-left: 5px;">{error_type_display}</span>'
+            status_html = f'<span class="failure" style="font-size: 1.2em;">✗</span>{error_badge}<br><small style="color: #999;">{error_msg[:100]}</small>'
         
         # Balance information
         balance_html = "N/A"
@@ -1238,6 +1342,9 @@ def generate_token_transaction_html(
             if br.sol_amount_raw is not None:
                 sol_change = br.sol_amount_raw / LAMPORTS_PER_SOL
                 balance_parts.append(f"SOL: {format_value(sol_change, is_sol=True)}")
+            if br.net_sol_swap_amount_raw is not None:
+                net_sol_swap = br.net_sol_swap_amount_raw / LAMPORTS_PER_SOL
+                balance_parts.append(f"Net SOL Swapped: {format_value(net_sol_swap, is_sol=True)}")
             if br.token_swap_amount_raw is not None:
                 token_change = br.token_swap_amount_raw / (10 ** TOKEN_DECIMALS)
                 balance_parts.append(f"Tokens: {format_value(token_change)}")
@@ -1257,10 +1364,30 @@ def generate_token_transaction_html(
                 unattributed_sol = br.unattributed_sol_amount_raw / LAMPORTS_PER_SOL
                 balance_parts.append(f"Unattributed SOL: {format_value(unattributed_sol, is_sol=True)}")
             
+            
             if balance_parts:
                 balance_html = '<div class="balance-info">' + "<br>".join(balance_parts) + "</div>"
         elif tx.analysis_error:
             balance_html = f'<span style="color: #f44336;">Analysis Error: {tx.analysis_error[:100]}</span>'
+        
+        # Creator cumulative PNL column
+        creator_cumulative_pnl_html = "N/A"
+        if creator_address:
+            cumulative_pnl = creator_cumulative_pnl_by_tx.get(tx.signature)
+            if cumulative_pnl is not None:
+                cumulative_pnl_decimal = cumulative_pnl / LAMPORTS_PER_SOL
+                pnl_color = "#4CAF50" if cumulative_pnl_decimal >= 0 else "#f44336"
+                pnl_sign = "+" if cumulative_pnl_decimal >= 0 else ""
+                creator_cumulative_pnl_html = f'<span style="color: {pnl_color}; font-weight: bold;">{pnl_sign}{format_value(cumulative_pnl_decimal, is_sol=True)}</span>'
+        
+        # Creator normalized PNL column
+        creator_normalized_pnl_html = "N/A"
+        if creator_address:
+            normalized_pnl = creator_normalized_pnl_by_tx.get(tx.signature)
+            if normalized_pnl is not None:
+                pnl_color = "#4CAF50" if normalized_pnl >= 0 else "#f44336"
+                pnl_sign = "+" if normalized_pnl >= 0 else ""
+                creator_normalized_pnl_html = f'<span style="color: {pnl_color}; font-weight: bold;">{pnl_sign}{normalized_pnl:.2f}%</span>'
         
         html += f"""
                 <tr>
@@ -1270,6 +1397,8 @@ def generate_token_transaction_html(
                     <td>{type_html}</td>
                     <td>{status_html}</td>
                     <td>{balance_html}</td>
+                    <td>{creator_cumulative_pnl_html}</td>
+                    <td>{creator_normalized_pnl_html}</td>
                 </tr>
 """
     
@@ -1404,6 +1533,11 @@ async def generate_transaction_reports_for_live_positions(
             analyzed_transactions = []
             failed_analyses = 0
             
+            # Track creator's cumulative swaps for PNL calculation
+            creator_address: str | None = None
+            creator_cumulative_sol_swapped: int = 0  # Gross SOL received by creator (from buys)
+            creator_cumulative_tokens_swapped: int = 0  # Gross tokens received by creator (from buys)
+            
             # Create progress bar for this token's transactions
             with tqdm(
                 total=len(signatures),
@@ -1423,11 +1557,12 @@ async def generate_transaction_reports_for_live_positions(
                         balance_analyzer,
                         idl_parser,
                     )
-                    
                     if analyzed:
-                        # Mark the first (oldest) transaction as CREATE
-                        if idx == 0:
-                            analyzed.transaction_type = "create"
+                        # Extract creator address from CREATE transaction (first transaction)
+                        if idx == 0 and analyzed.transaction_type == "create":
+                            if analyzed.wallet_pubkey:
+                                creator_address = analyzed.wallet_pubkey
+                        
                         analyzed_transactions.append(analyzed)
                         if analyzed.analysis_error:
                             failed_analyses += 1
@@ -1456,6 +1591,7 @@ async def generate_transaction_reports_for_live_positions(
                     mint,
                     exit_ts,
                     output_dir,
+                    creator_address=creator_address,
                 )
                 reports_generated[mint] = html_filename
                 successful_reports += 1
@@ -2382,6 +2518,12 @@ def main():
         action="store_true",
         help="Generate individual HTML transaction reports for each LIVE position (expensive, requires RPC access)",
     )
+    parser.add_argument(
+        "--token",
+        type=str,
+        default=None,
+        help="Filter results to a specific token mint address (optional)",
+    )
 
     args = parser.parse_args()
 
@@ -2438,20 +2580,24 @@ def main():
         if end_timestamp_ms:
             end_dt = datetime.fromtimestamp(end_timestamp_ms / 1000.0)
             print(f"  End: {end_timestamp_ms} ms ({end_dt})")
+    
+    # Display token filter info if provided
+    if args.token:
+        print(f"\nToken filter: {args.token}")
 
     # Query positions and trades
     print("\nQuerying positions and trades...")
     dryrun_positions = query_all_positions(
-        str(dryrun_path), start_timestamp_ms, end_timestamp_ms
+        str(dryrun_path), start_timestamp_ms, end_timestamp_ms, args.token
     )
     live_positions = query_all_positions(
-        str(live_path), start_timestamp_ms, end_timestamp_ms
+        str(live_path), start_timestamp_ms, end_timestamp_ms, args.token
     )
     dryrun_trades = query_all_trades(
-        str(dryrun_path), start_timestamp_ms, end_timestamp_ms
+        str(dryrun_path), start_timestamp_ms, end_timestamp_ms, args.token
     )
     live_trades = query_all_trades(
-        str(live_path), start_timestamp_ms, end_timestamp_ms
+        str(live_path), start_timestamp_ms, end_timestamp_ms, args.token
     )
 
     print(f"Found {len(dryrun_positions)} dry-run positions, {len(live_positions)} live positions")

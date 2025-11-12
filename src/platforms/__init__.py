@@ -116,9 +116,6 @@ class PlatformRegistry:
 
         # For platforms with IDL support, pass the parser to relevant classes
         if idl_parser and platform in [Platform.LETS_BONK, Platform.PUMP_FUN]:
-            instruction_builder = impl_classes["instruction_builder"](
-                idl_parser=idl_parser
-            )
             # Pass listener and trade staleness threshold to curve manager if available
             if listener and hasattr(impl_classes["curve_manager"], '__init__'):
                 # Check if curve manager accepts listener parameter
@@ -134,6 +131,11 @@ class PlatformRegistry:
                     curve_manager = impl_classes["curve_manager"](client, idl_parser=idl_parser)
             else:
                 curve_manager = impl_classes["curve_manager"](client, idl_parser=idl_parser)
+            
+            # Create instruction builder
+            instruction_builder = impl_classes["instruction_builder"](
+                idl_parser=idl_parser
+            )
             event_parser = impl_classes["event_parser"](idl_parser=idl_parser)
         else:
             # Fallback for platforms without IDL support
