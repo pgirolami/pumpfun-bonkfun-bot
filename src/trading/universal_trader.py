@@ -621,7 +621,20 @@ class UniversalTrader:
                 f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({len(self.position_tasks)}/{self.max_active_mints})"
             )
             return
-        
+
+        # Check circuit breaker
+        if self._circuit_breaker_triggered:
+            logger.warning(
+                f"[{self._mint_prefix(token_info.mint)}] Skipping token due to circuit breaker (wallet loss threshold exceeded)"
+            )
+            return
+
+        if token_info.initial_buy_sol_amount_decimal < self.min_initial_buy_sol:
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Skipping token from creator [{str(token_info.creator)[:8]}] because initial SOL amount is too low {token_info.initial_buy_sol_amount_decimal} SOL (min: {self.min_initial_buy_sol} SOL)"
+            )
+            return
+
         # Record timestamp when token was discovered
         self.token_timestamps[token_key] = monotonic()
         
@@ -661,8 +674,9 @@ class UniversalTrader:
                     task_done_called = True
                     continue
 
+
                 # Spawn concurrent task
-                task = asyncio.create_task(self._handle_token_wrapper(token_info))
+                task = asyncio.create_task(self._handle_token(token_info))
                 self.position_tasks[token_key] = task
                 task_spawned = True
                 logger.debug(f"_process_token_queue() [{self._mint_prefix(token_info.mint)}] Created position task")
@@ -688,19 +702,6 @@ class UniversalTrader:
                 if token_info is not None and not task_spawned:
                     self._queued_tokens.discard(str(token_info.mint))
 
-    async def _handle_token_wrapper(self, token_info: TokenInfo) -> None:
-        """Wrapper around _handle_token that manages position lifecycle."""
-        mint_key = str(token_info.mint)
-        try:
-            await self._handle_token(token_info)
-        finally:
-            # Cleanup: Remove from position tasks
-            if mint_key in self.position_tasks:
-                logger.debug(f"_handle_token_wrapper() [{self._mint_prefix(token_info.mint)}] Removed position task")
-                del self.position_tasks[mint_key]
-            # Remove from queued set after processing completes (allows same token to be processed again if it comes in later)
-            self._queued_tokens.discard(mint_key)
-
     async def _handle_token(self, token_info: TokenInfo) -> None:
         """Handle a new token creation event."""
         try:
@@ -711,7 +712,6 @@ class UniversalTrader:
                 )
                 return
 
-
             # Persist to database if available
             if self.database_manager:
                 try:
@@ -719,20 +719,6 @@ class UniversalTrader:
                     await self.database_manager.insert_token_info(token_info)
                 except Exception as e:
                     logger.exception(f"Failed to persist token info to database: {e}")
-
-            # Check circuit breaker
-            if self._circuit_breaker_triggered:
-                logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Skipping token due to circuit breaker (wallet loss threshold exceeded)"
-                )
-                return
-
-            if token_info.initial_buy_sol_amount_decimal < self.min_initial_buy_sol:
-                logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Skipping token from creator [{str(token_info.creator)[:8]}] because initial SOL amount is too low {token_info.initial_buy_sol_amount_decimal} SOL (min: {self.min_initial_buy_sol} SOL)"
-                )
-                return
-
 
             # Wait for pool/curve to stabilize (unless in extreme fast mode)
             if not self.extreme_fast_mode:
@@ -868,6 +854,14 @@ class UniversalTrader:
 
         except Exception:
             logger.exception(f"Error handling token {token_info.symbol}")
+        finally:
+            # Cleanup: Remove from position tasks
+            if token_info.mint in self.position_tasks:
+                logger.debug(f"_handle_token_wrapper() [{self._mint_prefix(token_info.mint)}] Removed position task")
+                del self.position_tasks[token_info.mint]
+            # Remove from queued set after processing completes (allows same token to be processed again if it comes in later)
+            self._queued_tokens.discard(token_info.mint)
+
 
     async def _handle_successful_buy(
         self, token_info: TokenInfo, buy_result: TradeResult, position: Position
