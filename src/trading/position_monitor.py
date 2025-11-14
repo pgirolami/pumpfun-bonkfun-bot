@@ -8,6 +8,7 @@ from typing import Any
 from database.manager import DatabaseManager
 from interfaces.core import CurveManager, TokenInfo
 from monitoring.base_listener import BaseTokenListener
+from trading.market_quality import MarketQualityController
 from trading.platform_aware import PlatformAwareSeller
 from trading.position import ExitReason, Position
 from utils.logger import get_logger
@@ -40,8 +41,7 @@ class PositionMonitor:
         volatility_window_seconds: float = 5.0,
         volatility_tp_adjustments: dict | None = None,
         take_profit_percentage: float | None = None,
-        market_quality_controller: Any | None = None,
-        mint_prefix_fn: Any | None = None,  # Function to get mint prefix for logging
+        market_quality_controller: MarketQualityController | None = None,
     ):
         """Initialize position monitor.
         
@@ -76,7 +76,7 @@ class PositionMonitor:
         self.volatility_tp_adjustments = volatility_tp_adjustments or {}
         self.take_profit_percentage = take_profit_percentage
         self.market_quality_controller = market_quality_controller
-        self._mint_prefix = mint_prefix_fn or (lambda mint: str(mint)[:8])
+        self._mint_prefix = (lambda mint: str(mint)[:8])
         
         # Time tick event
         self._time_tick_event = asyncio.Event()

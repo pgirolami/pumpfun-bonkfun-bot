@@ -1075,7 +1075,6 @@ class UniversalTrader:
             volatility_tp_adjustments=self.volatility_tp_adjustments,
             take_profit_percentage=self.take_profit_percentage,
             market_quality_controller=self.market_quality_controller,
-            mint_prefix_fn=self._mint_prefix,
         )
         
         # Start monitoring - this will handle all event-driven logic
