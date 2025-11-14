@@ -308,7 +308,9 @@ class UniversalPumpPortalListener(BaseTokenListener):
         """
         # Call parent method first to maintain existing trade tracking functionality
         super()._handle_trade_message(timestamp, trade_data)
-        
+
+#        logger.info(f"In _handle_trade_message() for {trade_data}")
+
         # Write to database if database_manager is available
         if not self.database_manager:
             return

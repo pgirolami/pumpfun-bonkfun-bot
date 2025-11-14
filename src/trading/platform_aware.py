@@ -10,7 +10,7 @@ from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from core.wallet import Wallet
-from interfaces.core import AddressProvider, Platform, TokenInfo
+from interfaces.core import AddressProvider, BalanceChangeResult, Platform, TokenInfo
 from platforms import get_platform_implementations
 from platforms.pumpfun.address_provider import PumpFunAddressProvider
 from trading.base import Trader, TradeResult
@@ -114,11 +114,11 @@ class PlatformAwareBuyer(Trader):
 
         return order
 
-    async def _confirm_transaction(self, order: BuyOrder):
+    async def _confirm_transaction(self, order: BuyOrder) -> SolanaClient.ConfirmationResult:
         """Confirm transaction (overridden in dry-run)."""
         return await self.client.confirm_transaction(order.tx_signature)
 
-    async def _analyze_balance_changes(self, order: BuyOrder):
+    async def _analyze_balance_changes(self, order: BuyOrder) -> BalanceChangeResult | None:
         """Analyze balance changes (overridden in dry-run)."""
         # Get transaction with full metadata for balance analysis
         tx = await self.client.get_transaction(order.tx_signature)
@@ -199,12 +199,13 @@ class PlatformAwareBuyer(Trader):
             if confirm_result.success:
                 buy_order.state = OrderState.CONFIRMED
                 buy_order.block_ts = confirm_result.block_ts
-                if balance_changes:
-                    buy_order.transaction_fee_raw = balance_changes.transaction_fee_raw
-                    buy_order.protocol_fee_raw = balance_changes.protocol_fee_raw
-                    buy_order.creator_fee_raw = balance_changes.creator_fee_raw
             else:
                 buy_order.state = OrderState.FAILED
+
+            if balance_changes:
+                buy_order.transaction_fee_raw = balance_changes.transaction_fee_raw
+                buy_order.protocol_fee_raw = balance_changes.protocol_fee_raw
+                buy_order.creator_fee_raw = balance_changes.creator_fee_raw
 
             result = TradeResult(
                 success=confirm_result.success,
@@ -229,9 +230,8 @@ class PlatformAwareBuyer(Trader):
             return result
 
         except Exception as e:
-            trade_duration_ms = int((time.time() - trade_start_time) * 1000)
-            logger.exception("Buy order processing failed")
-            logger.info(f"Failed buy trade took {trade_duration_ms}ms")
+            trade_duration_ms = int((time.time() - buy_order.trade_start_time) * 1000)
+            logger.exception("Buy order processing failed, trade_duration_ms={trade_duration_ms}")
             
             # Set order state to FAILED on exception
             buy_order.state = OrderState.FAILED
@@ -371,11 +371,11 @@ class PlatformAwareSeller(Trader):
 
         return order
 
-    async def _confirm_transaction(self, order: SellOrder):
+    async def _confirm_transaction(self, order: SellOrder) -> SolanaClient.ConfirmationResult:
         """Confirm transaction (overridden in dry-run)."""
         return await self.client.confirm_transaction(order.tx_signature)
 
-    async def _analyze_balance_changes(self, order: SellOrder):
+    async def _analyze_balance_changes(self, order: SellOrder) -> BalanceChangeResult | None:
         """Analyze balance changes (overridden in dry-run)."""
         # Get transaction with full metadata for balance analysis
         tx_with_meta = await self.client.get_transaction(order.tx_signature)

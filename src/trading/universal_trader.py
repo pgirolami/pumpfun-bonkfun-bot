@@ -22,6 +22,7 @@ from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position import ExitReason, Position
 from trading.position_monitor import PositionMonitor
+from trading.trade_order import BuyOrder, OrderState
 from utils.logger import get_logger
 from utils.volatility import VolatilityCalculator, calculate_take_profit_adjustment
 
@@ -598,8 +599,9 @@ class UniversalTrader:
 
         # Check capacity using active position tasks
         if len(self.position_tasks) >= self.max_active_mints:
+            active_mints = [self._mint_prefix(mint) for mint in self.position_tasks.keys() if isinstance(mint, str)]
             logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({len(self.position_tasks)}/{self.max_active_mints})"
+                f"[{self._mint_prefix(token_info.mint)}] Skipping new token - at capacity ({len(self.position_tasks)}/{self.max_active_mints}). Active mints: {active_mints}"
             )
             return
 
@@ -704,7 +706,7 @@ class UniversalTrader:
 
             # Check market quality buy decision (synchronous, uses cached score)
             if self.market_quality_controller:
-                should_buy = self.market_quality_controller.should_buy()
+                should_buy = self.market_quality_controller.should_buy(token_info.mint)
                 if not should_buy:
                     quality_score = self.market_quality_controller.get_cached_quality_score()
                     logger.info(
@@ -733,6 +735,7 @@ class UniversalTrader:
                 trailing_stop_percentage=self.trailing_stop_percentage,
                 min_gain_percentage=self.min_gain_percentage,
                 min_gain_time_window=self.min_gain_time_window,
+                buy_amount=self.buy_amount,
             )
             if self.database_manager:
                 try:
@@ -742,84 +745,27 @@ class UniversalTrader:
                 except Exception as e:
                     logger.exception(f"Failed to persist position to database: {e}")
 
-
-            # Buy token
+            # Buy token - prepare and send order (don't wait for confirmation)
             logger.info(
                 f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} ({str(token_info.mint)})on {token_info.platform.value}..."
             )
 
-            order = await self.buyer.prepare_and_send_order(token_info)
-            position.buy_order = order
-            buy_result = await self.buyer.process_order(order)
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Buy result is {buy_result}"
+            buy_order = await self.buyer.prepare_and_send_order(token_info)
+            position.update_from_buy_order(
+                buy_order=buy_order,
+                take_profit_percentage=self.take_profit_percentage,
+                stop_loss_percentage=self.stop_loss_percentage
             )
-
-            # Create position immediately after buy (regardless of success/failure)
-            entry_ts = (buy_result.block_time or int(time())) * 1000
-            position.update_from_buy_order(buy_order=order, take_profit_percentage=self.take_profit_percentage, stop_loss_percentage=self.stop_loss_percentage)
-            # if buy_result.success:
-            #     # Successful buy - create active position
-            #     position = Position.create_from_buy_result(
-            #         mint=token_info.mint,
-            #         platform=token_info.platform,
-            #         entry_net_price_decimal=buy_result.net_price_sol_decimal(),
-            #         quantity=buy_result.token_swap_amount_decimal(),
-            #         token_swapin_amount_raw=buy_result.token_swap_amount_raw,
-            #         entry_ts=entry_ts,
-            #         transaction_fee_raw=buy_result.transaction_fee_raw,
-            #         platform_fee_raw=buy_result.platform_fee_raw,
-            #         tip_fee_raw=buy_result.tip_fee_raw,
-            #         rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
-            #         unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
-            #         exit_strategy="trailing",
-            #         buy_amount=self.buy_amount,
-            #         total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw,  # Raw value (negative for buys)
-            #         total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # Raw value (negative for buys)
-            #         take_profit_percentage=self.take_profit_percentage,
-            #         stop_loss_percentage=self.stop_loss_percentage,
-            #         trailing_stop_percentage=self.trailing_stop_percentage,
-            #         max_hold_time=self.max_hold_time,
-            #         max_no_price_change_time=self.max_no_price_change_time,
-            #         min_gain_percentage=self.min_gain_percentage,
-            #         min_gain_time_window=self.min_gain_time_window,
-            #     )
-            # else:
-            #     position_id = Position.generate_position_id(token_info.mint, token_info.platform, entry_ts)
-            #     # Failed buy - create inactive position with None values
-            #     position = Position(
-            #         position_id=position_id,
-            #         mint=token_info.mint,
-            #         platform=token_info.platform,
-            #         entry_net_price_decimal=None,  # No actual entry
-            #         token_quantity_decimal=None,  # No tokens acquired
-            #         total_token_swapin_amount_raw=None,  # No tokens acquired
-            #         total_token_swapout_amount_raw=None,  # No tokens acquired
-            #         entry_ts=entry_ts,
-            #         exit_ts=entry_ts,   #yes, = entry_ts
-            #         is_active=False,  # Mark as inactive
-            #         exit_reason=ExitReason.FAILED_BUY,
-            #         transaction_fee_raw=buy_result.transaction_fee_raw,  # Still incurred fees
-            #         platform_fee_raw=buy_result.platform_fee_raw,  # Still incurred fees
-            #         tip_fee_raw=buy_result.tip_fee_raw,  # Still incurred fees
-            #         rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
-            #         unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
-            #         buy_amount=self.buy_amount,  # Still intended to buy this amount
-            #         total_net_sol_swapout_amount_raw=0,  # No SOL spent
-            #         total_net_sol_swapin_amount_raw=0,  # No SOL received
-            #         total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # SOL spent
-            #         total_sol_swapin_amount_raw=0,  # No SOL received
-            #     )
+            
+            # Update position in database with buy_order
             if self.database_manager:
                 try:
-                    # Insert position
                     await self.database_manager.update_position(position)
-
-                    logger.debug("Persisted position to database")
+                    logger.debug("Persisted position with buy_order to database")
                 except Exception as e:
                     logger.exception(f"Failed to persist position to database: {e}")
 
-            # Increment buy counter regardless of success/failure
+            # Increment buy counter after sending order
             self.buy_count += 1
             logger.info(f"Buy count: {self.buy_count}/{self.max_buys if self.max_buys else 'unlimited'}")
             
@@ -829,10 +775,34 @@ class UniversalTrader:
                 self._max_buys_reached = True
                 self._stop_event.set()  # Stop accepting new tokens
 
-            if buy_result.success:
-                await self._handle_successful_buy(token_info, buy_result, position)
-            else:
-                await self._handle_failed_buy(token_info, buy_result, position)
+            # Create PositionMonitor instance (needed for background BUY confirmation task)
+            curve_manager = self.platform_implementations.curve_manager
+            position_monitor = PositionMonitor(
+                position=position,
+                token_info=token_info,
+                curve_manager=curve_manager,
+                seller=self.seller,
+                price_check_interval=self.price_check_interval,
+                database_manager=self.database_manager,
+                token_listener=self.token_listener,
+                run_id=self.run_id,
+                enable_volatility_adjustment=self.enable_volatility_adjustment,
+                volatility_window_seconds=self.volatility_window_seconds,
+                volatility_tp_adjustments=self.volatility_tp_adjustments,
+                take_profit_percentage=self.take_profit_percentage,
+                market_quality_controller=self.market_quality_controller,
+            )
+            
+            # Start position monitoring as a background task (don't await, don't wait for BUY confirmation)
+            mint_key = str(token_info.mint)
+            monitoring_task = asyncio.create_task(position_monitor.monitor())
+            monitoring_task.add_done_callback(lambda _: self._cleanup_position_task(mint_key))
+            self.position_tasks[mint_key] = monitoring_task
+            
+            # Start background task to confirm the BUY transaction
+            asyncio.create_task(
+                self._confirm_buy_order(position, position_monitor, token_info)
+            )
 
             if self._stop_event.is_set():
                 return
@@ -840,18 +810,80 @@ class UniversalTrader:
         except Exception:
             logger.exception(f"Error handling token {token_info.symbol}")
         finally:
-            # Cleanup: Remove from position tasks
-            if token_info.mint in self.position_tasks:
-                logger.debug(f"_handle_token_wrapper() [{self._mint_prefix(token_info.mint)}] Removed position task")
-                del self.position_tasks[token_info.mint]
-            # Remove from queued set after processing completes (allows same token to be processed again if it comes in later)
+            # Cleanup: Remove from queued set after processing completes (allows same token to be processed again if it comes in later)
             self._queued_tokens.discard(token_info.mint)
 
+    def _cleanup_position_task(self, mint: str) -> None:
+        """Callback to remove position task when monitoring completes.
+        
+        Args:
+            mint: Token mint address
+        """
+        if mint in self.position_tasks:
+            del self.position_tasks[mint]
+            logger.debug(f"Cleaned up position task for mint {self._mint_prefix(mint)}")
+
+    async def _confirm_buy_order(
+        self,
+        position: Position,
+        position_monitor: PositionMonitor,
+        token_info: TokenInfo,
+    ) -> None:
+        """Background task to confirm BUY transaction and update position.
+        
+        Args:
+            buy_order: BuyOrder that was sent (state should be SENT)
+            position: Position to update
+            position_monitor: PositionMonitor instance (to signal when result is available)
+            token_info: Token information
+        """
+        try:
+            # Process buy order (confirms transaction and analyzes balance changes)
+            logger.debug(
+                f"[{self._mint_prefix(token_info.mint)}] Going to process {position.buy_order}"
+            )
+            buy_result = await self.buyer.process_order(position.buy_order)
+            entry_ts = int(time() * 1000)
+            logger.info(
+                f"[{self._mint_prefix(token_info.mint)}] Buy result is {buy_result}"
+            )
+            
+            # Update position with actual values from TradeResult
+            # The buy_order state is already set to CONFIRMED in process_order()
+            position.update_from_buy_result(buy_result,entry_ts)                            
+            
+        except Exception as e:
+            logger.exception(
+                f"[{self._mint_prefix(token_info.mint)}] Error in buy confirmation task: {e}"
+            )
+            # Set buy_order state to FAILED on exception
+            position.buy_order.state = OrderState.FAILED
+        finally:
+            # Update position in database
+            if self.database_manager:
+                try:
+                    await self.database_manager.update_position(position)
+                    
+                    # Insert failed buy trade
+                    await self.database_manager.insert_trade(
+                        trade_result=buy_result,
+                        mint=str(token_info.mint),
+                        position_id=position.position_id,
+                        trade_type="buy",
+                        run_id=self.run_id,
+                    )
+                    
+                    logger.debug("Persisted failed buy trade to database")
+                except Exception as e:
+                    logger.exception(f"Failed to persist failed buy trade to database: {e}")
+
+            # Signal that result is available (even if it's an error)
+            position_monitor.buy_result_available_event.set()
 
     async def _handle_successful_buy(
         self, token_info: TokenInfo, buy_result: TradeResult, position: Position
     ) -> None:
-        """Handle successful token purchase."""
+        """Handle successful token purchase (legacy method, kept for backward compatibility)."""
         logger.info(
             f"[{self._mint_prefix(token_info.mint)}] Successfully bought {token_info.symbol} on {token_info.platform.value} in transaction {str(buy_result.tx_signature)}"
         )

@@ -179,13 +179,16 @@ class DatabaseManager:
             conn.execute(
                 """
                 UPDATE positions SET
+                    total_token_swapin_amount_raw = ?,
                     total_token_swapout_amount_raw = ?,
                     highest_price = ?,
                     max_no_price_change_time = ?,
                     last_price_change_ts = ?,
                     is_active = ?,
                     exit_reason = ?,
+                    entry_net_price_decimal = ?,
                     exit_net_price_decimal = ?,
+                    entry_ts = ?,
                     exit_ts = ?,
                     transaction_fee_raw = ?,
                     platform_fee_raw = ?,
@@ -195,20 +198,25 @@ class DatabaseManager:
                     realized_pnl_sol_decimal = ?,
                     realized_net_pnl_sol_decimal = ?,
                     total_net_sol_swapin_amount_raw = ?,
+                    total_net_sol_swapout_amount_raw = ?,
                     total_sol_swapin_amount_raw = ?,
+                    total_sol_swapout_amount_raw = ?,
                     buy_order = ?,
                     sell_order = ?,
                     updated_ts = ?
                 WHERE id = ?
             """,
                 (
+                    position.total_token_swapin_amount_raw,
                     position.total_token_swapout_amount_raw,
                     position.highest_price,
                     position.max_no_price_change_time,
                     position.last_price_change_ts,
                     1 if position.is_active else 0,
                     position.exit_reason.value if position.exit_reason else None,
+                    position.entry_net_price_decimal,
                     position.exit_net_price_decimal,
+                    position.entry_ts,
                     position.exit_ts,
                     position.transaction_fee_raw or 0,
                     position.platform_fee_raw or 0,
@@ -218,7 +226,9 @@ class DatabaseManager:
                     position.realized_pnl_sol_decimal,
                     position.realized_net_pnl_sol_decimal,
                     position.total_net_sol_swapin_amount_raw or 0,  # Direct value, not accumulation
+                    position.total_net_sol_swapout_amount_raw or 0,  # Direct value, not accumulation
                     position.total_sol_swapin_amount_raw or 0,  # Direct value, not accumulation
+                    position.total_sol_swapout_amount_raw or 0,  # Direct value, not accumulation
                     PositionConverter._serialize_order(position.buy_order),
                     PositionConverter._serialize_order(position.sell_order),
                     int(time()*1000),
@@ -383,9 +393,9 @@ class DatabaseManager:
             trade_type: "buy" or "sell"
             run_id: Bot run identifier
         """
-        # Use trade_result.block_time or current time as fallback
-        timestamp = trade_result.block_time or int(time())
-
+        #TODO fix
+        timestamp:int = int(time()*1000) 
+        
         row = TradeConverter.to_row(
             trade_result, mint, timestamp, position_id, trade_type, run_id
         )

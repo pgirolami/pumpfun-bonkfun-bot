@@ -11,6 +11,7 @@ from solders.pubkey import Pubkey
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.trade_order import BuyOrder, Order, SellOrder
 from utils.logger import get_logger
+from core.client import SolanaClient
 
 logger = get_logger(__name__)
 
@@ -28,13 +29,18 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
     
     async def _execute_transaction(self, order: BuyOrder) -> BuyOrder:
         """Override to simulate instead of actually sending transaction."""
-        # Simulate network latency
-        logger.info(f"Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
-        await asyncio.sleep(self.dry_run_wait_time)
-
 
         # Generate fake signature for successful transaction
         order.tx_signature = f"DRYRUN_BUY_{order.token_info.mint}_{int(time()*1000)}"
+                            
+        return order
+    
+    async def _confirm_transaction(self, order: BuyOrder) -> SolanaClient.ConfirmationResult:
+        """Override to simulate transaction confirmation."""
+
+        # Simulate network latency
+        logger.info(f"[{str(order.token_info.mint)[:8]}]DRY RUN BUY: Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
+        await asyncio.sleep(self.dry_run_wait_time)
 
         # Simulate slippage validation - calculate actual SOL cost for fixed token amount
         net_sol_swapped_raw = None
@@ -54,43 +60,30 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 # Calculate actual price based on order's token amount and actual SOL cost
                 trade_price_sol_per_token = abs((net_sol_swapped_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS)))
                 order.token_price_sol = trade_price_sol_per_token
-                logger.info(f"[{str(order.token_info.mint)[:8]}] Amount of token swapped would be {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS} tokens) Net SOL swapped {net_sol_swapped_raw} ({net_sol_swapped_raw/1_000_000_000} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
+                logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN BUY:  Amount of token swapped would be {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS} tokens) Net SOL swapped {net_sol_swapped_raw} ({net_sol_swapped_raw/1_000_000_000} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
 
             except Exception:
                 logger.exception(f"[{str(order.token_info.mint)[:8]}] Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
                 await asyncio.sleep(self.PROPAGATION_SLEEP_TIME)
 
-        order.block_ts=int(time())
+        order.block_ts=int(time()*1000)
 
         # Check if actual SOL cost exceeds slippage tolerance
         if -net_sol_swapped_raw > order.max_sol_amount_raw:
             # Simulate slippage failure - still charge transaction fees
             from core.pubkeys import LAMPORTS_PER_SOL
-            logger.warning(f"DRY RUN: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL} SOL, actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL} SOL")
+            logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN BUY: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL} SOL, actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL} SOL")
             order.tx_signature = f"DRYRUN_BUY_FAILED_{order.token_info.mint}_{int(time()*1000)}"
             order.slippage_failed = True  # Add flag to indicate slippage failure
-            
-            return order
         else:
             from core.pubkeys import LAMPORTS_PER_SOL
-            logger.info(f"DRY RUN: Slippage check passed - actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL} SOL)")
-                            
-        return order
-    
-    async def _confirm_transaction(self, order: BuyOrder):
-        """Override to simulate transaction confirmation."""
+            logger.info(f"[{str(order.token_info.mint)[:8]}]DRY RUN BUY: Slippage check passed - actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL} SOL)")
         
-        # Check if this was a slippage failure
-        is_slippage_failure = order.tx_signature.startswith("DRYRUN_BUY_FAILED_")
-        
-        # Return a mock confirmation result
-        from core.client import SolanaClient
-
         return SolanaClient.ConfirmationResult(
-            success=not is_slippage_failure,
+            success=not order.slippage_failed,
             tx=order.tx_signature,
             block_ts=order.block_ts,
-            error_message=f"Slippage tolerance exceeded" if is_slippage_failure else None,
+            error_message=f"Slippage tolerance exceeded" if order.slippage_failed else None,
         )
     
     async def _analyze_balance_changes(self, order: BuyOrder):
@@ -169,10 +162,16 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
     
     async def _execute_transaction(self, order: SellOrder) -> SellOrder:
         """Override to simulate instead of actually sending transaction."""
+        # Generate fake signature
+        order.tx_signature = f"DRYRUN_SELL_{order.token_info.mint}_{int(time()*1000)}"
+        return order
+    
+    async def _confirm_transaction(self, order: SellOrder) -> SolanaClient.ConfirmationResult:
+        """Override to simulate transaction confirmation."""
         # Simulate network latency
-        logger.info(f"Simulating sell transaction (wait: {self.dry_run_wait_time}s)")
+        logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN SELL: Simulating sell transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
-        order.block_ts=int(time())
+        order.block_ts=int(time()*1000)
         
         net_sol_swap_raw = await self.curve_manager.calculate_sell_amount_out(
             mint=order.token_info.mint,
@@ -182,21 +181,11 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         #This is incomplete, it's doesn't contain the fees yet
         order.expected_sol_swap_amount_raw=net_sol_swap_raw
 
-        # Generate fake signature
-        order.tx_signature = f"DRYRUN_SELL_{order.token_info.mint}_{int(time()*1000)}"
-        
-        
         trade_price_sol_per_token = abs((net_sol_swap_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS)))
         order.token_price_sol = trade_price_sol_per_token
-        logger.info(f"[{str(order.token_info.mint)[:8]}] Amount of token swapped would be  {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS} tokens) Net SOL swapped {net_sol_swap_raw} ({net_sol_swap_raw/1_000_000_000} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
-        return order
-    
-    async def _confirm_transaction(self, order: SellOrder):
-        """Override to simulate transaction confirmation."""
+
+        logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN SELL: Amount of token swapped would be  {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS} tokens) Net SOL swapped {net_sol_swap_raw} ({net_sol_swap_raw/1_000_000_000} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
         
-        # Return a mock confirmation result
-        from core.client import SolanaClient
-        from time import time
         return SolanaClient.ConfirmationResult(
             success=True,
             tx=order.tx_signature,

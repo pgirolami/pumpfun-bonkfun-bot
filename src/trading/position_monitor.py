@@ -11,6 +11,7 @@ from monitoring.base_listener import BaseTokenListener
 from trading.market_quality import MarketQualityController
 from trading.platform_aware import PlatformAwareSeller
 from trading.position import ExitReason, Position
+from trading.trade_order import OrderState
 from utils.logger import get_logger
 from utils.volatility import VolatilityCalculator, calculate_take_profit_adjustment
 
@@ -75,6 +76,9 @@ class PositionMonitor:
         self.market_quality_controller = market_quality_controller
         self._mint_prefix = (lambda mint: str(mint)[:8])
         
+        # Buy result available event (set when BUY transaction result is available)
+        self.buy_result_available_event = asyncio.Event()
+        
         # Time tick event
         self._time_tick_event = asyncio.Event()
         self._last_time_tick_timestamp: float | None = None
@@ -95,22 +99,41 @@ class PositionMonitor:
         tracker = self.token_listener.get_trade_tracker_by_mint(str(self.token_info.mint))    
         #Do not initialize position's last price to tracker timestamp because our time-based exit thresholds are from the time of the buy
         
+        # Check if buy_order exists and state is SENT (background BUY confirmation task is running)
+        buy_confirmation_running = (
+            self.position.buy_order is not None 
+            and self.position.buy_order.state == OrderState.SENT
+        )
+        if buy_confirmation_running:
+            logger.info(
+                f"[{self._mint_prefix(self.token_info.mint)}] Buy order is SENT, background confirmation task is running"
+            )
+        
         # Start time tick background task
         self._time_tick_task = asyncio.create_task(self._time_tick_loop())
         
         try:
             while self.position.is_active:
                 try:
-                    # Wait for either trade event or time tick event
+                    # Wait for either trade event, time tick event, or buy result available event
                     time_tick_wait_task = asyncio.create_task(self._time_tick_event.wait())
                     wait_tasks = [time_tick_wait_task]
                     if tracker:
                         trade_wait_task = asyncio.create_task(tracker.price_update_event.wait())
                         wait_tasks.append(trade_wait_task)
-                    
+                    if buy_confirmation_running:
+                        buy_result_wait_task = asyncio.create_task(self.buy_result_available_event.wait())
+                        wait_tasks.append(buy_result_wait_task)
+
+                    logger.debug(
+                        f"[{self._mint_prefix(self.token_info.mint)}] monitor() loop waiting for event"
+                    )
                     done, pending = await asyncio.wait(
                         wait_tasks,
                         return_when=asyncio.FIRST_COMPLETED
+                    )
+                    logger.debug(
+                        f"[{self._mint_prefix(self.token_info.mint)}] monitor() loop running"
                     )
                     
                     # Cancel pending tasks
@@ -125,6 +148,7 @@ class PositionMonitor:
                     # (not the tasks, since cancelled tasks are also "done")
                     trade_timestamp: float | None = None
                     tick_timestamp: float | None = None
+                    buy_result_available = False
                     
                     # Check which event is actually set (before clearing)
                     if tracker and tracker.price_update_event.is_set():
@@ -133,13 +157,52 @@ class PositionMonitor:
                     if self._time_tick_event.is_set():
                         tick_timestamp = self._last_time_tick_timestamp
                     
-                    event_timestamp = min(trade_timestamp or INFINITY,tick_timestamp or INFINITY)
+                    if buy_confirmation_running and self.buy_result_available_event.is_set():
+                        buy_result_available = True
+                        # Use current time for buy result event (it's a signal, not a price update)
+                        if tick_timestamp is None and trade_timestamp is None:
+                            tick_timestamp = time.time()
+                    
+                    event_timestamp = min(trade_timestamp or INFINITY, tick_timestamp or INFINITY)
                     logger.debug(f"[{self._mint_prefix(self.token_info.mint)}] Event timestamp: {datetime.fromtimestamp(event_timestamp):%Y-%m-%d %H:%M:%S.%f}")
 
-                    # Reset both events to avoid processing stale events on next iteration
+                    # Reset events to avoid processing stale events on next iteration
                     if tracker:
                         tracker.price_update_event.clear()
                     self._time_tick_event.clear()
+                    if buy_result_available:
+                        self.buy_result_available_event.clear()
+                        # After buy result is available, no need to wait for it again
+                        buy_confirmation_running = False
+                    
+                    # Check for failed buy before processing exit conditions
+                    if self.position.buy_order and self.position.buy_order.state == OrderState.FAILED:
+                        # BUY failed and no sell was sent - exit monitoring and close position
+                        logger.error(
+                            f"[{self._mint_prefix(self.token_info.mint)}] Buy order failed, no sell was sent. Closing position."
+                        )
+                        # Close position similar to _handle_failed_buy()
+                        self.position.is_active = False
+                        self.position.exit_reason = ExitReason.FAILED_BUY
+                        # Calculate realized PnL for failed buy (loss from fees only)
+                        pnl_dict = self.position._get_pnl()
+                        self.position.realized_pnl_sol_decimal = pnl_dict["realized_pnl_sol_decimal"]
+                        self.position.realized_net_pnl_sol_decimal = pnl_dict["realized_net_pnl_sol_decimal"]
+
+                        # Update position in database
+                        if self.database_manager:
+                            try:
+                                await self.database_manager.update_position(self.position)
+                            except Exception as e:
+                                logger.exception(f"Failed to update position in database: {e}")
+                            
+                        if self.position.sell_order is None:
+                            return True  # Exit monitoring
+                        else:
+                            # BUY failed but sell was already sent - continue monitoring (sell will fail naturally)
+                            logger.warning(
+                                f"[{self._mint_prefix(self.token_info.mint)}] Buy order failed but sell was already sent. Continuing monitoring."
+                            )
                     
                     # Process the event
                     should_exit = await self._process_event(event_timestamp)
@@ -149,7 +212,10 @@ class PositionMonitor:
                         
                 except Exception:
                     logger.exception("Error in position monitoring event loop, continuing")
-            
+            logger.debug(
+                f"[{self._mint_prefix(self.token_info.mint)}] monitor() loop is ending"
+            )
+
         finally:
             # Cleanup
             if self._time_tick_task:
@@ -169,6 +235,11 @@ class PositionMonitor:
                 logger.exception(
                     f"[{self._mint_prefix(self.token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
                 )
+
+            logger.debug(
+                f"[{self._mint_prefix(self.token_info.mint)}] monitor() loop is finished"
+            )
+
 
     async def _time_tick_loop(self) -> None:
         """Background loop that emits time tick events at regular intervals."""
@@ -254,13 +325,13 @@ class PositionMonitor:
         
         # Update price change timestamp from trade tracker
         # The tracker tracks when price actually changes (only on reserve updates, not time ticks)
-        if self.position.max_no_price_change_time is not None and self.position.last_price_change_ts is not None:
+        if self.position.max_no_price_change_time is not None:
             tracker = self.token_listener.get_trade_tracker_by_mint(str(self.token_info.mint))
             if tracker:
                 tracker_timestamp = tracker.get_last_price_change_timestamp()
                 if tracker_timestamp is not None:
                     # Update position timestamp from tracker (only when tracker has valid timestamp)
-                    if self.position.last_price_change_ts < tracker_timestamp:
+                    if self.position.last_price_change_ts is None or self.position.last_price_change_ts < tracker_timestamp:
                         self.position.last_price_change_ts = tracker_timestamp
                         logger.debug(f"[{self._mint_prefix(self.token_info.mint)}] Updated last_price_change_ts from tracker: {tracker_timestamp}")
         
@@ -282,7 +353,7 @@ class PositionMonitor:
                 logger.exception(f"Failed to update position in database: {e}")
         
 
-        logger.info(f"[{self._mint_prefix(self.token_info.mint)}] Position: {self.position}")
+        logger.debug(f"[{self._mint_prefix(self.token_info.mint)}] Position: {self.position}")
 
         # Log current status
         pnl = self.position._get_pnl(current_price)
@@ -305,14 +376,24 @@ class PositionMonitor:
             pnl = self.position._get_pnl(current_price)
             logger.info(f"[{self._mint_prefix(self.token_info.mint)}] PNL: {pnl}")
             
-            # Execute sell
-            sell_result = await self.seller.execute(self.token_info, self.position)
+            # Execute sell using new flow: prepare_and_send_order then process_order
+            sell_order = await self.seller.prepare_and_send_order(self.token_info, self.position)
+            self.position.update_from_sell_order(sell_order)
+            # Update position in database before calling process_order()
+            if self.database_manager:
+                try:
+                    await self.database_manager.update_position(self.position)
+                except Exception as e:
+                    logger.exception(f"Failed to update position in database: {e}")
+            
+            # Process sell order (blocking)
+            sell_result = await self.seller.process_order(sell_order)
             logger.info(
                 f"[{self._mint_prefix(self.token_info.mint)}] Sell result: {sell_result}"
             )
             
             if sell_result.success:
-                exit_ts = (sell_result.block_time or int(event_timestamp)) * 1000
+                exit_ts = int(event_timestamp*1000)
                 self.position.exit_ts = exit_ts
                 # Close position with actual exit price
                 self.position.close_position(sell_result, exit_reason)
@@ -324,9 +405,9 @@ class PositionMonitor:
                 # Persist sell trade and update position
                 if self.database_manager:
                     try:
-                        # Update position in database
-                        await self.database_manager.update_position(self.position)
                         
+                        await self.database_manager.update_position(self.position)
+
                         # Insert sell trade
                         await self.database_manager.insert_trade(
                             trade_result=sell_result,
@@ -363,5 +444,10 @@ class PositionMonitor:
                 )
                 return True  # Exit monitoring on failure
         
+            try:
+                await self.database_manager.update_position(self.position)
+            except Exception as e:
+                logger.exception(f"Failed to update position in database: {e}")
+
         return False  # Continue monitoring
 

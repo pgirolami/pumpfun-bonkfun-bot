@@ -120,6 +120,7 @@ class Position:
     def create_from_token_info(
         cls,
         token_info: TokenInfo,
+        buy_amount: float,
         max_hold_time: int | None = None,
         max_no_price_change_time: int | None = None,
         trailing_stop_percentage: float | None = None,
@@ -153,6 +154,7 @@ class Position:
             position_id=position_id,
             mint=token_info.mint,
             platform=token_info.platform,
+            buy_amount=buy_amount,
             token_quantity_decimal=0.0,  # Will be updated from buy order
             total_token_swapin_amount_raw=0,  # Will be updated from buy order
             total_token_swapout_amount_raw=0,
@@ -182,17 +184,12 @@ class Position:
         self.is_active = True
         
         # Set expected values from order (these may differ from actual after confirmation)
-        if buy_order.token_price_sol is not None:
-            self.entry_net_price_decimal = buy_order.token_price_sol
         
         if buy_order.token_amount_raw is not None:
             # Convert raw token amount to decimal
             self.token_quantity_decimal = float(buy_order.token_amount_raw) / (10**TOKEN_DECIMALS)
             self.total_token_swapin_amount_raw = buy_order.token_amount_raw
         
-        # Store expected entry timestamp from order if available
-        if buy_order.block_ts is not None:
-            self.entry_ts = buy_order.block_ts * 1000  # Convert to milliseconds
 
         self._apply_exit_strategy_config(
             take_profit_percentage=take_profit_percentage,
@@ -212,110 +209,31 @@ class Position:
             sell_order: SellOrder with token amount to sell
         """
         self.sell_order = sell_order
+        self.is_active = False
 
-    @classmethod
-    def create_from_buy_result(
-        cls,
-        mint: Pubkey,
-        platform: Platform,
-        entry_net_price_decimal: float,
-        quantity: float,
-        token_swapin_amount_raw: int,
-        entry_ts: int,
-        transaction_fee_raw: int | None,
-        platform_fee_raw: int | None,
-        tip_fee_raw: int | None,
-        rent_exemption_amount_raw: int | None,
-        unattributed_sol_amount_raw: int | None,
-        exit_strategy: str,
-        buy_amount: float,
-        total_sol_swapout_amount_raw: int | None,
-        total_net_sol_swapout_amount_raw: int | None,
-        take_profit_percentage: float | None,
-        stop_loss_percentage: float | None,
-        trailing_stop_percentage: float | None,
-        max_hold_time: int | None,
-        max_no_price_change_time: int | None = None,
-        min_gain_percentage: float | None = None,
-        min_gain_time_window: int = 2,
-    ) -> "Position":
-        """Create a position from a successful buy transaction.
-
-        Args:
-            mint: Token mint address
-            platform: Trading platform
-        entry_net_price_decimal: Net price at which position was entered (from TradeResult.net_price_sol_decimal())
-        quantity: Quantity of tokens purchased (decimal)
-        token_swapin_amount_raw: Raw token amount purchased (integer)
-        entry_ts: Unix epoch milliseconds from block time (or current time if unavailable)
-        transaction_fee_raw: Transaction fee in lamports
-        platform_fee_raw: Platform fee in lamports
-        exit_strategy: Exit strategy from config
-        buy_amount: Intended SOL amount to invest
-        total_net_sol_swapout_amount_raw: Total SOL amount spent in lamports for the buy
-            take_profit_percentage: Take profit percentage (0.5 = 50% profit)
-            stop_loss_percentage: Stop loss percentage (0.2 = 20% loss)
-            trailing_stop_percentage: Trailing stop percentage
-            max_hold_time: Maximum hold time in seconds
-            max_no_price_change_time: Maximum time without price change in seconds
-            min_gain_percentage: Minimum gain percentage required within time window (0.1 = 10%)
-            min_gain_time_window: Time window in seconds to check for minimum gain (default: 2)
-
-        Returns:
-            Position instance
-        """
-        take_profit_price = None
-        if take_profit_percentage is not None:
-            take_profit_price = entry_net_price_decimal * (1 + take_profit_percentage)
-
-        stop_loss_price = None
-        if stop_loss_percentage is not None:
-            stop_loss_price = entry_net_price_decimal * (1 - stop_loss_percentage)
-
-        # Generate position_id
-        position_id = cls.generate_position_id(mint, platform, entry_ts)
+    def update_from_buy_result(self, buy_result: TradeResult,entry_ts:int) -> None:
+        # Update position fields from buy_result
+        self.total_token_swapin_amount_raw = buy_result.token_swap_amount_raw
+        self.token_quantity_decimal = buy_result.token_swap_amount_decimal()
         
-        result = cls(
-            position_id=position_id,
-            mint=mint,
-            platform=platform,
-            entry_net_price_decimal=entry_net_price_decimal,
-            token_quantity_decimal=quantity,
-            total_token_swapin_amount_raw=token_swapin_amount_raw,
-            total_token_swapout_amount_raw=0,  # Start at 0, accumulates from sells
-            entry_ts=entry_ts,  # Unix epoch milliseconds from block time
-            take_profit_price=take_profit_price,
-            stop_loss_price=stop_loss_price,
-            max_hold_time=max_hold_time,
-            max_no_price_change_time=max_no_price_change_time,
-            transaction_fee_raw=transaction_fee_raw,
-            platform_fee_raw=platform_fee_raw,
-            tip_fee_raw=tip_fee_raw,
-            rent_exemption_amount_raw=rent_exemption_amount_raw,
-            unattributed_sol_amount_raw=unattributed_sol_amount_raw,
-            trailing_stop_percentage=trailing_stop_percentage,
-            highest_price=entry_net_price_decimal,
-            #TODO review the following for replays
-            last_price_change_ts=time(),  # Initialize with current time and not block time because they are not in sync enough. 
-            min_gain_percentage=min_gain_percentage,
-            min_gain_time_window=min_gain_time_window,
-            buy_amount=buy_amount,
-            total_net_sol_swapout_amount_raw=total_net_sol_swapout_amount_raw,
-            total_net_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
-            total_sol_swapout_amount_raw=total_sol_swapout_amount_raw,
-            total_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
-        )
+        self.total_net_sol_swapout_amount_raw = buy_result.net_sol_swap_amount_raw
+        self.total_sol_swapout_amount_raw = buy_result.sol_swap_amount_raw        
+
+        self.entry_ts = entry_ts
+
+        self.exit_reason=buy_result.
         
-        # Apply exit strategy configuration to override raw percentages
-        result._apply_exit_strategy_config(
-            take_profit_percentage=take_profit_percentage,
-            stop_loss_percentage=stop_loss_percentage,
-            trailing_stop_percentage=trailing_stop_percentage,
-            max_hold_time=max_hold_time,
-            max_no_price_change_time=max_no_price_change_time,
-        )
+        self.entry_net_price_decimal = buy_result.net_price_sol_decimal()
+
+        self.transaction_fee_raw = buy_result.transaction_fee_raw
+        self.platform_fee_raw = buy_result.platform_fee_raw
+        self.tip_fee_raw = buy_result.tip_fee_raw
+        self.rent_exemption_amount_raw = buy_result.rent_exemption_amount_raw
+        self.unattributed_sol_amount_raw = buy_result.unattributed_sol_amount_raw
+
+#    def update_from_sell_result(self, sell_result: TradeResult,entry_ts:int) -> None:
         
-        return result
+
 
     def _apply_exit_strategy_config(
         self,
@@ -383,10 +301,11 @@ class Position:
 
         # Check max hold time
         if self.max_hold_time:
+            start_time = self.buy_order.trade_start_time
             # Max hold time is based on entry time (total time position has been open)
-            elapsed_time = (current_time_ms - self.entry_ts) / 1000  # Convert to seconds
+            elapsed_time = (current_time_ms - start_time) / 1000  # Convert to seconds
             if elapsed_time >= self.max_hold_time:
-#                logger.info(f"elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time}")
+                logger.info(f"[{str(self.mint)[:8]}] elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time} (start_time={datetime.fromtimestamp(start_time):%Y-%m-%d %H:%M:%S.%f})")
                 return True, ExitReason.MAX_HOLD_TIME
 #            logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
 
@@ -519,7 +438,7 @@ class Position:
             }
 
         # Handle case where buy hasn't confirmed yet (pending position)
-        if self.buy_order is None or self.buy_order.state == OrderState.SENT:
+        if self.buy_order is None or self.buy_order.state != OrderState.CONFIRMED:
             logger.info(f"Position is pending - return zero PnL with available fee information")
             # Position is pending - return zero PnL with available fee information
             transaction_fee_raw = int(self.transaction_fee_raw or 0)
@@ -621,16 +540,16 @@ class Position:
         sol_raw_str = f"{-self.total_net_sol_swapout_amount_raw}" if self.total_net_sol_swapout_amount_raw is not None else "None"
         last_price_change_ts_str = f"{datetime.fromtimestamp(self.last_price_change_ts):%Y-%m-%d %H:%M:%S.%f}" if self.last_price_change_ts is not None else "None"
         
-        # Buy order info
-        buy_order_str = "None"
-        if self.buy_order:
-            buy_tx = self.buy_order.tx_signature[:8] + "..." if self.buy_order.tx_signature else "None"
-            buy_order_str = f"{self.buy_order.state.value}(tx={buy_tx})"
+        # # Buy order info
+        # buy_order_str = "None"
+        # if self.buy_order:
+        #     buy_tx = self.buy_order.tx_signature[:8] + "..." if self.buy_order.tx_signature else "None"
+        #     buy_order_str = f"{self.buy_order.state.value}(tx={buy_tx})"
         
-        # Sell order info
-        sell_order_str = "None"
-        if self.sell_order:
-            sell_tx = self.sell_order.tx_signature[:8] + "..." if self.sell_order.tx_signature else "None"
-            sell_order_str = f"{self.sell_order.state.value}(tx={sell_tx})"
+        # # Sell order info
+        # sell_order_str = "None"
+        # if self.sell_order:
+        #     sell_tx = self.sell_order.tx_signature[:8] + "..." if self.sell_order.tx_signature else "None"
+        #     sell_order_str = f"{self.sell_order.state.value}(tx={sell_tx})"
         
-        return f"Position({str(self.mint)}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} for net sol={sol_str} ({sol_raw_str}) - {status}) - last_price_change_ts={last_price_change_ts_str} - buy_order={buy_order_str} sell_order={sell_order_str}"
+        return f"Position({str(self.mint)}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} for net sol={sol_str} ({sol_raw_str}) - {status}) - last_price_change_ts={last_price_change_ts_str}" # - buy_order={buy_order_str} sell_order={sell_order_str}"

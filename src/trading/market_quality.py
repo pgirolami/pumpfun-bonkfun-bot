@@ -8,6 +8,7 @@ from time import time
 from core.pubkeys import LAMPORTS_PER_SOL
 from database.manager import DatabaseManager
 from database.models import PositionPnLData
+from solders.pubkey import Pubkey
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -253,7 +254,7 @@ class MarketQualityController:
         except Exception as e:
             logger.exception(f"Failed to update market quality score: {e}")
 
-    def should_buy(self) -> bool:
+    def should_buy(self, mint: Pubkey) -> bool:
         """Determine if bot should buy based on market quality.
 
         Returns:
@@ -262,7 +263,7 @@ class MarketQualityController:
         # Exploration: random chance to buy regardless of quality
         if random.random() < self.exploration_probability:
             logger.info(
-                f"Buy decision: EXPLORATION (prob: {self.exploration_probability:.2%}, "
+                f"[{str(mint)[:8]}] Buy decision: EXPLORATION (prob: {self.exploration_probability:.2%}, "
                 f"cached_quality: {self._cached_quality_score:.2f})"
             )
             return True
@@ -273,7 +274,7 @@ class MarketQualityController:
 
         decision_type = "EXPLOITATION (buy)" if should_buy else "EXPLOITATION (skip)"
         logger.info(
-            f"Buy decision: {decision_type} "
+            f"[{str(mint)[:8]}] Buy decision: {decision_type} "
             f"(quality_score: {self._cached_quality_score:.2f}, "
             f"buy_probability: {buy_probability:.2%})"
         )
