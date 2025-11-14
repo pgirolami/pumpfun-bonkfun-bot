@@ -231,7 +231,6 @@ async def start_bot(config_path: str):
             min_gain_percentage=cfg.get("trade", {}).get("min_gain_percentage"),
             min_gain_time_window=cfg.get("trade", {}).get("min_gain_time_window", 2),
             # Trade tracking configuration
-            enable_trade_tracking=cfg.get("trade", {}).get("enable_trade_tracking", False),
             trade_staleness_threshold=cfg.get("trade", {}).get("trade_staleness_threshold", 30.0),
             # Market quality configuration
             market_quality_config=cfg.get("trade", {}).get("market_quality"),

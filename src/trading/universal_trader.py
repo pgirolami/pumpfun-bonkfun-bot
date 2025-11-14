@@ -96,7 +96,6 @@ class UniversalTrader:
         min_gain_percentage: float | None = None,
         min_gain_time_window: int = 2,
         # Trade tracking configuration
-        enable_trade_tracking: bool = False,
         trade_staleness_threshold: float = 30.0,
         # Market quality configuration
         market_quality_config: dict | None = None,
@@ -157,7 +156,6 @@ class UniversalTrader:
             dry_run_wait_time = testing.get("dry_run_wait_time_seconds", 0.5)
 
         # Trade tracking configuration
-        self.enable_trade_tracking = enable_trade_tracking
         self.trade_staleness_threshold = trade_staleness_threshold
 
         # Convert offset_wallets to set for efficient lookup, but only if dry_run is enabled
@@ -168,27 +166,24 @@ class UniversalTrader:
                 "Excluded wallet offsets will only be active in dry_run mode."
             )
 
-        # Initialize the appropriate listener only if trade tracking is enabled
-        if self.enable_trade_tracking:
-            logger.info(f"Creating token listener for trade tracking (type: {listener_type})")
-            self.token_listener = ListenerFactory.create_listener(
-                listener_type=listener_type,
-                wss_endpoint=rpc_config["wss_endpoint"],
-                geyser_endpoint=geyser_endpoint,
-                geyser_api_token=geyser_api_token,
-                geyser_auth_type=geyser_auth_type,
-                pumpportal_url=pumpportal_url,
-                platforms=[self.platform],  # Only listen for our platform
-                excluded_wallets=excluded_wallets,
-                database_manager=self.database_manager,
-            )
-            if self.token_listener is None:
-                logger.error(f"Failed to create token listener for type: {listener_type}")
-            else:
-                logger.info(f"Successfully created token listener: {type(self.token_listener).__name__}")
+        # Initialize token listener for trade tracking
+        logger.info(f"Creating token listener for trade tracking (type: {listener_type})")
+        self.token_listener = ListenerFactory.create_listener(
+            listener_type=listener_type,
+            wss_endpoint=rpc_config["wss_endpoint"],
+            geyser_endpoint=geyser_endpoint,
+            geyser_api_token=geyser_api_token,
+            geyser_auth_type=geyser_auth_type,
+            pumpportal_url=pumpportal_url,
+            platforms=[self.platform],  # Only listen for our platform
+            excluded_wallets=excluded_wallets,
+            database_manager=self.database_manager,
+        )
+        if self.token_listener is None:
+            logger.error(f"Failed to create token listener for type: {listener_type}")
+            raise RuntimeError(f"Failed to create token listener for type: {listener_type}")
         else:
-            self.token_listener = None
-            logger.info("Trade tracking disabled, no token listener created")
+            logger.info(f"Successfully created token listener: {type(self.token_listener).__name__}")
 
         # Market quality configuration
         if market_quality_config and market_quality_config.get("enabled", False):
@@ -233,7 +228,7 @@ class UniversalTrader:
         # Get platform-specific implementations (after token_listener is created)
         self.platform_implementations = get_platform_implementations(
             self.platform, self.solana_client, 
-            listener=self.token_listener if self.enable_trade_tracking else None,
+            listener=self.token_listener,
             trade_staleness_threshold=self.trade_staleness_threshold
         )
 
@@ -727,22 +722,17 @@ class UniversalTrader:
                     )
                     return
 
-            # Subscribe to trade tracking if enabled (before buying)
-            if self.enable_trade_tracking:
-                # Validate that we have virtual reserves for trade tracking
-                if token_info.virtual_sol_reserves is None or token_info.virtual_token_reserves is None:
-                    logger.error(f"Cannot subscribe to trade tracking: missing virtual reserves for {token_info.symbol}")
-                else:
-                    try:
-                        # Subscribe to trade tracking
-                        await self.token_listener.subscribe_token_trades(token_info)
-                        logger.debug(
-                            f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
-                        )
-                    except Exception as e:
-                        logger.exception(
-                            f"[{self._mint_prefix(token_info.mint)}] Failed to subscribe to trade tracking: {e}"
-                        )
+            try:
+                # Subscribe to trade tracking
+                await self.token_listener.subscribe_token_trades(token_info)
+                logger.debug(
+                    f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
+                )
+            except Exception as e:
+                logger.exception(
+                    f"[{self._mint_prefix(token_info.mint)}] Skipping buy -Failed to subscribe to trade tracking: {e}"
+                )
+                return
 
             # Buy token
             logger.info(
@@ -905,8 +895,8 @@ class UniversalTrader:
         )
 
 
-        # Unsubscribe from trade tracking if enabled (buy failed)
-        if self.enable_trade_tracking and self.token_listener:
+        # Unsubscribe from trade tracking (buy failed)
+        if self.token_listener:
             try:
                 await self.token_listener.unsubscribe_token_trades(mint=str(token_info.mint))
                 logger.info(
@@ -960,9 +950,8 @@ class UniversalTrader:
             seller=self.seller,
             price_check_interval=self.price_check_interval,
             database_manager=self.database_manager,
-            token_listener=self.token_listener if self.enable_trade_tracking else None,
+            token_listener=self.token_listener,
             run_id=self.run_id,
-            enable_trade_tracking=self.enable_trade_tracking,
             enable_volatility_adjustment=self.enable_volatility_adjustment,
             volatility_window_seconds=self.volatility_window_seconds,
             volatility_tp_adjustments=self.volatility_tp_adjustments,
@@ -1047,12 +1036,11 @@ class UniversalTrader:
                 max_no_price_change_time=self.max_no_price_change_time,
             )
             
-            # Subscribe to trade tracking for resumed positions if enabled
-            if (self.enable_trade_tracking):
-                await self.token_listener.subscribe_token_trades(token_info)
-                logger.debug(
-                    f"[{self._mint_prefix(position.mint)}] Subscribed to trade tracking for resumed position {token_info.symbol}"
-                )
+            # Subscribe to trade tracking for resumed positions
+            await self.token_listener.subscribe_token_trades(token_info)
+            logger.debug(
+                f"[{self._mint_prefix(position.mint)}] Subscribed to trade tracking for resumed position {token_info.symbol}"
+            )
             
             # Track as active and start monitoring task
             task_key = str(position.mint)
@@ -1075,8 +1063,8 @@ class UniversalTrader:
         try:
             await self._monitor_position_until_exit(token_info, position)
         finally:
-            # Unsubscribe from trade tracking if enabled
-            if self.enable_trade_tracking and self.token_listener:
+            # Unsubscribe from trade tracking
+            if self.token_listener:
                 try:
                     await self.token_listener.unsubscribe_token_trades(mint=str(position.mint))
                     logger.debug(f"[{self._mint_prefix(position.mint)}] Unsubscribed from trade tracking for resumed position")

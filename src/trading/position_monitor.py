@@ -32,11 +32,10 @@ class PositionMonitor:
         curve_manager: CurveManager,
         seller: PlatformAwareSeller,
         price_check_interval: int,
+        token_listener: BaseTokenListener,
         # Optional dependencies
         database_manager: DatabaseManager | None = None,
-        token_listener: BaseTokenListener | None = None,  # BaseTokenListener
         run_id: str | None = None,
-        enable_trade_tracking: bool = False,
         enable_volatility_adjustment: bool = False,
         volatility_window_seconds: float = 5.0,
         volatility_tp_adjustments: dict | None = None,
@@ -51,10 +50,9 @@ class PositionMonitor:
             curve_manager: Curve manager for price calculations
             seller: Seller instance for executing sells
             price_check_interval: Interval in seconds for time tick events
+            token_listener: Token listener for trade tracking
             database_manager: Optional database manager
-            token_listener: Optional token listener for trade tracking
             run_id: Optional run ID for database operations
-            enable_trade_tracking: Whether trade tracking is enabled
             enable_volatility_adjustment: Whether volatility adjustment is enabled
             volatility_window_seconds: Volatility calculation window
             volatility_tp_adjustments: Volatility-based TP adjustments
@@ -70,7 +68,6 @@ class PositionMonitor:
         self.database_manager = database_manager
         self.token_listener = token_listener
         self.run_id = run_id
-        self.enable_trade_tracking = enable_trade_tracking
         self.enable_volatility_adjustment = enable_volatility_adjustment
         self.volatility_window_seconds = volatility_window_seconds
         self.volatility_tp_adjustments = volatility_tp_adjustments or {}
@@ -94,10 +91,8 @@ class PositionMonitor:
         logger.debug(
             f"[{self._mint_prefix(self.token_info.mint)}] Starting event-driven position monitoring (check interval: {self.price_check_interval}s)"
         )
-        # Get trade tracker if available
-        tracker = None
-        if self.enable_trade_tracking and self.token_listener:
-            tracker = self.token_listener.get_trade_tracker_by_mint(str(self.token_info.mint))    
+        # Get trade tracker
+        tracker = self.token_listener.get_trade_tracker_by_mint(str(self.token_info.mint))    
         #Do not initialize position's last price to tracker timestamp because our time-based exit thresholds are from the time of the buy
         
         # Start time tick background task
@@ -165,16 +160,15 @@ class PositionMonitor:
                     pass
             
             # Unsubscribe from trade tracking
-            if self.enable_trade_tracking and self.token_listener:
-                try:
-                    await self.token_listener.unsubscribe_token_trades(mint=str(self.token_info.mint))
-                    logger.debug(
-                        f"[{self._mint_prefix(self.token_info.mint)}] Unsubscribed from trade tracking after position monitoring ended"
-                    )
-                except Exception as e:
-                    logger.exception(
-                        f"[{self._mint_prefix(self.token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
-                    )
+            try:
+                await self.token_listener.unsubscribe_token_trades(mint=str(self.token_info.mint))
+                logger.debug(
+                    f"[{self._mint_prefix(self.token_info.mint)}] Unsubscribed from trade tracking after position monitoring ended"
+                )
+            except Exception as e:
+                logger.exception(
+                    f"[{self._mint_prefix(self.token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
+                )
 
     async def _time_tick_loop(self) -> None:
         """Background loop that emits time tick events at regular intervals."""
@@ -258,28 +252,26 @@ class PositionMonitor:
             self.position.highest_price = current_price
             logger.debug(f"[{self._mint_prefix(self.token_info.mint)}] New highest price: {current_price} SOL")
         
-        # Update price change timestamp from trade tracker (if available)
+        # Update price change timestamp from trade tracker
         # The tracker tracks when price actually changes (only on reserve updates, not time ticks)
         if self.position.max_no_price_change_time is not None:
-            if self.enable_trade_tracking and self.token_listener:
-                tracker = self.token_listener.get_trade_tracker_by_mint(str(self.token_info.mint))
-                if tracker:
-                    tracker_timestamp = tracker.get_last_price_change_timestamp()
-                    if tracker_timestamp is not None:
-                        # Update position timestamp from tracker (only when tracker has valid timestamp)
-                        if self.position.last_price_change_ts < tracker_timestamp:
-                            self.position.last_price_change_ts = tracker_timestamp
-                            logger.debug(f"[{self._mint_prefix(self.token_info.mint)}] Updated last_price_change_ts from tracker: {tracker_timestamp}")
-        
-        # Update creator tracking from trade tracker if available
-        if self.enable_trade_tracking and self.token_listener:
             tracker = self.token_listener.get_trade_tracker_by_mint(str(self.token_info.mint))
             if tracker:
-                creator_swaps = tracker.get_creator_swaps()
-                self.position.update_creator_tracking(
-                    creator_swaps[0], 
-                    creator_swaps[1]
-                )
+                tracker_timestamp = tracker.get_last_price_change_timestamp()
+                if tracker_timestamp is not None:
+                    # Update position timestamp from tracker (only when tracker has valid timestamp)
+                    if self.position.last_price_change_ts < tracker_timestamp:
+                        self.position.last_price_change_ts = tracker_timestamp
+                        logger.debug(f"[{self._mint_prefix(self.token_info.mint)}] Updated last_price_change_ts from tracker: {tracker_timestamp}")
+        
+        # Update creator tracking from trade tracker
+        tracker = self.token_listener.get_trade_tracker_by_mint(str(self.token_info.mint))
+        if tracker:
+            creator_swaps = tracker.get_creator_swaps()
+            self.position.update_creator_tracking(
+                creator_swaps[0], 
+                creator_swaps[1]
+            )
         
         # Update position in database on every event
         if self.database_manager:
