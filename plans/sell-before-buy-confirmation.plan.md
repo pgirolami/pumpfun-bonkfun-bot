@@ -10,11 +10,9 @@
 - **Risk**: Network conditions (latency, different validator paths) could cause SELL to arrive/process before BUY, causing SELL to fail with "insufficient funds" or "account not found"
 - **No guarantee**: There's no Solana mechanism to ensure BUY processes before SELL - we're relying on implicit ordering through send timing and blockhash usage
 
-2. **Blockhash Reuse**: This is NOT a problem. Solana only rejects transactions as "duplicates" if they have the same signature (same signer + same blockhash + same transaction content). Since BUY and SELL have different instructions and different accounts, they will have different signatures even with the same blockhash. We can safely reuse the same blockhash or use a fresh one.
+2. **Blockhash Reuse**: This is NOT a problem. Solana only rejects transactions as "duplicates" if they have the same signature (same signer + same blockhash + same transaction content). Since BUY and SELL have different instructions and different accounts, they will have different signatures even with the same blockhash. We will reuse the cached blockhash for both transactions.
 
-3. **Next Block Processing**: we will get a fresh blockhash before selling - this naturally targets the next block since Solana blocks are ~400ms
-
-4. **Token Amount Calculation**: The token amount is determined in  `_prepare_buy_order()` based on bonding curve state. If other trades occur between BUY and SELL, the price changes, but our token amount is fixed from the BUY. At the moment, SELLs liquidiate the position so we know how many tokens to sell.
+3. **Token Amount Calculation**: For pump.fun, the token amount is fixed in the buy instruction (unlike Raydium where it's calculated dynamically). The token amount is determined in `_prepare_buy_order()` based on bonding curve state at that moment. If other trades occur between BUY and SELL, the price changes, but our token amount is fixed from the BUY. At the moment, SELLs liquidate the position so we know how many tokens to sell from the buy order.
 
 4. **Position Tracking**: Currently positions are created after BUY confirmation. We need to track "pending" positions with expected token amounts before confirmation.
 
@@ -41,6 +39,7 @@
 - Make the `_get_pnl()` method and other similar methods compatible with the fact that some fields are still None before the buy is confirmed
 - Add a `Position.create_from_token_info(token_info:TokenInfo)` method to be created and that will populate as many fields as possible. `active` should remain False
 - Add a `Position.update_from_buy_order(buy_order:BuyOrder)` method that will set the fields that can be. It will most likely be more or less the existing `create_from_buy_result()` method
+- Add a `Position.update_from_sell_order(sell_order:SellOrder)` method that will store the `sell_order` in the position and update various fields (similar to how position is updated from sell results today)
 
 ### 2. Store position's orders tracking in database (Optional for now)
 
@@ -56,45 +55,66 @@ The `schema.sql` file should be updated to include these two NULLable columns an
 **File**: `src/trading/platform_aware.py` - `PlatformAwareBuyer.execute()`
 
 - The `execute()` method needs to be split into two methods:
-    - a `prepare_and_send_order()`method that contains the beginning of `execute()` without wait for confirmation before returning. It should return the `BuyOrder` after setting its `buy_order.state` to `SENT` to indicate we were able to send the transaction.
-    - a `process_order(buy_order:BuyOrder)` that contains the rest of the former `execute()` method and returns the same `TradeResult` as today. The balance changes will be obtained from the Transaction object returned by Solana so TokenInfo doesn't need to be passed as a parameter to the method. The state of the order will be set to `FAILED` or `CONFIRMED` based on what happened.
+    - a `prepare_and_send_order(token_info: TokenInfo)` method that contains the beginning of `execute()` without wait for confirmation before returning. It should return the `BuyOrder` after setting its `buy_order.state` to `SENT` to indicate we were able to send the transaction.
+    - a `process_order(buy_order: BuyOrder)` that contains the rest of the former `execute()` method and returns the same `TradeResult` as today. The balance changes will be obtained from the Transaction object returned by Solana. TokenInfo is available from `buy_order.token_info`, so it doesn't need to be passed as a separate parameter. The state of the order will be set to `FAILED` or `CONFIRMED` based on what happened.
 
 **File**: `src/trading/platform_aware.py` - `PlatformAwareSeller.execute()`
-- Split the `execute()` method as we did in PlatformAwareBuyer(), using SellOrder objects instead of BuyOrder
+- Split the `execute()` method as we did in PlatformAwareBuyer(), using SellOrder objects instead of BuyOrder:
+    - `prepare_and_send_order(token_info: TokenInfo, position: Position)` - prepares and sends sell order, returns `SellOrder` with state `SENT`
+    - `process_order(sell_order: SellOrder)` - confirms and processes sell order, returns `TradeResult`. TokenInfo is available from `sell_order.token_info`.
 
 **File**: `src/trading/universal_trader.py` - `_handle_token()`
 
-- When token is detected: Create the position by calling the `Position.create_from_token_info(token_info:TokenInfo)` method 
-- If the decision is made to buy the token:
-    - insert the position into the database as is
-    - Call `buyer.prepare_and_send_order()` to send the BUY order then
-        - call the position's `update_from_buy_order(buy_order:BuyOrder)` which will set the position's `buy_order`
-        - update position in database
-        - no changes to creating the position monitoring and delegating
+- When token is detected and decision is made to buy the token:
+    - Create the position by calling `Position.create_from_token_info(token_info: TokenInfo)` method (this creates a minimal position with `is_active=False`)
+    - Insert the position into the database
+    - Call `buyer.prepare_and_send_order(token_info)` to send the BUY order, which returns a `BuyOrder` with state `SENT`
+    - Call the position's `update_from_buy_order(buy_order: BuyOrder)` which will set the position's `buy_order` field and other fields
+    - Update position in database
+    - Create the `PositionMonitor` instance (needed for background BUY confirmation task)
+    - Start position monitoring as a background task (don't await it, don't wait for BUY confirmation)
+    - Start a background task to confirm the BUY transaction (calls `buyer.process_order(buy_order)`, passes `PositionMonitor` instance)
 
-**File**: `src/trading/universal_trader.py` - `_handle_time_based_exit()`
-    - remove this method and everything related to only that method
+**File**: `src/trading/position_monitor.py` - `__init__()`
 
-**File**: `src/trading/position_monitor.py - monitor()`
+    - Add a `buy_result_available_event: asyncio.Event` field that will be set when the BUY transaction result is available (success or failure)
+    - This event will be set by the background BUY confirmation task in `universal_trader.py`
 
-    - update the code to replace the call to `execute()` so it 
-        - calls prepare_and_send_order()
-        - stores the sell order in the position and persist it to the database
-        - calls process_order() immediately & in a blocking fashion
+**File**: `src/trading/position_monitor.py` - `monitor()`
 
-    - when entering that function, it should `asyncio.create_task()` a  background task to confirm the transaction in the background using the `process_order(buy_order:BuyOrder)` blocking method
-        -  If BUY confirms:
-            - Update position as we do today, in particular with actual values from `balance_changes` . You should be just moving code here, not writing entirely new code
-            - update position in database
-        - If BUY fails:
-            - if a sell wasn't sent (ie. there is no sell_order on the position) then the `monitor()` loop should exit and close the position in a way similar to universal_tradeer._handle_failed_buy()` (in fact you should probably just move the code)
-            - if a sell was sent (= position.sell_order is not None)
-                - if the sell order's state is still set to `SENT` then we have nothing to do because the position will close once the monitor() loop runs beyond the sell confirmation call (it blocks on that call)
-                - the only other case if for the sell to be confirmed to fail in which case, it will be logged as usual and the position will be closed as it is today 
-        - in both cases, this should trigger a `_process_event()` call because it may trigger a sell. It does not matter if the confirmation happens before or after a sell.
-    - The loop in `monitor()` continues to work as currently and can trigger a sell based on a variety of criteria: we've just made sure it can happen before the buy confirms. For example, the time-based exit will be done through the `min_gain_time_window` : I can just set the min_gain to be 1000 and the window to be 0.5 to sell 500ms after the buy
-        - We do not need to track the SELL was sent before BUY confirmed because the SELL cannot confirm successfully before the BUY confirms
+    - When entering `monitor()`, check if `position.buy_order` exists and if its state is `SENT`:
+        - If so, the background BUY confirmation task is already running (started in `_handle_token()`)
+        - The background task will update the position when BUY confirms/fails
+    - The monitoring loop should wait for three types of events:
+        - Trade events (price updates from tracker)
+        - Time tick events (periodic price checks)
+        - Buy result available event (`buy_result_available_event`) - when BUY transaction result is available (success or failure)
+    - When any of these events fire, process the event and check exit conditions:
+        - **Before checking exit conditions or sending a sell**, check if `position.buy_order.state == OrderState.FAILED`:
+            - If BUY failed and no sell was sent (`position.sell_order is None`), exit the monitoring loop and close the position (similar to `universal_trader._handle_failed_buy()`)
+            - If BUY failed but sell was already sent, continue monitoring (sell will fail naturally)
+    - When exit condition is met:
+        - Call `seller.prepare_and_send_order(token_info, position)` to send the SELL order, which returns a `SellOrder` with state `SENT`
+        - Call `update_from_sell_order(sell_order: SellOrder)` which will store the `sell_order` in the position (`position.sell_order = sell_order`) and update various fields (as is done today already)
+        - Update position in database before calling `process_order()`
+        - Call `seller.process_order(sell_order)` immediately in a blocking fashion
+        - Handle sell result as today (close position, update database, etc.)
+    - The sell can be sent before BUY confirms (when exit conditions are met)
     - When SELL confirms, the code path stays exactly the same as it is today
+
+**File**: `src/trading/universal_trader.py` - Background BUY confirmation task
+
+    - This background task (created in `_handle_token()`) calls `buyer.process_order(buy_order)` and has access to the `PositionMonitor` instance:
+            - If BUY confirms:
+                - Update position with actual values from `balance_changes` (move code from current `_handle_successful_buy()`)
+                - Set `buy_order.state = OrderState.CONFIRMED`
+                - Update position in database
+            - If BUY fails:
+                - Set `buy_order.state = OrderState.FAILED`
+                - Update position in database
+                - The `monitor()` loop will detect this and exit appropriately
+            - In both cases (success or failure), set `position_monitor.buy_result_available_event.set()` to signal that BUY processing is complete and result is available
+
 
 ### 4. Keeping within max active positions
 
@@ -109,14 +129,26 @@ The `schema.sql` file should be updated to include these two NULLable columns an
 2. `src/trading/platform_aware.py` - Return BuyOrder earlier in flow
 3. `src/trading/position.py` - Support pending/expected positions
 4. `src/trading/trade_order.py` - Ensure BuyOrder contains all needed data
-5. `src/core/client.py` - Ensure fresh blockhash usage
+5. `src/trading/position_monitor.py` - Add buy_result_available_event and handle pre-confirmation sells
+
+## Logging and Monitoring
+
+- Log when SELL is sent before BUY confirmation (for tracking and debugging)
+- Track success rate of pre-confirmation sells
+- Log order state transitions (SENT → CONFIRMED/FAILED)
+- Monitor transaction ordering in Solana explorer to verify BUY processes before SELL
 
 ## Testing Considerations
 
 - Test with extreme fast mode (no price checks)
 - Test with normal mode (price checks)
-- Test BUY failure scenarios
+- Test BUY failure scenarios:
+    - BUY fails before SELL is sent → position should close without selling
+    - BUY fails after SELL is sent → SELL should fail naturally, position closes
 - Test network delays and reordering
 - Test multiple simultaneous tokens
-- Verify token amounts match between BUY and SELL
+- Verify token amounts match between BUY and SELL (token amount is fixed in pump.fun buy instruction)
 - Monitor transaction ordering in Solana explorer
+- Test that SELL cannot confirm successfully before BUY confirms
+- Verify position state transitions (pending → active → closed)
+- Test database persistence of buy_order and sell_order fields

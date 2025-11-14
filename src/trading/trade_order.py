@@ -2,7 +2,17 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from interfaces.core import TokenInfo
+
+
+class OrderState(Enum):
+    """Order execution state."""
+    
+    UNSENT = "unsent"  # Transaction has not been sent
+    SENT = "sent"  # Transaction has been sent
+    CONFIRMED = "confirmed"  # Transaction was confirmed successfully
+    FAILED = "failed"  # Transaction failed
 
 
 @dataclass
@@ -11,6 +21,9 @@ class Order(ABC):
     
     # Identity
     token_info: TokenInfo  # Contains mint, symbol, platform
+    
+    # Order state
+    state: OrderState = OrderState.UNSENT  # Execution state of the order
     
     # Price information (calculated)
     token_price_sol: float | None = None

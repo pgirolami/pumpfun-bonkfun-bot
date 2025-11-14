@@ -725,6 +725,24 @@ class UniversalTrader:
                 )
                 return
 
+            # Create position before buy (will be updated when buy confirms)
+            position = Position.create_from_token_info(
+                token_info=token_info,
+                max_hold_time=self.max_hold_time,
+                max_no_price_change_time=self.max_no_price_change_time,
+                trailing_stop_percentage=self.trailing_stop_percentage,
+                min_gain_percentage=self.min_gain_percentage,
+                min_gain_time_window=self.min_gain_time_window,
+            )
+            if self.database_manager:
+                try:
+                    # Insert position
+                    await self.database_manager.insert_position(position)
+                    logger.debug("Persisted position to database")
+                except Exception as e:
+                    logger.exception(f"Failed to persist position to database: {e}")
+
+
             # Buy token
             logger.info(
                 f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} ({str(token_info.mint)})on {token_info.platform.value}..."
@@ -775,7 +793,6 @@ class UniversalTrader:
                     total_token_swapout_amount_raw=None,  # No tokens acquired
                     entry_ts=entry_ts,
                     exit_ts=entry_ts,   #yes, = entry_ts
-                    exit_strategy="trailing",
                     is_active=False,  # Mark as inactive
                     exit_reason=ExitReason.FAILED_BUY,
                     transaction_fee_raw=buy_result.transaction_fee_raw,  # Still incurred fees
@@ -1013,7 +1030,6 @@ class UniversalTrader:
 
             # Apply current exit configuration to the loaded position
             position._apply_exit_strategy_config(
-                exit_strategy="trailing",
                 take_profit_percentage=self.take_profit_percentage,
                 stop_loss_percentage=self.stop_loss_percentage,
                 trailing_stop_percentage=self.trailing_stop_percentage,

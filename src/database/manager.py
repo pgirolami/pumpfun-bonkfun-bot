@@ -138,12 +138,12 @@ class DatabaseManager:
                 """
                 INSERT INTO positions 
                 (id, mint, platform, entry_net_price_decimal, token_decimals, total_token_swapin_amount_raw,
-                 total_token_swapout_amount_raw, entry_ts, exit_strategy, highest_price, max_no_price_change_time, last_price_change_ts, is_active,
+                 total_token_swapout_amount_raw, entry_ts, highest_price, max_no_price_change_time, last_price_change_ts, is_active,
                  exit_reason, exit_net_price_decimal, exit_ts, transaction_fee_raw, platform_fee_raw, tip_fee_raw,
                  rent_exemption_amount_raw, unattributed_sol_amount_raw,
                  realized_pnl_sol_decimal, realized_net_pnl_sol_decimal, buy_amount, total_net_sol_swapout_amount_raw, total_net_sol_swapin_amount_raw,
                  total_sol_swapout_amount_raw, total_sol_swapin_amount_raw, created_ts, updated_ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )

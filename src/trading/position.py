@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING
 import hashlib
 
 from solders.pubkey import Pubkey
-from interfaces.core import Platform
+from interfaces.core import Platform, TokenInfo
 from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_DECIMALS
 from utils.logger import get_logger
 
-if TYPE_CHECKING:
-    from trading.base import TradeResult
+from trading.base import TradeResult
+from trading.trade_order import BuyOrder, OrderState, SellOrder
 
 logger = get_logger(__name__)
 
@@ -45,12 +45,11 @@ class Position:
     platform: Platform
 
     # Position details
-    entry_net_price_decimal: float  # Net price from TradeResult.net_price_sol_decimal()
-    token_quantity_decimal: float  # Renamed from quantity, kept for business logic
-    total_token_swapin_amount_raw: int  # Total tokens bought
-    total_token_swapout_amount_raw: int  # Total tokens sold (accumulation)
-    entry_ts: int  # Unix epoch milliseconds
-    exit_strategy: str  # New field from config
+    entry_net_price_decimal: float | None = None  # Net price from TradeResult.net_price_sol_decimal()
+    token_quantity_decimal: float = 0.0  # Renamed from quantity, kept for business logic
+    total_token_swapin_amount_raw: int = 0  # Total tokens bought
+    total_token_swapout_amount_raw: int = 0  # Total tokens sold (accumulation)
+    entry_ts: int = 0  # Unix epoch milliseconds
 
     # Exit conditions (kept for business logic, not persisted to DB)
     take_profit_price: float | None = None
@@ -73,6 +72,10 @@ class Position:
     creator_token_swap_in: int = 0    # Tokens bought by creator
     creator_token_swap_out: int = 0    # Tokens sold by creator (negative)
 
+    # Order tracking
+    buy_order: BuyOrder | None = None  # BUY order tracking
+    sell_order: SellOrder | None = None  # SELL order tracking
+    
     # Status
     is_active: bool = True
     exit_reason: ExitReason | None = None
@@ -112,6 +115,102 @@ class Position:
         """
         data = f"{mint!s}_{platform.value}_{entry_ts}"
         return hashlib.sha256(data.encode()).hexdigest()
+
+    @classmethod
+    def create_from_token_info(
+        cls,
+        token_info: TokenInfo,
+        max_hold_time: int | None = None,
+        max_no_price_change_time: int | None = None,
+        trailing_stop_percentage: float | None = None,
+        min_gain_percentage: float | None = None,
+        min_gain_time_window: int = 2,
+    ) -> "Position":
+        """Create a minimal position from token info (before buy confirmation).
+        
+        This creates a position with minimal fields populated, with is_active=False
+        until the buy is confirmed.
+        
+        Args:
+            token_info: Token information
+            max_hold_time: Maximum hold time in seconds
+            max_no_price_change_time: Maximum time without price change in seconds
+            trailing_stop_percentage: Trailing stop percentage
+            min_gain_percentage: Minimum gain percentage required within time window
+            min_gain_time_window: Time window in seconds to check for minimum gain
+            
+        Returns:
+            Position instance with minimal fields populated
+        """
+        # Generate entry timestamp (use current time in milliseconds)
+        #TODO fix this
+        entry_ts = int(time() * 1000)
+        
+        # Generate position_id
+        position_id = cls.generate_position_id(token_info.mint, token_info.platform, entry_ts)
+        
+        return cls(
+            position_id=position_id,
+            mint=token_info.mint,
+            platform=token_info.platform,
+            token_quantity_decimal=0.0,  # Will be updated from buy order
+            total_token_swapin_amount_raw=0,  # Will be updated from buy order
+            total_token_swapout_amount_raw=0,
+            entry_ts=entry_ts,
+            is_active=False,  # Not active until buy confirms
+            max_hold_time=max_hold_time,
+            max_no_price_change_time=max_no_price_change_time,
+            trailing_stop_percentage=trailing_stop_percentage,
+            min_gain_percentage=min_gain_percentage,
+            min_gain_time_window=min_gain_time_window,
+            total_net_sol_swapout_amount_raw=0,
+            total_net_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
+            total_sol_swapout_amount_raw=0,
+            total_sol_swapin_amount_raw=0,  # Start at 0, accumulates from sells
+        )
+
+    def update_from_buy_order(self, buy_order: BuyOrder, take_profit_percentage:float,stop_loss_percentage:float) -> None:
+        """Update position from buy order (before confirmation).
+        
+        This stores the buy_order and sets expected values from the order.
+        Actual values will be updated when the buy transaction confirms.
+        
+        Args:
+            buy_order: BuyOrder with expected token amounts and price
+        """
+        self.buy_order = buy_order
+        
+        # Set expected values from order (these may differ from actual after confirmation)
+        if buy_order.token_price_sol is not None:
+            self.entry_net_price_decimal = buy_order.token_price_sol
+        
+        if buy_order.token_amount_raw is not None:
+            # Convert raw token amount to decimal
+            self.token_quantity_decimal = float(buy_order.token_amount_raw) / (10**TOKEN_DECIMALS)
+            self.total_token_swapin_amount_raw = buy_order.token_amount_raw
+        
+        # Store expected entry timestamp from order if available
+        if buy_order.block_ts is not None:
+            self.entry_ts = buy_order.block_ts * 1000  # Convert to milliseconds
+
+        self._apply_exit_strategy_config(
+            take_profit_percentage=take_profit_percentage,
+            stop_loss_percentage=stop_loss_percentage,
+            trailing_stop_percentage=self.trailing_stop_percentage,
+            max_hold_time=self.max_hold_time,
+            max_no_price_change_time=self.max_no_price_change_time,
+        )
+
+    def update_from_sell_order(self, sell_order: SellOrder) -> None:
+        """Update position from sell order (before confirmation).
+        
+        This stores the sell_order in the position. The position will be
+        closed with actual values when the sell transaction confirms.
+        
+        Args:
+            sell_order: SellOrder with token amount to sell
+        """
+        self.sell_order = sell_order
 
     @classmethod
     def create_from_buy_result(
@@ -184,7 +283,6 @@ class Position:
             total_token_swapin_amount_raw=token_swapin_amount_raw,
             total_token_swapout_amount_raw=0,  # Start at 0, accumulates from sells
             entry_ts=entry_ts,  # Unix epoch milliseconds from block time
-            exit_strategy=exit_strategy,
             take_profit_price=take_profit_price,
             stop_loss_price=stop_loss_price,
             max_hold_time=max_hold_time,
@@ -209,7 +307,6 @@ class Position:
         
         # Apply exit strategy configuration to override raw percentages
         result._apply_exit_strategy_config(
-            exit_strategy=exit_strategy,
             take_profit_percentage=take_profit_percentage,
             stop_loss_percentage=stop_loss_percentage,
             trailing_stop_percentage=trailing_stop_percentage,
@@ -221,7 +318,6 @@ class Position:
 
     def _apply_exit_strategy_config(
         self,
-        exit_strategy: str,
         take_profit_percentage: float | None,
         stop_loss_percentage: float | None,
         trailing_stop_percentage: float | None,
@@ -233,51 +329,22 @@ class Position:
         This method ensures that the position's exit conditions are set correctly
         based on the exit strategy, overriding any raw percentage calculations.
         """
-        self.exit_strategy = exit_strategy
         entry_price = self.entry_net_price_decimal
         
         if entry_price is not None:
-            if exit_strategy == "tp_sl":
-                # Take profit and stop loss strategy
-                self.take_profit_price = (
-                    entry_price * (1 + take_profit_percentage)
-                    if take_profit_percentage is not None
-                    else None
-                )
-                self.stop_loss_price = (
-                    entry_price * (1 - stop_loss_percentage)
-                    if stop_loss_percentage is not None
-                    else None
-                )
-                self.trailing_stop_percentage = None
-            elif exit_strategy == "trailing":
-                # Trailing stop strategy - can have both fixed stop loss and trailing stop
-                self.take_profit_price = (
-                    entry_price * (1 + take_profit_percentage)
-                    if take_profit_percentage is not None
-                    else None
-                )
-                # Allow fixed stop loss for trailing strategy (protects against immediate drops)
-                self.stop_loss_price = (
-                    entry_price * (1 - stop_loss_percentage)
-                    if stop_loss_percentage is not None
-                    else None
-                )
-                self.trailing_stop_percentage = trailing_stop_percentage
-            elif exit_strategy == "time_based":
-                # Time-based strategy - only take profit, no stop loss
-                self.take_profit_price = (
-                    entry_price * (1 + take_profit_percentage)
-                    if take_profit_percentage is not None
-                    else None
-                )
-                self.stop_loss_price = None
-                self.trailing_stop_percentage = None
-            elif exit_strategy == "manual":
-                # Manual strategy - no automatic exits
-                self.take_profit_price = None
-                self.stop_loss_price = None
-                self.trailing_stop_percentage = None
+            # Trailing stop strategy - can have both fixed stop loss and trailing stop
+            self.take_profit_price = (
+                entry_price * (1 + take_profit_percentage)
+                if take_profit_percentage is not None
+                else None
+            )
+            # Allow fixed stop loss for trailing strategy (protects against immediate drops)
+            self.stop_loss_price = (
+                entry_price * (1 - stop_loss_percentage)
+                if stop_loss_percentage is not None
+                else None
+            )
+            self.trailing_stop_percentage = trailing_stop_percentage
         
         # Update timing configuration
         self.max_hold_time = max_hold_time
@@ -438,11 +505,32 @@ class Position:
             total_fees_sol = float(total_fees_raw) / LAMPORTS_PER_SOL
             
             return {
-                "current_price": 0.0,
-                "net_price_change_decimal": 0.0,
-                "net_price_change_pct": 0.0,
+                "current_price": None,
+                "net_price_change_decimal": None,
+                "net_price_change_pct": None,
                 "realized_pnl_sol_decimal": -total_fees_sol,  # Loss from fees only
                 "realized_net_pnl_sol_decimal": 0.0,  # No net PnL since no tokens were acquired
+                "quantity": 0,
+                "transaction_fee_raw": transaction_fee_raw,
+                "platform_fee_raw": platform_fee_raw,
+                "tip_fee_raw": tip_fee_raw,
+                "total_fees_raw": total_fees_raw,
+            }
+
+        # Handle case where buy hasn't confirmed yet (pending position)
+        if self.buy_order is None or self.buy_order.state == OrderState.SENT:
+            # Position is pending - return zero PnL with available fee information
+            transaction_fee_raw = int(self.transaction_fee_raw or 0)
+            platform_fee_raw = int(self.platform_fee_raw or 0)
+            tip_fee_raw = int(self.tip_fee_raw or 0)
+            total_fees_raw = transaction_fee_raw + platform_fee_raw + tip_fee_raw
+            
+            return {
+                "current_price": None,
+                "net_price_change_decimal": None,
+                "net_price_change_pct": None,
+                "realized_pnl_sol_decimal": 0.0,  # No PnL until buy confirms
+                "realized_net_pnl_sol_decimal": 0.0,
                 "quantity": 0.0,
                 "transaction_fee_raw": transaction_fee_raw,
                 "platform_fee_raw": platform_fee_raw,
@@ -453,12 +541,6 @@ class Position:
         price_to_use = self.exit_net_price_decimal if not self.is_active else current_price
         if price_to_use is None:
             raise ValueError("No price available for PnL calculation")
-        
-        if self.entry_net_price_decimal is None:
-            raise ValueError("No entry price available for PnL calculation")
-        
-        if self.token_quantity_decimal is None:
-            raise ValueError("No quantity available for PnL calculation")
 
         net_price_change_decimal = price_to_use - self.entry_net_price_decimal
         net_price_change_pct = (net_price_change_decimal / self.entry_net_price_decimal) * 100

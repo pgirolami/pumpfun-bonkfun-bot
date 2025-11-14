@@ -11,7 +11,7 @@ from solders.pubkey import Pubkey
 from core.pubkeys import TOKEN_DECIMALS
 from interfaces.core import Platform, TokenInfo
 from trading.base import TradeResult
-from trading.position import Position
+from trading.position import Position,ExitReason
 
 
 class TokenInfoConverter:
@@ -103,7 +103,6 @@ class PositionConverter:
             position.total_token_swapin_amount_raw,
             position.total_token_swapout_amount_raw,
             position.entry_ts,
-            position.exit_strategy,
             position.highest_price,
             position.max_no_price_change_time,
             position.last_price_change_ts,
@@ -139,7 +138,6 @@ class PositionConverter:
         Returns:
             Position instance
         """
-        from trading.position import ExitReason
 
         return Position(
             position_id=row[0],
@@ -150,7 +148,6 @@ class PositionConverter:
             total_token_swapin_amount_raw=row[5],
             total_token_swapout_amount_raw=row[6],
             entry_ts=row[7],
-            exit_strategy=row[8],
             highest_price=row[9],
             max_no_price_change_time=row[10],
             last_price_change_ts=row[11],
