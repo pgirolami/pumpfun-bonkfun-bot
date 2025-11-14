@@ -7,7 +7,7 @@ from time import time
 
 from core.pubkeys import LAMPORTS_PER_SOL
 from database.manager import DatabaseManager
-from trading.position import Position
+from database.models import PositionPnLData
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -66,8 +66,8 @@ class MarketQualityController:
         Returns:
             Quality score (0.0-1.0)
         """
-        # Query recent closed positions
-        positions = await self.database_manager.get_recent_closed_positions(
+        # Query recent closed positions (only PnL data, not full Position objects)
+        positions = await self.database_manager.get_recent_closed_positions_pnl_data(
             self.lookback_minutes, run_id
         )
 
@@ -88,11 +88,11 @@ class MarketQualityController:
         else:
             raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
-    async def _calculate_win_rate_score(self, positions: list[Position]) -> float:
+    async def _calculate_win_rate_score(self, positions: list[PositionPnLData]) -> float:
         """Calculate quality score based on win rate.
 
         Args:
-            positions: List of closed positions
+            positions: List of closed position PnL data
 
         Returns:
             Quality score (0.0-1.0)
@@ -118,11 +118,11 @@ class MarketQualityController:
 
         return quality_score
 
-    async def _calculate_avg_pnl_score(self, positions: list[Position]) -> float:
+    async def _calculate_avg_pnl_score(self, positions: list[PositionPnLData]) -> float:
         """Calculate quality score based on average normalized PnL.
 
         Args:
-            positions: List of closed positions
+            positions: List of closed position PnL data
 
         Returns:
             Quality score (0.0-1.0)
@@ -132,18 +132,25 @@ class MarketQualityController:
         for pos in positions:
             # Calculate actual amount spent in SOL (including all fees)
             amount_spent_lamports = (
-                abs(pos.total_net_sol_swapout_amount_raw)
-                + pos.transaction_fee_raw
-                + pos.platform_fee_raw
-                + pos.tip_fee_raw
+                abs(pos.total_net_sol_swapout_amount_raw or 0)
+                + (pos.transaction_fee_raw or 0)
+                + (pos.platform_fee_raw or 0)
+                + (pos.tip_fee_raw or 0)
             )
             amount_spent_sol = amount_spent_lamports / LAMPORTS_PER_SOL
 
             # Calculate normalized PnL
-            normalized_pnl = pos.realized_pnl_sol_decimal / amount_spent_sol
-            normalized_pnl_values.append(normalized_pnl)
+            if amount_spent_sol > 0 and pos.realized_pnl_sol_decimal is not None:
+                normalized_pnl = pos.realized_pnl_sol_decimal / amount_spent_sol
+                normalized_pnl_values.append(normalized_pnl)
 
         # Average all normalized PnL values
+        if not normalized_pnl_values:
+            logger.warning(
+                f"Market quality calculated ({self.algorithm}): No valid normalized PnL values, returning 1.0"
+            )
+            return 1.0
+        
         avg_normalized_pnl = sum(normalized_pnl_values) / len(normalized_pnl_values)
 
         UPPER = 0.01
@@ -175,14 +182,14 @@ class MarketQualityController:
 
         return quality_score
 
-    async def _calculate_walk_pnl_score(self, positions: list[Position]) -> float:
+    async def _calculate_walk_pnl_score(self, positions: list[PositionPnLData]) -> float:
         """Calculate quality score based on walking PnL (incremental updates).
         
         Starts at 100% buy probability. Each call multiplies current probability
         by (1 + 10 * normalized_pnl) based on the most recent position.
 
         Args:
-            positions: List of closed positions (ordered by exit time, most recent first)
+            positions: List of closed position PnL data (ordered by exit time, most recent first)
 
         Returns:
             Quality score (0.0-1.0)
@@ -196,14 +203,19 @@ class MarketQualityController:
         
         # Calculate normalized PnL for the most recent position
         amount_spent_lamports = (
-            abs(most_recent_pos.total_net_sol_swapout_amount_raw)
-            + most_recent_pos.transaction_fee_raw
-            + most_recent_pos.platform_fee_raw
-            + most_recent_pos.tip_fee_raw
+            abs(most_recent_pos.total_net_sol_swapout_amount_raw or 0)
+            + (most_recent_pos.transaction_fee_raw or 0)
+            + (most_recent_pos.platform_fee_raw or 0)
+            + (most_recent_pos.tip_fee_raw or 0)
         )
         amount_spent_sol = amount_spent_lamports / LAMPORTS_PER_SOL
-        normalized_pnl = most_recent_pos.realized_pnl_sol_decimal / amount_spent_sol
-        clamped_normalized_pnl = max(-1.0,  normalized_pnl)
+        
+        if amount_spent_sol > 0 and most_recent_pos.realized_pnl_sol_decimal is not None:
+            normalized_pnl = most_recent_pos.realized_pnl_sol_decimal / amount_spent_sol
+        else:
+            normalized_pnl = 0.0
+        
+        clamped_normalized_pnl = max(-1.0, normalized_pnl)
 
         # Update buy probability: multiply by (1 + 10 * normalized_pnl)
         multiplier = max(0.05,1.0 + clamped_normalized_pnl)
@@ -214,7 +226,7 @@ class MarketQualityController:
         self._walk_pnl_buy_probability = max(0.0, min(1.0, self._walk_pnl_buy_probability))
         
         logger.info(
-            f"Market quality calculated ({self.algorithm}) using position {most_recent_pos.position_id[:8]} for mint {str(most_recent_pos.mint)[:8]}: "
+            f"Market quality calculated ({self.algorithm}) using position {most_recent_pos.position_id[:8]} for mint {most_recent_pos.mint[:8]}: "
             f"amount_spent: {amount_spent_sol:.6f} SOL, "
             f"realized_pnl: {most_recent_pos.realized_pnl_sol_decimal:.6f} SOL, "
             f"last_normalized_pnl: {normalized_pnl:.4f}, "

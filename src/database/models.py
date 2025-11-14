@@ -5,13 +5,28 @@ This module provides conversion between Python dataclasses and database rows.
 """
 
 import json
+from dataclasses import dataclass
 
 from solders.pubkey import Pubkey
 
 from core.pubkeys import TOKEN_DECIMALS
 from interfaces.core import Platform, TokenInfo
 from trading.base import TradeResult
-from trading.position import Position,ExitReason
+from trading.position import Position, ExitReason
+from trading.trade_order import BuyOrder, OrderState, SellOrder
+
+
+@dataclass
+class PositionPnLData:
+    """Minimal position data for market quality calculations."""
+    
+    position_id: str
+    mint: str
+    realized_pnl_sol_decimal: float | None
+    total_net_sol_swapout_amount_raw: int | None
+    transaction_fee_raw: int | None
+    platform_fee_raw: int | None
+    tip_fee_raw: int | None
 
 
 class TokenInfoConverter:
@@ -85,6 +100,111 @@ class PositionConverter:
     """Converter for Position dataclass to/from database rows."""
 
     @staticmethod
+    def _serialize_order(order: BuyOrder | SellOrder | None) -> str | None:
+        """Serialize order to JSON string (skips embedded TokenInfo).
+        
+        Args:
+            order: BuyOrder or SellOrder instance, or None
+            
+        Returns:
+            JSON string or None
+        """
+        if order is None:
+            return None
+        
+        # Convert order to dict, excluding token_info (we'll reconstruct it from position)
+        order_dict = {
+            "state": order.state.value,  # Convert enum to string
+            "token_price_sol": order.token_price_sol,
+            "priority_fee": order.priority_fee,
+            "compute_unit_limit": order.compute_unit_limit,
+            "account_data_size_limit": order.account_data_size_limit,
+            "tx_signature": order.tx_signature,
+            "transaction_fee_raw": order.transaction_fee_raw,
+            "protocol_fee_raw": order.protocol_fee_raw,
+            "creator_fee_raw": order.creator_fee_raw,
+            "block_ts": order.block_ts,
+        }
+        
+        # Add order-specific fields
+        if isinstance(order, BuyOrder):
+            order_dict["sol_amount_raw"] = order.sol_amount_raw
+            order_dict["max_sol_amount_raw"] = order.max_sol_amount_raw
+            order_dict["token_amount_raw"] = order.token_amount_raw
+            order_dict["minimum_token_swap_amount_raw"] = order.minimum_token_swap_amount_raw
+            order_dict["slippage_failed"] = order.slippage_failed
+        elif isinstance(order, SellOrder):
+            order_dict["token_amount_raw"] = order.token_amount_raw
+            order_dict["expected_sol_swap_amount_raw"] = order.expected_sol_swap_amount_raw
+            order_dict["minimum_sol_swap_amount_raw"] = order.minimum_sol_swap_amount_raw
+        
+        return json.dumps(order_dict)
+
+    @staticmethod
+    def _deserialize_buy_order(json_str: str | None, mint: Pubkey, platform: Platform) -> BuyOrder | None:
+        """Deserialize JSON string to BuyOrder.
+        
+        Args:
+            json_str: JSON string or None
+            mint: Token mint address (from position)
+            platform: Trading platform (from position)
+            
+        Returns:
+            BuyOrder instance or None
+        """
+        if json_str is None:
+            return None
+        
+        order_dict = json.loads(json_str)
+        
+        # Reconstruct TokenInfo from position's mint/platform (minimal TokenInfo)
+        token_info = TokenInfo(
+            name="",  # Not stored in order
+            symbol="",  # Not stored in order
+            uri="",  # Not stored in order
+            mint=mint,
+            platform=platform,
+        )
+        order_dict["token_info"] = token_info
+        
+        # Reconstruct OrderState enum
+        order_dict["state"] = OrderState(order_dict["state"])
+        
+        return BuyOrder(**order_dict)
+
+    @staticmethod
+    def _deserialize_sell_order(json_str: str | None, mint: Pubkey, platform: Platform) -> SellOrder | None:
+        """Deserialize JSON string to SellOrder.
+        
+        Args:
+            json_str: JSON string or None
+            mint: Token mint address (from position)
+            platform: Trading platform (from position)
+            
+        Returns:
+            SellOrder instance or None
+        """
+        if json_str is None:
+            return None
+        
+        order_dict = json.loads(json_str)
+        
+        # Reconstruct TokenInfo from position's mint/platform (minimal TokenInfo)
+        token_info = TokenInfo(
+            name="",  # Not stored in order
+            symbol="",  # Not stored in order
+            uri="",  # Not stored in order
+            mint=mint,
+            platform=platform,
+        )
+        order_dict["token_info"] = token_info
+        
+        # Reconstruct OrderState enum
+        order_dict["state"] = OrderState(order_dict["state"])
+        
+        return SellOrder(**order_dict)
+
+    @staticmethod
     def to_row(position: Position) -> tuple:
         """Convert Position to database row tuple.
 
@@ -122,6 +242,8 @@ class PositionConverter:
             position.total_net_sol_swapin_amount_raw,
             position.total_sol_swapout_amount_raw,
             position.total_sol_swapin_amount_raw,
+            PositionConverter._serialize_order(position.buy_order),  # buy_order as JSON
+            PositionConverter._serialize_order(position.sell_order),  # sell_order as JSON
             position.entry_ts,  # created_ts (same as entry_ts for new positions)
             position.entry_ts,  # updated_ts (will be updated on changes)
         )
@@ -167,6 +289,16 @@ class PositionConverter:
             total_net_sol_swapin_amount_raw=row[25],
             total_sol_swapout_amount_raw=row[26],
             total_sol_swapin_amount_raw=row[27],
+            buy_order=PositionConverter._deserialize_buy_order(
+                row[28] if len(row) > 28 else None,
+                Pubkey.from_string(row[1]),  # mint from position
+                Platform(row[2]),  # platform from position
+            ),
+            sell_order=PositionConverter._deserialize_sell_order(
+                row[29] if len(row) > 29 else None,
+                Pubkey.from_string(row[1]),  # mint from position
+                Platform(row[2]),  # platform from position
+            ),
             min_gain_percentage=min_gain_percentage,  # Set from current configuration
             min_gain_time_window=min_gain_time_window,  # Set from current configuration
             monitoring_start_ts=None,  # Will be set when monitoring starts

@@ -368,7 +368,7 @@ class Position:
             self.monitoring_start_ts = timestamp
             logger.debug(f"Position monitoring started at {timestamp} (entry was at {self.entry_ts})")
 
-    def should_exit(self, current_price: float, current_time: float) -> tuple[bool, ExitReason | None]:
+    def should_exit(self, current_price: float | None, current_time: float) -> tuple[bool, ExitReason | None]:
         """Check if position should be exited based on current conditions.
 
         Args:
@@ -379,6 +379,15 @@ class Position:
             Tuple of (should_exit, exit_reason)
         """
         current_time_ms = int(current_time * 1000)
+
+        # Check max hold time
+        if self.max_hold_time:
+            # Max hold time is based on entry time (total time position has been open)
+            elapsed_time = (current_time_ms - self.entry_ts) / 1000  # Convert to seconds
+            if elapsed_time >= self.max_hold_time:
+#                logger.info(f"elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time}")
+                return True, ExitReason.MAX_HOLD_TIME
+#            logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
 
         if not self.is_active:
             return False, None
@@ -406,15 +415,6 @@ class Position:
                 # logger.info(f"current_price {current_price} <= trailing_limit {trailing_limit}")
                 return True, ExitReason.TRAILING_STOP
             # logger.info(f"current_price {current_price} > trailing_limit {trailing_limit}")
-
-        # Check max hold time
-        if self.max_hold_time:
-            # Max hold time is based on entry time (total time position has been open)
-            elapsed_time = (current_time_ms - self.entry_ts) / 1000  # Convert to seconds
-            if elapsed_time >= self.max_hold_time:
-#                logger.info(f"elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time}")
-                return True, ExitReason.MAX_HOLD_TIME
-#            logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
 
         # Check max no price change time
         if self.max_no_price_change_time and self.last_price_change_ts is not None:

@@ -284,7 +284,7 @@ class PositionMonitor:
         # Log current status
         pnl = self.position._get_pnl(current_price)
         logger.info(
-            f"[{self._mint_prefix(self.token_info.mint)}] Position's price on chain: {current_price} SOL ({pnl['net_price_change_pct']:+.2f}%)"
+            f"[{self._mint_prefix(self.token_info.mint)}] Position's price on chain: {current_price} SOL ({pnl['net_price_change_pct']}%)"
         )
         
         # Check if position should be exited (using event timestamp)

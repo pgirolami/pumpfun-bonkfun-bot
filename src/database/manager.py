@@ -59,6 +59,19 @@ class DatabaseManager:
             except Exception:
                 # Do not fail initialization if pragma/alter fails; log and continue
                 logger.exception("Failed to migrate 'trades' table to add block_time column")
+            
+            # Migration: ensure 'buy_order' and 'sell_order' columns exist on positions table
+            try:
+                cursor = conn.execute("PRAGMA table_info(positions)")
+                columns = {row[1] for row in cursor.fetchall()}
+                if "buy_order" not in columns:
+                    conn.execute("ALTER TABLE positions ADD COLUMN buy_order TEXT")
+                if "sell_order" not in columns:
+                    conn.execute("ALTER TABLE positions ADD COLUMN sell_order TEXT")
+            except Exception:
+                # Do not fail initialization if migration fails; log and continue
+                logger.exception("Failed to migrate 'positions' table to add buy_order and sell_order columns")
+            
             conn.commit()
 
         logger.info(f"Database initialized at {self.db_path}")
@@ -142,8 +155,8 @@ class DatabaseManager:
                  exit_reason, exit_net_price_decimal, exit_ts, transaction_fee_raw, platform_fee_raw, tip_fee_raw,
                  rent_exemption_amount_raw, unattributed_sol_amount_raw,
                  realized_pnl_sol_decimal, realized_net_pnl_sol_decimal, buy_amount, total_net_sol_swapout_amount_raw, total_net_sol_swapin_amount_raw,
-                 total_sol_swapout_amount_raw, total_sol_swapin_amount_raw, created_ts, updated_ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 total_sol_swapout_amount_raw, total_sol_swapin_amount_raw, buy_order, sell_order, created_ts, updated_ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )
@@ -160,6 +173,9 @@ class DatabaseManager:
         position_id = position.position_id
 
         async with self.get_connection() as conn:
+            # Get serialized orders from PositionConverter
+            from .models import PositionConverter
+            
             conn.execute(
                 """
                 UPDATE positions SET
@@ -180,6 +196,8 @@ class DatabaseManager:
                     realized_net_pnl_sol_decimal = ?,
                     total_net_sol_swapin_amount_raw = ?,
                     total_sol_swapin_amount_raw = ?,
+                    buy_order = ?,
+                    sell_order = ?,
                     updated_ts = ?
                 WHERE id = ?
             """,
@@ -201,6 +219,8 @@ class DatabaseManager:
                     position.realized_net_pnl_sol_decimal,
                     position.total_net_sol_swapin_amount_raw or 0,  # Direct value, not accumulation
                     position.total_sol_swapin_amount_raw or 0,  # Direct value, not accumulation
+                    PositionConverter._serialize_order(position.buy_order),
+                    PositionConverter._serialize_order(position.sell_order),
                     int(time()*1000),
                     position_id,
                 ),
@@ -283,6 +303,66 @@ class DatabaseManager:
 
             return [
                 PositionConverter.from_row(tuple(row)) for row in rows
+            ]
+
+    async def get_recent_closed_positions_pnl_data(
+        self, lookback_minutes: int, run_id: str
+    ) -> list[Any]:
+        """Get closed positions PnL data within time window for specific run_id.
+        
+        Returns only the fields needed for market quality calculations, avoiding
+        deserialization of buy_order/sell_order which may be NULL.
+
+        Args:
+            lookback_minutes: Time window in minutes to look back
+            run_id: Bot run identifier (mandatory)
+
+        Returns:
+            List of PositionPnLData objects with PnL data
+        """
+        from time import time as current_time
+
+        from .models import PositionPnLData
+
+        # Calculate cutoff timestamp (milliseconds)
+        current_time_ms = int(current_time() * 1000)
+        cutoff_time_ms = current_time_ms - (lookback_minutes * 60 * 1000)
+
+        async with self.get_connection() as conn:
+            # Join positions with trades to filter by run_id
+            # Query only the fields needed for PnL calculations
+            cursor = conn.execute(
+                """
+                SELECT DISTINCT 
+                    p.id,
+                    p.mint,
+                    p.realized_pnl_sol_decimal,
+                    p.total_net_sol_swapout_amount_raw,
+                    p.transaction_fee_raw,
+                    p.platform_fee_raw,
+                    p.tip_fee_raw
+                FROM positions p
+                INNER JOIN trades t ON p.id = t.position_id
+                WHERE p.is_active = 0
+                  AND t.run_id = ?
+                  AND p.exit_ts >= ?
+                ORDER BY p.exit_ts DESC
+                """,
+                (run_id, cutoff_time_ms),
+            )
+            rows = cursor.fetchall()
+
+            return [
+                PositionPnLData(
+                    position_id=row[0],
+                    mint=row[1],
+                    realized_pnl_sol_decimal=row[2],
+                    total_net_sol_swapout_amount_raw=row[3],
+                    transaction_fee_raw=row[4],
+                    platform_fee_raw=row[5],
+                    tip_fee_raw=row[6],
+                )
+                for row in rows
             ]
 
     # Trade Operations

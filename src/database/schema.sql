@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS positions (
     total_net_sol_swapin_amount_raw INTEGER,  -- Total SOL received from sells (starts at 0)
     total_sol_swapout_amount_raw INTEGER,  -- Total SOL spent on buys
     total_sol_swapin_amount_raw INTEGER,  -- Total SOL received from sells (starts at 0)
+    buy_order TEXT,  -- JSON serialized BuyOrder (nullable)
+    sell_order TEXT,  -- JSON serialized SellOrder (nullable)
     created_ts INTEGER NOT NULL,  -- Unix epoch milliseconds
     updated_ts INTEGER NOT NULL  -- Unix epoch milliseconds
 );
