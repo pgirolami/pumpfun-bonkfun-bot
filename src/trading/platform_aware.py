@@ -32,7 +32,6 @@ class PlatformAwareBuyer(Trader):
         amount: float,
         slippage: float = 0.01,
         max_retries: int = 5,
-        extreme_fast_mode: bool = False,
         compute_units: dict | None = None,
     ):
         """Initialize platform-aware token buyer."""
@@ -42,7 +41,6 @@ class PlatformAwareBuyer(Trader):
         self.amount = amount
         self.slippage = slippage
         self.max_retries = max_retries
-        self.extreme_fast_mode = extreme_fast_mode
         self.compute_units = compute_units or {}
 
     async def _prepare_buy_order(self, token_info: TokenInfo) -> BuyOrder:
@@ -55,19 +53,13 @@ class PlatformAwareBuyer(Trader):
         # Create order with input
         order = BuyOrder(token_info=token_info, sol_amount_raw=int(self.amount * LAMPORTS_PER_SOL))
 
-        # Calculate price and token amount
-        if self.extreme_fast_mode:
-            # Use platform constants to calculate token amount based on starting price
-            platform_constants = await curve_manager.get_platform_constants()
-            starting_price_sol = platform_constants["starting_price_sol"]
-            
-            # Calculate token amount based on buy amount and starting price
-            order.token_amount_raw = int((self.amount / starting_price_sol) * 10**TOKEN_DECIMALS)
-            order.token_price_sol = starting_price_sol
-            # logger.info(f"Extreme fast mode: calculated {order.token_amount_raw / 10**TOKEN_DECIMALS:.6f} tokens at starting price {starting_price_sol} SOL")
-        else:
-            order.token_price_sol = await curve_manager.calculate_price(order.token_info.mint)
-            order.token_amount_raw = int((self.amount / order.token_price_sol) * 10**TOKEN_DECIMALS) if order.token_price_sol > 0 else 0
+        # Calculate price and token amount using platform constants
+        platform_constants = await curve_manager.get_platform_constants()
+        starting_price_sol = platform_constants["starting_price_sol"]
+        
+        # Calculate token amount based on buy amount and starting price
+        order.token_amount_raw = int((self.amount / starting_price_sol) * 10**TOKEN_DECIMALS)
+        order.token_price_sol = starting_price_sol
 
         # logger.info(f"Token price computed on-chain: {order.token_price_sol} SOL")
 

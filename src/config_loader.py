@@ -428,9 +428,6 @@ def print_config_summary(config: dict) -> None:
     print("Trade settings:")
     print(f"  - Buy amount: {trade.get('buy_amount', 'not configured')} SOL")
     print(f"  - Buy slippage: {trade.get('buy_slippage', 'not configured') * 100}%")
-    print(
-        f"  - Extreme fast mode: {'enabled' if trade.get('extreme_fast_mode') else 'disabled'}"
-    )
     if 'max_active_mints' in trade:
         print(f"  - Max active mints: {trade.get('max_active_mints')}")
 

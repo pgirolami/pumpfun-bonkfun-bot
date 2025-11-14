@@ -161,8 +161,6 @@ async def start_bot(config_path: str):
             buy_slippage=cfg["trade"]["buy_slippage"],
             sell_slippage=cfg["trade"]["sell_slippage"],
             max_wallet_loss_percentage=cfg["trade"].get("max_wallet_loss_percentage"),
-            # Extreme fast mode settings
-            extreme_fast_mode=cfg["trade"].get("extreme_fast_mode", False),
             # Exit strategy configuration
             take_profit_percentage=cfg["trade"].get("take_profit_percentage"),
             stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),

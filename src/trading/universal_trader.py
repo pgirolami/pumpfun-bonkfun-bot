@@ -49,8 +49,6 @@ class UniversalTrader:
         geyser_api_token: str | None = None,
         geyser_auth_type: str = "x-token",
         pumpportal_url: str = "wss://pumpportal.fun/api/data",
-        # Trading configuration
-        extreme_fast_mode: bool = False,
         # Exit strategy configuration
         take_profit_percentage: float | None = None,
         stop_loss_percentage: float | None = None,
@@ -255,7 +253,6 @@ class UniversalTrader:
                 buy_amount,
                 buy_slippage,
                 max_retries,
-                extreme_fast_mode,
                 curve_manager=self.platform_implementations.curve_manager,
                 dry_run_wait_time=dry_run_wait_time,
                 compute_units=self.compute_units,
@@ -287,7 +284,6 @@ class UniversalTrader:
                 buy_amount,
                 buy_slippage,
                 max_retries,
-                extreme_fast_mode,
                 compute_units=self.compute_units,
             )
 
@@ -305,7 +301,6 @@ class UniversalTrader:
         self.buy_slippage = buy_slippage
         self.sell_slippage = sell_slippage
         self.max_retries = max_retries
-        self.extreme_fast_mode = extreme_fast_mode
 
         # Exit strategy parameters
         self.take_profit_percentage = take_profit_percentage
@@ -720,12 +715,6 @@ class UniversalTrader:
                 except Exception as e:
                     logger.exception(f"Failed to persist token info to database: {e}")
 
-            # Wait for pool/curve to stabilize (unless in extreme fast mode)
-            if not self.extreme_fast_mode:
-                logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Waiting for {self.wait_time_after_creation} seconds for the pool/curve to stabilize..."
-                )
-                await asyncio.sleep(self.wait_time_after_creation)
 
             # Check market quality buy decision (synchronous, uses cached score)
             if self.market_quality_controller:
