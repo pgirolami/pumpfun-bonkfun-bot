@@ -254,7 +254,7 @@ class PositionMonitor:
         
         # Update price change timestamp from trade tracker
         # The tracker tracks when price actually changes (only on reserve updates, not time ticks)
-        if self.position.max_no_price_change_time is not None:
+        if self.position.max_no_price_change_time is not None and self.position.last_price_change_ts is not None:
             tracker = self.token_listener.get_trade_tracker_by_mint(str(self.token_info.mint))
             if tracker:
                 tracker_timestamp = tracker.get_last_price_change_timestamp()
@@ -281,6 +281,9 @@ class PositionMonitor:
             except Exception as e:
                 logger.exception(f"Failed to update position in database: {e}")
         
+
+        logger.info(f"[{self._mint_prefix(self.token_info.mint)}] Position: {self.position}")
+
         # Log current status
         pnl = self.position._get_pnl(current_price)
         logger.info(

@@ -14,6 +14,7 @@ from solders.pubkey import Pubkey
 
 # Import from interfaces to avoid duplication
 from interfaces.core import Platform, TokenInfo
+from trading.trade_order import Order
 
 
 @dataclass
@@ -179,15 +180,12 @@ class Trader(ABC):
     """Enhanced base interface for trading operations with platform support."""
 
     @abstractmethod
-    async def execute(self, token_info: TokenInfo, *args, **kwargs) -> TradeResult:
-        """Execute trading operation.
+    async def prepare_and_send_order(token_info:TokenInfo) -> Order:
+        pass
 
-        Args:
-            token_info: Enhanced token information with platform support
 
-        Returns:
-            TradeResult with operation outcome including platform info
-        """
+    @abstractmethod
+    async def process_order(self, order: Order) -> TradeResult:
         pass
 
     def _get_relevant_accounts(self, token_info: TokenInfo) -> list[Pubkey]:

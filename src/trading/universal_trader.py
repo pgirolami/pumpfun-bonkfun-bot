@@ -747,69 +747,73 @@ class UniversalTrader:
             logger.info(
                 f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} ({str(token_info.mint)})on {token_info.platform.value}..."
             )
-            buy_result = await self.buyer.execute(token_info)
+
+            order = await self.buyer.prepare_and_send_order(token_info)
+            position.buy_order = order
+            buy_result = await self.buyer.process_order(order)
             logger.info(
                 f"[{self._mint_prefix(token_info.mint)}] Buy result is {buy_result}"
             )
 
             # Create position immediately after buy (regardless of success/failure)
             entry_ts = (buy_result.block_time or int(time())) * 1000
-            if buy_result.success:
-                # Successful buy - create active position
-                position = Position.create_from_buy_result(
-                    mint=token_info.mint,
-                    platform=token_info.platform,
-                    entry_net_price_decimal=buy_result.net_price_sol_decimal(),
-                    quantity=buy_result.token_swap_amount_decimal(),
-                    token_swapin_amount_raw=buy_result.token_swap_amount_raw,
-                    entry_ts=entry_ts,
-                    transaction_fee_raw=buy_result.transaction_fee_raw,
-                    platform_fee_raw=buy_result.platform_fee_raw,
-                    tip_fee_raw=buy_result.tip_fee_raw,
-                    rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
-                    unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
-                    exit_strategy="trailing",
-                    buy_amount=self.buy_amount,
-                    total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw,  # Raw value (negative for buys)
-                    total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # Raw value (negative for buys)
-                    take_profit_percentage=self.take_profit_percentage,
-                    stop_loss_percentage=self.stop_loss_percentage,
-                    trailing_stop_percentage=self.trailing_stop_percentage,
-                    max_hold_time=self.max_hold_time,
-                    max_no_price_change_time=self.max_no_price_change_time,
-                    min_gain_percentage=self.min_gain_percentage,
-                    min_gain_time_window=self.min_gain_time_window,
-                )
-            else:
-                position_id = Position.generate_position_id(token_info.mint, token_info.platform, entry_ts)
-                # Failed buy - create inactive position with None values
-                position = Position(
-                    position_id=position_id,
-                    mint=token_info.mint,
-                    platform=token_info.platform,
-                    entry_net_price_decimal=None,  # No actual entry
-                    token_quantity_decimal=None,  # No tokens acquired
-                    total_token_swapin_amount_raw=None,  # No tokens acquired
-                    total_token_swapout_amount_raw=None,  # No tokens acquired
-                    entry_ts=entry_ts,
-                    exit_ts=entry_ts,   #yes, = entry_ts
-                    is_active=False,  # Mark as inactive
-                    exit_reason=ExitReason.FAILED_BUY,
-                    transaction_fee_raw=buy_result.transaction_fee_raw,  # Still incurred fees
-                    platform_fee_raw=buy_result.platform_fee_raw,  # Still incurred fees
-                    tip_fee_raw=buy_result.tip_fee_raw,  # Still incurred fees
-                    rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
-                    unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
-                    buy_amount=self.buy_amount,  # Still intended to buy this amount
-                    total_net_sol_swapout_amount_raw=0,  # No SOL spent
-                    total_net_sol_swapin_amount_raw=0,  # No SOL received
-                    total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # SOL spent
-                    total_sol_swapin_amount_raw=0,  # No SOL received
-                )
+            position.update_from_buy_order(buy_order=order, take_profit_percentage=self.take_profit_percentage, stop_loss_percentage=self.stop_loss_percentage)
+            # if buy_result.success:
+            #     # Successful buy - create active position
+            #     position = Position.create_from_buy_result(
+            #         mint=token_info.mint,
+            #         platform=token_info.platform,
+            #         entry_net_price_decimal=buy_result.net_price_sol_decimal(),
+            #         quantity=buy_result.token_swap_amount_decimal(),
+            #         token_swapin_amount_raw=buy_result.token_swap_amount_raw,
+            #         entry_ts=entry_ts,
+            #         transaction_fee_raw=buy_result.transaction_fee_raw,
+            #         platform_fee_raw=buy_result.platform_fee_raw,
+            #         tip_fee_raw=buy_result.tip_fee_raw,
+            #         rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
+            #         unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
+            #         exit_strategy="trailing",
+            #         buy_amount=self.buy_amount,
+            #         total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw,  # Raw value (negative for buys)
+            #         total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # Raw value (negative for buys)
+            #         take_profit_percentage=self.take_profit_percentage,
+            #         stop_loss_percentage=self.stop_loss_percentage,
+            #         trailing_stop_percentage=self.trailing_stop_percentage,
+            #         max_hold_time=self.max_hold_time,
+            #         max_no_price_change_time=self.max_no_price_change_time,
+            #         min_gain_percentage=self.min_gain_percentage,
+            #         min_gain_time_window=self.min_gain_time_window,
+            #     )
+            # else:
+            #     position_id = Position.generate_position_id(token_info.mint, token_info.platform, entry_ts)
+            #     # Failed buy - create inactive position with None values
+            #     position = Position(
+            #         position_id=position_id,
+            #         mint=token_info.mint,
+            #         platform=token_info.platform,
+            #         entry_net_price_decimal=None,  # No actual entry
+            #         token_quantity_decimal=None,  # No tokens acquired
+            #         total_token_swapin_amount_raw=None,  # No tokens acquired
+            #         total_token_swapout_amount_raw=None,  # No tokens acquired
+            #         entry_ts=entry_ts,
+            #         exit_ts=entry_ts,   #yes, = entry_ts
+            #         is_active=False,  # Mark as inactive
+            #         exit_reason=ExitReason.FAILED_BUY,
+            #         transaction_fee_raw=buy_result.transaction_fee_raw,  # Still incurred fees
+            #         platform_fee_raw=buy_result.platform_fee_raw,  # Still incurred fees
+            #         tip_fee_raw=buy_result.tip_fee_raw,  # Still incurred fees
+            #         rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
+            #         unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
+            #         buy_amount=self.buy_amount,  # Still intended to buy this amount
+            #         total_net_sol_swapout_amount_raw=0,  # No SOL spent
+            #         total_net_sol_swapin_amount_raw=0,  # No SOL received
+            #         total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # SOL spent
+            #         total_sol_swapin_amount_raw=0,  # No SOL received
+            #     )
             if self.database_manager:
                 try:
                     # Insert position
-                    await self.database_manager.insert_position(position)
+                    await self.database_manager.update_position(position)
 
                     logger.debug("Persisted position to database")
                 except Exception as e:
@@ -853,8 +857,6 @@ class UniversalTrader:
         )
         logger.info(f"Position: {position}")
         
-
-
         # Persist to database if available
         if self.database_manager:
             try:
@@ -942,6 +944,7 @@ class UniversalTrader:
         self, token_info: TokenInfo, position: Position
     ) -> None:
         """Monitor a position until exit conditions are met using event-driven architecture."""
+
         curve_manager = self.platform_implementations.curve_manager
         
         # Create position monitor instance

@@ -50,7 +50,7 @@ The database manager needs to be update to persist the buy & sell order fields, 
 
 The `schema.sql` file should be updated to include these two NULLable columns and you should produce a migration file for existing databases. 
 
-### 3. Modify Flow
+### 3. Prepare Flow Changes
 
 **File**: `src/trading/platform_aware.py` - `PlatformAwareBuyer.execute()`
 
@@ -62,6 +62,8 @@ The `schema.sql` file should be updated to include these two NULLable columns an
 - Split the `execute()` method as we did in PlatformAwareBuyer(), using SellOrder objects instead of BuyOrder:
     - `prepare_and_send_order(token_info: TokenInfo, position: Position)` - prepares and sends sell order, returns `SellOrder` with state `SENT`
     - `process_order(sell_order: SellOrder)` - confirms and processes sell order, returns `TradeResult`. TokenInfo is available from `sell_order.token_info`.
+
+### 4. Modify Flow
 
 **File**: `src/trading/universal_trader.py` - `_handle_token()`
 

@@ -15,7 +15,7 @@ from platforms import get_platform_implementations
 from platforms.pumpfun.address_provider import PumpFunAddressProvider
 from trading.base import Trader, TradeResult
 from trading.position import Position
-from trading.trade_order import BuyOrder, SellOrder
+from trading.trade_order import BuyOrder, OrderState, SellOrder
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -147,61 +147,99 @@ class PlatformAwareBuyer(Trader):
             logger.info(f"Failed to analyze transaction balances for lack of transaction {order.tx_signature} : {tx}")
             return None
 
-    async def execute(self, token_info: TokenInfo) -> TradeResult:
-        """Execute buy operation using the order pattern."""
-        trade_start_time = time.time()
+    async def prepare_and_send_order(self, token_info: TokenInfo) -> BuyOrder:
+        """Prepare and send buy order without waiting for confirmation.
+        
+        Args:
+            token_info: Token information for the buy order
+            
+        Returns:
+            BuyOrder with state set to SENT
+        """
+        # Prepare order (shared with dry-run)
+        order = await self._prepare_buy_order(token_info)
+
+        # Record start time before sending transaction
+        order.trade_start_time = time.time()
+
+        # Execute transaction (overridden in dry-run)
+        order = await self._execute_transaction(order)
+        
+        # Set state to SENT after transaction is sent
+        order.state = OrderState.SENT
+        
+        return order
+
+    async def process_order(self, buy_order: BuyOrder) -> TradeResult:
+        """Confirm and process buy order, returning trade result.
+        
+        Args:
+            buy_order: BuyOrder that was previously sent (state should be SENT)
+            
+        Returns:
+            TradeResult with confirmation status and balance changes
+        """
         try:
-            # Prepare order (shared with dry-run)
-            order = await self._prepare_buy_order(token_info)
-
-            # Execute transaction (overridden in dry-run)
-            order = await self._execute_transaction(order)
-
             # Confirm and analyze
-            confirm_result = await self._confirm_transaction(order)
+            confirm_result = await self._confirm_transaction(buy_order)
             logger.debug(f"Confirm result is {confirm_result}")
 
             balance_changes = None
             try:
-                balance_changes = await self._analyze_balance_changes(order)
-                logger.debug(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
+                balance_changes = await self._analyze_balance_changes(buy_order)
+                logger.debug(f"[{str(buy_order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
-                logger.exception(f"[{str(order.token_info.mint)[:8]}] Failed to analyze transaction balances")
+                logger.exception(f"[{str(buy_order.token_info.mint)[:8]}] Failed to analyze transaction balances")
 
             # Calculate trade duration
-            trade_duration_ms = int((time.time() - trade_start_time) * 1000)
-            time_to_block_ms = int((confirm_result.block_ts - trade_start_time) * 1000) if confirm_result.block_ts else None
+            trade_duration_ms = int((time.time() - buy_order.trade_start_time) * 1000)
+            time_to_block_ms = int((confirm_result.block_ts - buy_order.trade_start_time) * 1000) if confirm_result.block_ts else None
+
+            # Update order state based on confirmation result
+            if confirm_result.success:
+                buy_order.state = OrderState.CONFIRMED
+                buy_order.block_ts = confirm_result.block_ts
+                if balance_changes:
+                    buy_order.transaction_fee_raw = balance_changes.transaction_fee_raw
+                    buy_order.protocol_fee_raw = balance_changes.protocol_fee_raw
+                    buy_order.creator_fee_raw = balance_changes.creator_fee_raw
+            else:
+                buy_order.state = OrderState.FAILED
 
             result = TradeResult(
                 success=confirm_result.success,
-                platform=order.token_info.platform,
-                tx_signature=str(order.tx_signature),
+                platform=buy_order.token_info.platform,
+                tx_signature=str(buy_order.tx_signature),
                 block_time=confirm_result.block_ts,
                 transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 net_sol_swap_amount_raw=balance_changes.net_sol_swap_amount_raw if balance_changes else None,
-                platform_fee_raw=balance_changes.protocol_fee_raw + balance_changes.creator_fee_raw,
+                platform_fee_raw=balance_changes.protocol_fee_raw + balance_changes.creator_fee_raw if balance_changes else None,
                 tip_fee_raw=balance_changes.tip_fee_raw if balance_changes else None,
-                rent_exemption_amount_raw=balance_changes.rent_exemption_amount_raw,
-                unattributed_sol_amount_raw=balance_changes.unattributed_sol_amount_raw,
+                rent_exemption_amount_raw=balance_changes.rent_exemption_amount_raw if balance_changes else None,
+                unattributed_sol_amount_raw=balance_changes.unattributed_sol_amount_raw if balance_changes else None,
                 trade_duration_ms=trade_duration_ms,
                 time_to_block_ms=time_to_block_ms,
                 sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
             )
             if not confirm_result.success:
-                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
+                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {buy_order.tx_signature}"
 
             # logger.info(f"Buy trade completed in {trade_duration_ms}ms")
             return result
 
         except Exception as e:
             trade_duration_ms = int((time.time() - trade_start_time) * 1000)
-            logger.exception("Buy operation failed")
+            logger.exception("Buy order processing failed")
             logger.info(f"Failed buy trade took {trade_duration_ms}ms")
+            
+            # Set order state to FAILED on exception
+            buy_order.state = OrderState.FAILED
+            
             return TradeResult(
-                block_time=confirm_result.block_ts,
+                block_time=None,
                 success=False, 
-                platform=token_info.platform, 
+                platform=buy_order.token_info.platform, 
                 error_message=str(e),
                 trade_duration_ms=trade_duration_ms,
             )
@@ -366,64 +404,111 @@ class PlatformAwareSeller(Trader):
             logger.info(f"Failed to analyze transaction balances for lack of transaction {order.tx_signature} : {tx_with_meta}")
             return None
 
-    async def execute(self, token_info: TokenInfo, position: Position) -> TradeResult:
-        """Execute sell operation using the order pattern."""
-        trade_start_time = time.time()
+    async def prepare_and_send_order(self, token_info: TokenInfo, position: Position) -> SellOrder:
+        """Prepare and send sell order without waiting for confirmation.
+        
+        Args:
+            token_info: Token information for the sell order
+            position: Position to sell from
+            
+        Returns:
+            SellOrder with state set to SENT
+        """
+        # Prepare order (shared with dry-run)
+        order = await self._prepare_sell_order(token_info, position)
+
+        # Record start time before sending transaction
+        order.trade_start_time = time.time()
+
+        # Execute transaction (overridden in dry-run)
+        order = await self._execute_transaction(order)
+        
+        # Set state to SENT after transaction is sent
+        order.state = OrderState.SENT
+        
+        return order
+
+    async def process_order(self, sell_order: SellOrder) -> TradeResult:
+        """Confirm and process sell order, returning trade result.
+        
+        Args:
+            sell_order: SellOrder that was previously sent (state should be SENT)
+            
+        Returns:
+            TradeResult with confirmation status and balance changes
+        """
         try:
-            # Prepare order (shared with dry-run)
-            order = await self._prepare_sell_order(token_info, position)
-
-            # Execute transaction (overridden in dry-run)
-            order = await self._execute_transaction(order)
-
             # Confirm and analyze
-            confirm_result = await self._confirm_transaction(order)
+            confirm_result = await self._confirm_transaction(sell_order)
 
             balance_changes = None
             try:
-                balance_changes = await self._analyze_balance_changes(order)
-                logger.debug(f"[{str(order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
+                balance_changes = await self._analyze_balance_changes(sell_order)
+                logger.debug(f"[{str(sell_order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
-                logger.exception(f"[{str(order.token_info.mint)[:8]}] Failed to analyze transaction balances")
+                logger.exception(f"[{str(sell_order.token_info.mint)[:8]}] Failed to analyze transaction balances")
 
             # Calculate trade duration
-            trade_duration_ms = int((time.time() - trade_start_time) * 1000)
-            time_to_block_ms = int((confirm_result.block_ts - trade_start_time) * 1000) if confirm_result.block_ts else None
+            trade_duration_ms = int((time.time() - sell_order.trade_start_time) * 1000)
+            time_to_block_ms = int((confirm_result.block_ts - sell_order.trade_start_time) * 1000) if confirm_result.block_ts else None
+
+            # Update order state based on confirmation result
+            if confirm_result.success:
+                sell_order.state = OrderState.CONFIRMED
+                sell_order.block_ts = confirm_result.block_ts
+                if balance_changes:
+                    sell_order.transaction_fee_raw = balance_changes.transaction_fee_raw
+                    sell_order.protocol_fee_raw = balance_changes.protocol_fee_raw
+                    sell_order.creator_fee_raw = balance_changes.creator_fee_raw
+            else:
+                sell_order.state = OrderState.FAILED
 
             result = TradeResult(
                 success=confirm_result.success,
-                platform=order.token_info.platform,
-                tx_signature=str(order.tx_signature),
+                platform=sell_order.token_info.platform,
+                tx_signature=str(sell_order.tx_signature),
                 block_time=confirm_result.block_ts,
                 transaction_fee_raw=balance_changes.transaction_fee_raw if balance_changes else None,
                 token_swap_amount_raw=balance_changes.token_swap_amount_raw if balance_changes else None,
                 net_sol_swap_amount_raw=balance_changes.net_sol_swap_amount_raw if balance_changes else None,
                 sol_swap_amount_raw=balance_changes.sol_amount_raw if balance_changes else None,
-                platform_fee_raw=balance_changes.protocol_fee_raw + balance_changes.creator_fee_raw,
+                platform_fee_raw=balance_changes.protocol_fee_raw + balance_changes.creator_fee_raw if balance_changes else None,
                 tip_fee_raw=balance_changes.tip_fee_raw if balance_changes else None,
-                rent_exemption_amount_raw=balance_changes.rent_exemption_amount_raw,
-                unattributed_sol_amount_raw=balance_changes.unattributed_sol_amount_raw,
+                rent_exemption_amount_raw=balance_changes.rent_exemption_amount_raw if balance_changes else None,
+                unattributed_sol_amount_raw=balance_changes.unattributed_sol_amount_raw if balance_changes else None,
                 trade_duration_ms=trade_duration_ms,
                 time_to_block_ms=time_to_block_ms,
             )
             if not confirm_result.success:
-                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {order.tx_signature}"
+                result.error_message = confirm_result.error_message or f"Transaction failed to confirm: {sell_order.tx_signature}"
 
             # logger.info(f"Sell trade completed in {trade_duration_ms}ms")
             return result
 
         except Exception as e:
             trade_duration_ms = int((time.time() - trade_start_time) * 1000)
-            logger.exception("Sell operation failed")
-            logger.exception(e)
+            logger.exception("Sell order processing failed")
             logger.info(f"Failed sell trade took {trade_duration_ms}ms")
+            
+            # Set order state to FAILED on exception
+            sell_order.state = OrderState.FAILED
+            
             return TradeResult(
-                block_time=confirm_result.block_ts if confirm_result else None,
+                block_time=None,
                 success=False, 
-                platform=token_info.platform, 
+                platform=sell_order.token_info.platform, 
                 error_message=str(e),
                 trade_duration_ms=trade_duration_ms,
             )
+
+    async def execute(self, token_info: TokenInfo, position: Position) -> TradeResult:
+        """Execute sell operation using the order pattern (legacy method for compatibility).
+        
+        This method is kept for backward compatibility but is now a wrapper around
+        prepare_and_send_order() and process_order().
+        """
+        order = await self.prepare_and_send_order(token_info, position)
+        return await self.process_order(order)
 
     def _get_pool_address(
         self, token_info: TokenInfo, address_provider: AddressProvider

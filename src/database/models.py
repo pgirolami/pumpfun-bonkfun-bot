@@ -120,6 +120,7 @@ class PositionConverter:
             "compute_unit_limit": order.compute_unit_limit,
             "account_data_size_limit": order.account_data_size_limit,
             "tx_signature": order.tx_signature,
+            "trade_start_time": order.trade_start_time,
             "transaction_fee_raw": order.transaction_fee_raw,
             "protocol_fee_raw": order.protocol_fee_raw,
             "creator_fee_raw": order.creator_fee_raw,

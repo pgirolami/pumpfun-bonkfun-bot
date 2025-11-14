@@ -35,6 +35,7 @@ class Order(ABC):
     
     # Transaction execution (populated after send)
     tx_signature: str | None = None
+    trade_start_time: float | None = None  # Timestamp when order was sent (for duration calculation)
     
     # Fees (populated after execution)
     transaction_fee_raw: int | None = None

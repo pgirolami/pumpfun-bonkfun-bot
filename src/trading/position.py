@@ -179,6 +179,7 @@ class Position:
             buy_order: BuyOrder with expected token amounts and price
         """
         self.buy_order = buy_order
+        self.is_active = True
         
         # Set expected values from order (these may differ from actual after confirmation)
         if buy_order.token_price_sol is not None:
@@ -519,6 +520,7 @@ class Position:
 
         # Handle case where buy hasn't confirmed yet (pending position)
         if self.buy_order is None or self.buy_order.state == OrderState.SENT:
+            logger.info(f"Position is pending - return zero PnL with available fee information")
             # Position is pending - return zero PnL with available fee information
             transaction_fee_raw = int(self.transaction_fee_raw or 0)
             platform_fee_raw = int(self.platform_fee_raw or 0)
@@ -618,4 +620,17 @@ class Position:
         sol_str = f"{-self.total_net_sol_swapout_amount_raw / LAMPORTS_PER_SOL}" if self.total_net_sol_swapin_amount_raw is not None else "None"
         sol_raw_str = f"{-self.total_net_sol_swapout_amount_raw}" if self.total_net_sol_swapout_amount_raw is not None else "None"
         last_price_change_ts_str = f"{datetime.fromtimestamp(self.last_price_change_ts):%Y-%m-%d %H:%M:%S.%f}" if self.last_price_change_ts is not None else "None"
-        return f"Position({str(self.mint)}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} for net sol={sol_str} ({sol_raw_str}) - {status}) - last_price_change_ts={last_price_change_ts_str}"
+        
+        # Buy order info
+        buy_order_str = "None"
+        if self.buy_order:
+            buy_tx = self.buy_order.tx_signature[:8] + "..." if self.buy_order.tx_signature else "None"
+            buy_order_str = f"{self.buy_order.state.value}(tx={buy_tx})"
+        
+        # Sell order info
+        sell_order_str = "None"
+        if self.sell_order:
+            sell_tx = self.sell_order.tx_signature[:8] + "..." if self.sell_order.tx_signature else "None"
+            sell_order_str = f"{self.sell_order.state.value}(tx={sell_tx})"
+        
+        return f"Position({str(self.mint)}: {quantity_str} ({quantity_raw_str} raw) @ {price_str} for net sol={sol_str} ({sol_raw_str}) - {status}) - last_price_change_ts={last_price_change_ts_str} - buy_order={buy_order_str} sell_order={sell_order_str}"
