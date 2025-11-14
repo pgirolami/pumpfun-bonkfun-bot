@@ -65,12 +65,8 @@ class UniversalTrader:
         # Retry and timeout settings
         max_retries: int = 3,
         wait_time_after_creation: int = 15,
-        wait_time_before_new_token: int = 15,
         max_token_age: int | float = 0.001,
         token_wait_timeout: int = 30,
-        # Cleanup settings
-        cleanup_force_close_with_burn: bool = False,
-        cleanup_with_priority_fee: bool = False,
         # Trading filters
         match_string: str | None = None,
         bro_address: str | None = None,
@@ -325,13 +321,8 @@ class UniversalTrader:
 
         # Timing parameters
         self.wait_time_after_creation = wait_time_after_creation
-        self.wait_time_before_new_token = wait_time_before_new_token
         self.max_token_age = max_token_age
         self.token_wait_timeout = token_wait_timeout
-
-        # Cleanup parameters
-        self.cleanup_force_close_with_burn = cleanup_force_close_with_burn
-        self.cleanup_with_priority_fee = cleanup_with_priority_fee
 
         # Trading filters/modes
         self.match_string = match_string
@@ -824,12 +815,6 @@ class UniversalTrader:
 
             if self._stop_event.is_set():
                 return
-
-            # Wait before looking for next token
-            logger.debug(
-                f"Waiting {self.wait_time_before_new_token} seconds before looking for next token..."
-            )
-            await asyncio.sleep(self.wait_time_before_new_token)
 
         except Exception:
             logger.exception(f"Error handling token {token_info.symbol}")
