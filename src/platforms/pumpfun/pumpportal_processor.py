@@ -76,7 +76,7 @@ class PumpFunPumpPortalProcessor:
             # - marketCapSol: Market cap in SOL
             # - signature: Transaction signature
 
-            if not all([name, symbol, mint_str, bonding_curve_str, creator_str]):
+            if not all([mint_str, bonding_curve_str, creator_str]):
                 logger.warning(f"Missing required fields in PumpPortal token data: {token_data}")
                 return None
 

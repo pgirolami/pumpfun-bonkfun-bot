@@ -11,7 +11,6 @@ from database.manager import DatabaseManager
 import uvloop
 from solders.pubkey import Pubkey
 
-from cleanup.modes import cleanup_after_sell
 from core.client import SolanaClient
 from core.priority_fee.manager import PriorityFeeManager
 from core.wallet import Wallet
@@ -53,7 +52,6 @@ class UniversalTrader:
         # Trading configuration
         extreme_fast_mode: bool = False,
         # Exit strategy configuration
-        exit_strategy: str = "time_based",
         take_profit_percentage: float | None = None,
         stop_loss_percentage: float | None = None,
         trailing_stop_percentage: float | None = None,
@@ -69,7 +67,6 @@ class UniversalTrader:
         # Retry and timeout settings
         max_retries: int = 3,
         wait_time_after_creation: int = 15,
-        wait_time_after_buy: int = 15,
         wait_time_before_new_token: int = 15,
         max_token_age: int | float = 0.001,
         token_wait_timeout: int = 30,
@@ -79,7 +76,6 @@ class UniversalTrader:
         # Trading filters
         match_string: str | None = None,
         bro_address: str | None = None,
-        marry_mode: bool = False,
         max_buys: int | None = None,
         min_initial_buy_sol: float = 1.0,
         # Compute unit configuration
@@ -312,7 +308,6 @@ class UniversalTrader:
         self.extreme_fast_mode = extreme_fast_mode
 
         # Exit strategy parameters
-        self.exit_strategy = exit_strategy.lower()
         self.take_profit_percentage = take_profit_percentage
         self.stop_loss_percentage = stop_loss_percentage
         self.trailing_stop_percentage = trailing_stop_percentage
@@ -340,7 +335,6 @@ class UniversalTrader:
 
         # Timing parameters
         self.wait_time_after_creation = wait_time_after_creation
-        self.wait_time_after_buy = wait_time_after_buy
         self.wait_time_before_new_token = wait_time_before_new_token
         self.max_token_age = max_token_age
         self.token_wait_timeout = token_wait_timeout
@@ -352,7 +346,6 @@ class UniversalTrader:
         # Trading filters/modes
         self.match_string = match_string
         self.bro_address = bro_address
-        self.marry_mode = marry_mode
         self.max_buys = max_buys
         self.min_initial_buy_sol = min_initial_buy_sol
         self.buy_count = 0  # Counter for number of successful buys
@@ -501,20 +494,7 @@ class UniversalTrader:
         logger.info(
             f"Creator filter: {self.bro_address if self.bro_address else 'None'}"
         )
-        logger.info(f"Marry mode: {self.marry_mode}")
         logger.info(f"Max buys: {self.max_buys if self.max_buys else 'unlimited'}")
-        logger.info(f"Exit strategy: {self.exit_strategy}")
-
-        if self.exit_strategy == "tp_sl":
-            logger.info(
-                f"Take profit: {self.take_profit_percentage * 100 if self.take_profit_percentage else 'None'}%"
-            )
-            logger.info(
-                f"Stop loss: {self.stop_loss_percentage * 100 if self.stop_loss_percentage else 'None'}%"
-            )
-            logger.info(
-                f"Max hold time: {self.max_hold_time if self.max_hold_time else 'None'} seconds"
-            )
 
         logger.info(f"Max token age: {self.max_token_age} seconds")
         logger.info(f"Max no price change time: {self.max_no_price_change_time} seconds")
@@ -814,7 +794,7 @@ class UniversalTrader:
                     tip_fee_raw=buy_result.tip_fee_raw,
                     rent_exemption_amount_raw=buy_result.rent_exemption_amount_raw,
                     unattributed_sol_amount_raw=buy_result.unattributed_sol_amount_raw,
-                    exit_strategy=self.exit_strategy,
+                    exit_strategy="trailing",
                     buy_amount=self.buy_amount,
                     total_net_sol_swapout_amount_raw=buy_result.net_sol_swap_amount_raw,  # Raw value (negative for buys)
                     total_sol_swapout_amount_raw=buy_result.sol_swap_amount_raw,  # Raw value (negative for buys)
@@ -839,7 +819,7 @@ class UniversalTrader:
                     total_token_swapout_amount_raw=None,  # No tokens acquired
                     entry_ts=entry_ts,
                     exit_ts=entry_ts,   #yes, = entry_ts
-                    exit_strategy=self.exit_strategy,
+                    exit_strategy="trailing",
                     is_active=False,  # Mark as inactive
                     exit_reason=ExitReason.FAILED_BUY,
                     transaction_fee_raw=buy_result.transaction_fee_raw,  # Still incurred fees
@@ -919,18 +899,8 @@ class UniversalTrader:
             except Exception as e:
                 logger.exception(f"Failed to persist buy trade to database: {e}")
 
-        # Choose exit strategy
-        if not self.marry_mode:
-            if self.exit_strategy == "tp_sl":
-                await self._handle_tp_sl_exit(token_info, position)
-            elif self.exit_strategy == "trailing":
-                await self._handle_trailing_exit(token_info, position)
-            elif self.exit_strategy == "time_based":
-                await self._handle_time_based_exit(token_info, position)
-            elif self.exit_strategy == "manual":
-                logger.info("Manual exit strategy - position will remain open")
-        else:
-            logger.info("Marry mode enabled. Skipping sell operation.")
+        # Execute trailing exit strategy
+        await self._monitor_position_until_exit(token_info, position)
 
     async def _handle_failed_buy(
         self, token_info: TokenInfo, buy_result: TradeResult, position: Position
@@ -992,66 +962,6 @@ class UniversalTrader:
             asyncio.create_task(
                 self.market_quality_controller.update_quality_score(self.run_id)
             )
-
-    async def _handle_tp_sl_exit(
-        self, token_info: TokenInfo, position: Position
-    ) -> None:
-        """Handle take profit/stop loss exit strategy."""
-
-        # Monitor position until exit condition is met
-        await self._monitor_position_until_exit(token_info, position)
-
-    async def _handle_trailing_exit(
-        self, token_info: TokenInfo, position: Position
-    ) -> None:
-        """Handle trailing stop exit strategy (no fixed take profit)."""
-
-        await self._monitor_position_until_exit(token_info, position)
-
-    async def _handle_time_based_exit(
-        self, token_info: TokenInfo, position: Position
-    ) -> None:
-        """Handle legacy time-based exit strategy."""
-        logger.info(
-            f"[{self._mint_prefix(token_info.mint)}] Waiting for {self.wait_time_after_buy} seconds before selling..."
-        )
-        await asyncio.sleep(self.wait_time_after_buy)
-
-        logger.info(
-            f"[{self._mint_prefix(token_info.mint)}] Selling {token_info.symbol}..."
-        )
-        sell_result: TradeResult = await self.seller.execute(token_info, position)
-
-        if sell_result.success:
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Successfully sold {token_info.symbol} in transaction {str(sell_result.tx_signature)}"
-            )
-
-            # Always cleanup ATA after sell
-            await cleanup_after_sell(
-                self.solana_client,
-                self.wallet,
-                token_info.mint,
-                self.priority_fee_manager,
-                self.cleanup_with_priority_fee,
-                self.cleanup_force_close_with_burn,
-            )
-        else:
-            logger.error(
-                f"[{self._mint_prefix(token_info.mint)}] Failed to sell {token_info.symbol}: {sell_result.error_message}"
-            )
-
-        # Unsubscribe from trade tracking when time-based exit completes
-        if self.enable_trade_tracking and self.token_listener:
-            try:
-                await self.token_listener.unsubscribe_token_trades(mint=str(token_info.mint))
-                logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Unsubscribed from trade tracking after time-based exit"
-                )
-            except Exception as e:
-                logger.exception(
-                    f"[{self._mint_prefix(token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
-                )
 
     async def _monitor_position_until_exit(
         self, token_info: TokenInfo, position: Position
@@ -1146,7 +1056,7 @@ class UniversalTrader:
 
             # Apply current exit configuration to the loaded position
             position._apply_exit_strategy_config(
-                exit_strategy=self.exit_strategy,
+                exit_strategy="trailing",
                 take_profit_percentage=self.take_profit_percentage,
                 stop_loss_percentage=self.stop_loss_percentage,
                 trailing_stop_percentage=self.trailing_stop_percentage,
@@ -1180,19 +1090,7 @@ class UniversalTrader:
         """Wrapper to monitor a resumed position and cleanup on completion."""
         mint_key = str(position.mint)
         try:
-            if not self.marry_mode:
-                if self.exit_strategy == "tp_sl":
-                    await self._handle_tp_sl_exit(token_info, position)
-                elif self.exit_strategy == "trailing":
-                    await self._handle_trailing_exit(token_info, position)
-                elif self.exit_strategy == "time_based":
-                    await self._handle_time_based_exit(token_info, position)
-                elif self.exit_strategy == "manual":
-                    logger.info("Manual exit strategy - position will remain open")
-            else:
-                logger.info(
-                    "Marry mode enabled. Skipping sell operation for resumed position."
-                )
+            await self._monitor_position_until_exit(token_info, position)
         finally:
             # Unsubscribe from trade tracking if enabled
             if self.enable_trade_tracking and self.token_listener:

@@ -164,7 +164,6 @@ async def start_bot(config_path: str):
             # Extreme fast mode settings
             extreme_fast_mode=cfg["trade"].get("extreme_fast_mode", False),
             # Exit strategy configuration
-            exit_strategy=cfg["trade"].get("exit_strategy", "time_based"),
             take_profit_percentage=cfg["trade"].get("take_profit_percentage"),
             stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),
             trailing_stop_percentage=cfg["trade"].get("trailing_stop_percentage"),
@@ -198,7 +197,6 @@ async def start_bot(config_path: str):
             wait_time_after_creation=cfg.get("retries", {}).get(
                 "wait_after_creation", 15
             ),
-            wait_time_after_buy=cfg.get("retries", {}).get("wait_after_buy", 15),
             wait_time_before_new_token=cfg.get("retries", {}).get(
                 "wait_before_new_token", 15
             ),
@@ -214,7 +212,6 @@ async def start_bot(config_path: str):
             # Trading filters
             match_string=cfg["filters"].get("match_string"),
             bro_address=cfg["filters"].get("bro_address"),
-            marry_mode=cfg["filters"].get("marry_mode", False),
             max_buys=cfg["filters"].get("max_buys", None),
             min_initial_buy_sol=cfg["filters"].get("min_initial_buy_sol", 1.0),
             max_active_mints=cfg["trade"].get("max_active_mints", 1),
