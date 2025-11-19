@@ -16,6 +16,8 @@ from solders.pubkey import Pubkey
 from interfaces.core import Platform, TokenInfo
 from trading.trade_order import Order
 
+from trading.position import Position
+
 
 @dataclass
 class TradeResult:
@@ -185,7 +187,7 @@ class Trader(ABC):
 
 
     @abstractmethod
-    async def process_order(self, order: Order) -> TradeResult:
+    async def process_order(self, position: Position) -> TradeResult:
         pass
 
     def _get_relevant_accounts(self, token_info: TokenInfo) -> list[Pubkey]:

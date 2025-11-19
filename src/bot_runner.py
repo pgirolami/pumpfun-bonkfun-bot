@@ -166,6 +166,7 @@ async def start_bot(config_path: str):
             stop_loss_percentage=cfg["trade"].get("stop_loss_percentage"),
             trailing_stop_percentage=cfg["trade"].get("trailing_stop_percentage"),
             max_hold_time=cfg["trade"].get("max_hold_time"),
+            max_buy_time=cfg["trade"].get("max_buy_time"),
             max_no_price_change_time=cfg["trade"].get("max_no_price_change_time"),
             price_check_interval=cfg["trade"].get("price_check_interval", 10),
             # Listener configuration

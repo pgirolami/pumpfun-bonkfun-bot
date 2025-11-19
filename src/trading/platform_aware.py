@@ -53,15 +53,17 @@ class PlatformAwareBuyer(Trader):
         # Create order with input
         order = BuyOrder(token_info=token_info, sol_amount_raw=int(self.amount * LAMPORTS_PER_SOL))
 
-        # Calculate price and token amount using platform constants
+        order.token_price_sol = await curve_manager.calculate_price(token_info.mint, token_info.bonding_curve)
+
+
+        # We want to compute the max sol (= slippage) from the price the tokens were launched
+        # , not the current price which has already increased and we don't even know what it is yet.
+        #TODO add a setting to indicate whether slippage is from buy at current price or initial price: it might make sense for current price if not sniping
         platform_constants = await curve_manager.get_platform_constants()
         starting_price_sol = platform_constants["starting_price_sol"]
         
         # Calculate token amount based on buy amount and starting price
         order.token_amount_raw = int((self.amount / starting_price_sol) * 10**TOKEN_DECIMALS)
-        order.token_price_sol = starting_price_sol
-
-        # logger.info(f"Token price computed on-chain: {order.token_price_sol} SOL")
 
         # Calculate minimum with slippage (for Let's Bonk)
         order.minimum_token_swap_amount_raw = int(order.token_amount_raw * (1 - self.slippage))
@@ -114,12 +116,15 @@ class PlatformAwareBuyer(Trader):
 
         return order
 
-    async def _confirm_transaction(self, order: BuyOrder) -> SolanaClient.ConfirmationResult:
+    async def _confirm_transaction(self, position: Position) -> SolanaClient.ConfirmationResult:
         """Confirm transaction (overridden in dry-run)."""
+        order = position.buy_order
         return await self.client.confirm_transaction(order.tx_signature)
 
-    async def _analyze_balance_changes(self, order: BuyOrder) -> BalanceChangeResult | None:
+    async def _analyze_balance_changes(self, position: Position) -> BalanceChangeResult | None:
         """Analyze balance changes (overridden in dry-run)."""
+        order = position.buy_order
+        
         # Get transaction with full metadata for balance analysis
         tx = await self.client.get_transaction(order.tx_signature)
         if tx:
@@ -170,23 +175,25 @@ class PlatformAwareBuyer(Trader):
         
         return order
 
-    async def process_order(self, buy_order: BuyOrder) -> TradeResult:
+    async def process_order(self, position: Position) -> TradeResult:
         """Confirm and process buy order, returning trade result.
         
         Args:
-            buy_order: BuyOrder that was previously sent (state should be SENT)
+            position: Position containing the buy_order to process
             
         Returns:
             TradeResult with confirmation status and balance changes
         """
+        buy_order = position.buy_order
+        
         try:
             # Confirm and analyze
-            confirm_result = await self._confirm_transaction(buy_order)
+            confirm_result = await self._confirm_transaction(position)
             logger.debug(f"Confirm result is {confirm_result}")
 
             balance_changes = None
             try:
-                balance_changes = await self._analyze_balance_changes(buy_order)
+                balance_changes = await self._analyze_balance_changes(position)
                 logger.debug(f"[{str(buy_order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.exception(f"[{str(buy_order.token_info.mint)[:8]}] Failed to analyze transaction balances")
@@ -371,12 +378,15 @@ class PlatformAwareSeller(Trader):
 
         return order
 
-    async def _confirm_transaction(self, order: SellOrder) -> SolanaClient.ConfirmationResult:
+    async def _confirm_transaction(self, position: Position) -> SolanaClient.ConfirmationResult:
         """Confirm transaction (overridden in dry-run)."""
+        order = position.sell_order
         return await self.client.confirm_transaction(order.tx_signature)
 
-    async def _analyze_balance_changes(self, order: SellOrder) -> BalanceChangeResult | None:
+    async def _analyze_balance_changes(self, position: Position) -> BalanceChangeResult | None:
         """Analyze balance changes (overridden in dry-run)."""
+        order = position.sell_order
+        
         # Get transaction with full metadata for balance analysis
         tx_with_meta = await self.client.get_transaction(order.tx_signature)
         if tx_with_meta:
@@ -414,6 +424,11 @@ class PlatformAwareSeller(Trader):
         Returns:
             SellOrder with state set to SENT
         """
+
+        if position.buy_order and position.buy_order.state not in [OrderState.CONFIRMED, OrderState.SENT]:
+            logger.info(f"[{str(token_info.mint)[:8]}] Prepare and send sell order failed because buy order is not confirmed or sent")
+            return SellOrder(token_info=token_info, token_amount_raw=0, state=OrderState.FAILED)
+        
         # Prepare order (shared with dry-run)
         order = await self._prepare_sell_order(token_info, position)
 
@@ -428,22 +443,24 @@ class PlatformAwareSeller(Trader):
         
         return order
 
-    async def process_order(self, sell_order: SellOrder) -> TradeResult:
+    async def process_order(self, position: Position) -> TradeResult:
         """Confirm and process sell order, returning trade result.
         
         Args:
-            sell_order: SellOrder that was previously sent (state should be SENT)
+            position: Position containing the sell_order to process
             
         Returns:
             TradeResult with confirmation status and balance changes
         """
+        sell_order = position.sell_order
+        
         try:
             # Confirm and analyze
-            confirm_result = await self._confirm_transaction(sell_order)
+            confirm_result = await self._confirm_transaction(position)
 
             balance_changes = None
             try:
-                balance_changes = await self._analyze_balance_changes(sell_order)
+                balance_changes = await self._analyze_balance_changes(position)
                 logger.debug(f"[{str(sell_order.token_info.mint)[:8]}] Balance analysis resulted in {balance_changes}")
             except Exception as e:
                 logger.exception(f"[{str(sell_order.token_info.mint)[:8]}] Failed to analyze transaction balances")
@@ -486,7 +503,7 @@ class PlatformAwareSeller(Trader):
             return result
 
         except Exception as e:
-            trade_duration_ms = int((time.time() - trade_start_time) * 1000)
+            trade_duration_ms = int((time.time() - sell_order.trade_start_time) * 1000)
             logger.exception("Sell order processing failed")
             logger.info(f"Failed sell trade took {trade_duration_ms}ms")
             
@@ -500,15 +517,6 @@ class PlatformAwareSeller(Trader):
                 error_message=str(e),
                 trade_duration_ms=trade_duration_ms,
             )
-
-    async def execute(self, token_info: TokenInfo, position: Position) -> TradeResult:
-        """Execute sell operation using the order pattern (legacy method for compatibility).
-        
-        This method is kept for backward compatibility but is now a wrapper around
-        prepare_and_send_order() and process_order().
-        """
-        order = await self.prepare_and_send_order(token_info, position)
-        return await self.process_order(order)
 
     def _get_pool_address(
         self, token_info: TokenInfo, address_provider: AddressProvider

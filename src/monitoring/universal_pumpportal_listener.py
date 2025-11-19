@@ -186,6 +186,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
         Returns:
             TokenInfo if token passes filters, None otherwise
         """
+        creation_timestamp = time.time()
         # Get pool name to determine which processor to use
         pool_name = message.get("pool", "").lower()
         if pool_name not in self.pool_to_processors:
@@ -195,7 +196,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
         # Try each processor that supports this pool
         for processor in self.pool_to_processors[pool_name]:
             if processor.can_process(message):
-                token_info = processor.process_token_data(message)
+                token_info = processor.process_token_data(message,creation_timestamp)
                 if token_info:
                     logger.debug(
                         f"Successfully processed token using {processor.platform.value} processor"
@@ -269,7 +270,7 @@ class UniversalPumpPortalListener(BaseTokenListener):
 
         try:
             await self._websocket.send(json.dumps(subscribe_msg))
-            logger.info(f"Sent trade subscription for mint: {mint}")
+            logger.debug(f"Sent trade subscription for mint: {mint}")
         except websockets.exceptions.ConnectionClosed:
             logger.warning(f"WebSocket closed while subscribing to {mint}")
         except Exception as e:

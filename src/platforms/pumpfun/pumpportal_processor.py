@@ -42,7 +42,7 @@ class PumpFunPumpPortalProcessor:
         pool = token_data.get("pool", "").lower()
         return pool in self.supported_pool_names
 
-    def process_token_data(self, token_data: dict) -> TokenInfo | None:
+    def process_token_data(self, token_data: dict, creation_timestamp: float) -> TokenInfo | None:
         """Process pump.fun token data from PumpPortal.
 
         Args:
@@ -112,6 +112,7 @@ class PumpFunPumpPortalProcessor:
                 initial_buy_sol_amount_decimal=sol_amount,
                 virtual_sol_reserves=virtual_sol_reserves,
                 virtual_token_reserves=virtual_token_reserves,
+                creation_timestamp=creation_timestamp,
             )
 
         except Exception:

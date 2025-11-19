@@ -302,7 +302,6 @@ class PositionConverter:
             ),
             min_gain_percentage=min_gain_percentage,  # Set from current configuration
             min_gain_time_window=min_gain_time_window,  # Set from current configuration
-            monitoring_start_ts=None,  # Will be set when monitoring starts
         )
 
 

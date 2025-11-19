@@ -41,7 +41,7 @@ class LetsBonkPumpPortalProcessor:
         pool = token_data.get("pool", "").lower()
         return pool in self.supported_pool_names
 
-    def process_token_data(self, token_data: dict) -> TokenInfo | None:
+    def process_token_data(self, token_data: dict,creation_timestamp: float) -> TokenInfo | None:
         """Process LetsBonk token data from PumpPortal.
 
         Args:
@@ -95,6 +95,7 @@ class LetsBonkPumpPortalProcessor:
                     creator=creator,
                     base_vault=None,  # Will be filled from additional_accounts
                     quote_vault=None,  # Will be filled from additional_accounts
+                    creation_timestamp=creation_timestamp,
                 )
             )
 

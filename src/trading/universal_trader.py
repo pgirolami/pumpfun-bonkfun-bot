@@ -18,11 +18,9 @@ from database.models import PositionConverter
 from interfaces.core import Platform, TokenInfo
 from monitoring.listener_factory import ListenerFactory
 from platforms import get_platform_implementations
-from trading.base import TradeResult
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.position import ExitReason, Position
 from trading.position_monitor import PositionMonitor
-from trading.trade_order import BuyOrder, OrderState
 from utils.logger import get_logger
 from utils.volatility import VolatilityCalculator, calculate_take_profit_adjustment
 
@@ -55,6 +53,7 @@ class UniversalTrader:
         stop_loss_percentage: float | None = None,
         trailing_stop_percentage: float | None = None,
         max_hold_time: int | None = None,
+        max_buy_time: float | None = None,
         max_no_price_change_time: int | None = None,
         price_check_interval: int = 10,
         # Priority fee configuration
@@ -299,6 +298,7 @@ class UniversalTrader:
         self.stop_loss_percentage = stop_loss_percentage
         self.trailing_stop_percentage = trailing_stop_percentage
         self.max_hold_time = max_hold_time
+        self.max_buy_time = max_buy_time
         self.max_no_price_change_time = max_no_price_change_time
         self.price_check_interval = price_check_interval
 
@@ -660,7 +660,6 @@ class UniversalTrader:
 
                 # Spawn concurrent task
                 task = asyncio.create_task(self._handle_token(token_info))
-                self.position_tasks[token_key] = task
                 task_spawned = True
                 logger.debug(f"_process_token_queue() [{self._mint_prefix(token_info.mint)}] Created position task")
                 
@@ -715,18 +714,6 @@ class UniversalTrader:
                     )
                     return
 
-            try:
-                # Subscribe to trade tracking
-                await self.token_listener.subscribe_token_trades(token_info)
-                logger.debug(
-                    f"[{self._mint_prefix(token_info.mint)}] Subscribed to trade tracking for {token_info.symbol}"
-                )
-            except Exception as e:
-                logger.exception(
-                    f"[{self._mint_prefix(token_info.mint)}] Skipping buy -Failed to subscribe to trade tracking: {e}"
-                )
-                return
-
             # Create position before buy (will be updated when buy confirms)
             position = Position.create_from_token_info(
                 token_info=token_info,
@@ -737,72 +724,40 @@ class UniversalTrader:
                 min_gain_time_window=self.min_gain_time_window,
                 buy_amount=self.buy_amount,
             )
-            if self.database_manager:
-                try:
-                    # Insert position
-                    await self.database_manager.insert_position(position)
-                    logger.debug("Persisted position to database")
-                except Exception as e:
-                    logger.exception(f"Failed to persist position to database: {e}")
 
-            # Buy token - prepare and send order (don't wait for confirmation)
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Buying {self.buy_amount:.6f} SOL worth of {token_info.symbol} ({str(token_info.mint)})on {token_info.platform.value}..."
-            )
-
-            buy_order = await self.buyer.prepare_and_send_order(token_info)
-            position.update_from_buy_order(
-                buy_order=buy_order,
-                take_profit_percentage=self.take_profit_percentage,
-                stop_loss_percentage=self.stop_loss_percentage
-            )
-            
-            # Update position in database with buy_order
-            if self.database_manager:
-                try:
-                    await self.database_manager.update_position(position)
-                    logger.debug("Persisted position with buy_order to database")
-                except Exception as e:
-                    logger.exception(f"Failed to persist position to database: {e}")
-
-            # Increment buy counter after sending order
-            self.buy_count += 1
-            logger.info(f"Buy count: {self.buy_count}/{self.max_buys if self.max_buys else 'unlimited'}")
-            
-            # Check if we've reached max_buys
-            if self.max_buys and self.buy_count >= self.max_buys:
-                logger.info(f"Reached max_buys limit ({self.max_buys}). Will stop after all positions close...")
-                self._max_buys_reached = True
-                self._stop_event.set()  # Stop accepting new tokens
-
-            # Create PositionMonitor instance (needed for background BUY confirmation task)
+            # Create PositionMonitor instance
             curve_manager = self.platform_implementations.curve_manager
             position_monitor = PositionMonitor(
                 position=position,
                 token_info=token_info,
                 curve_manager=curve_manager,
+                buyer=self.buyer,
                 seller=self.seller,
                 price_check_interval=self.price_check_interval,
-                database_manager=self.database_manager,
                 token_listener=self.token_listener,
+                buy_amount=self.buy_amount,
+                buy_slippage=self.buy_slippage,
+                wait_time_after_creation=self.wait_time_after_creation,
+                max_buy_time=self.max_buy_time,
+                database_manager=self.database_manager,
                 run_id=self.run_id,
                 enable_volatility_adjustment=self.enable_volatility_adjustment,
                 volatility_window_seconds=self.volatility_window_seconds,
                 volatility_tp_adjustments=self.volatility_tp_adjustments,
                 take_profit_percentage=self.take_profit_percentage,
+                stop_loss_percentage=self.stop_loss_percentage,
                 market_quality_controller=self.market_quality_controller,
+                on_buy_sent=self._increment_buy_count,
+                on_buy_confirmed=None,
             )
             
-            # Start position monitoring as a background task (don't await, don't wait for BUY confirmation)
+            # Start position monitoring (subscribes to trades, inserts position to DB, starts monitor loop)
             mint_key = str(token_info.mint)
-            monitoring_task = asyncio.create_task(position_monitor.monitor())
+            monitoring_task = await position_monitor.start_monitoring()
             monitoring_task.add_done_callback(lambda _: self._cleanup_position_task(mint_key))
             self.position_tasks[mint_key] = monitoring_task
-            
-            # Start background task to confirm the BUY transaction
-            asyncio.create_task(
-                self._confirm_buy_order(position, position_monitor, token_info)
-            )
+            active_mints = [self._mint_prefix(mint) for mint in self.position_tasks.keys() if isinstance(mint, str)]
+            logger.info(f"[{self._mint_prefix(token_info.mint)}] Added monitoring task to self.position_tasks dict which now contains: {active_mints}")
 
             if self._stop_event.is_set():
                 return
@@ -813,6 +768,15 @@ class UniversalTrader:
             # Cleanup: Remove from queued set after processing completes (allows same token to be processed again if it comes in later)
             self._queued_tokens.discard(token_info.mint)
 
+    def _increment_buy_count(self) -> None:
+        """Increment buy counter and check max_buys limit."""
+        self.buy_count += 1
+        logger.info(f"Buy count: {self.buy_count}/{self.max_buys if self.max_buys else 'unlimited'}")
+        if self.max_buys and self.buy_count >= self.max_buys:
+            logger.info(f"Reached max_buys limit ({self.max_buys}). Will stop after all positions close...")
+            self._max_buys_reached = True
+            self._stop_event.set()
+
     def _cleanup_position_task(self, mint: str) -> None:
         """Callback to remove position task when monitoring completes.
         
@@ -821,183 +785,12 @@ class UniversalTrader:
         """
         if mint in self.position_tasks:
             del self.position_tasks[mint]
-            logger.debug(f"Cleaned up position task for mint {self._mint_prefix(mint)}")
+            active_mints = [self._mint_prefix(mint) for mint in self.position_tasks.keys() if isinstance(mint, str)]
+            logger.info(f"Cleaned up position task for mint {self._mint_prefix(mint)}. position_tasks now contains: {active_mints}")
+        else:
+            active_mints = [self._mint_prefix(mint) for mint in self.position_tasks.keys() if isinstance(mint, str)]
+            logger.warning(f"Unable to remove position task for mint {self._mint_prefix(mint)} from position_tasks. position_tasks now contains: {active_mints}")
 
-    async def _confirm_buy_order(
-        self,
-        position: Position,
-        position_monitor: PositionMonitor,
-        token_info: TokenInfo,
-    ) -> None:
-        """Background task to confirm BUY transaction and update position.
-        
-        Args:
-            buy_order: BuyOrder that was sent (state should be SENT)
-            position: Position to update
-            position_monitor: PositionMonitor instance (to signal when result is available)
-            token_info: Token information
-        """
-        try:
-            # Process buy order (confirms transaction and analyzes balance changes)
-            logger.debug(
-                f"[{self._mint_prefix(token_info.mint)}] Going to process {position.buy_order}"
-            )
-            buy_result = await self.buyer.process_order(position.buy_order)
-            entry_ts = int(time() * 1000)
-            logger.info(
-                f"[{self._mint_prefix(token_info.mint)}] Buy result is {buy_result}"
-            )
-            
-            # Update position with actual values from TradeResult
-            # The buy_order state is already set to CONFIRMED in process_order()
-            position.update_from_buy_result(buy_result,entry_ts)                            
-            
-        except Exception as e:
-            logger.exception(
-                f"[{self._mint_prefix(token_info.mint)}] Error in buy confirmation task: {e}"
-            )
-            # Set buy_order state to FAILED on exception
-            position.buy_order.state = OrderState.FAILED
-        finally:
-            # Update position in database
-            if self.database_manager:
-                try:
-                    await self.database_manager.update_position(position)
-                    
-                    # Insert failed buy trade
-                    await self.database_manager.insert_trade(
-                        trade_result=buy_result,
-                        mint=str(token_info.mint),
-                        position_id=position.position_id,
-                        trade_type="buy",
-                        run_id=self.run_id,
-                    )
-                    
-                    logger.debug("Persisted failed buy trade to database")
-                except Exception as e:
-                    logger.exception(f"Failed to persist failed buy trade to database: {e}")
-
-            # Signal that result is available (even if it's an error)
-            position_monitor.buy_result_available_event.set()
-
-    async def _handle_successful_buy(
-        self, token_info: TokenInfo, buy_result: TradeResult, position: Position
-    ) -> None:
-        """Handle successful token purchase (legacy method, kept for backward compatibility)."""
-        logger.info(
-            f"[{self._mint_prefix(token_info.mint)}] Successfully bought {token_info.symbol} on {token_info.platform.value} in transaction {str(buy_result.tx_signature)}"
-        )
-        logger.info(f"Position: {position}")
-        
-        # Persist to database if available
-        if self.database_manager:
-            try:
-
-                await self.database_manager.update_position(position)
-
-                # Insert buy trade
-                await self.database_manager.insert_trade(
-                    trade_result=buy_result,
-                    mint=str(token_info.mint),
-                    position_id=position.position_id,
-                    trade_type="buy",
-                    run_id=self.run_id,
-                )
-
-                logger.debug("Persisted buy trade to database")
-            except Exception as e:
-                logger.exception(f"Failed to persist buy trade to database: {e}")
-
-        # Execute trailing exit strategy
-        await self._monitor_position_until_exit(token_info, position)
-
-    async def _handle_failed_buy(
-        self, token_info: TokenInfo, buy_result: TradeResult, position: Position
-    ) -> None:
-        """Handle failed token purchase."""
-        logger.error(
-            f"[{self._mint_prefix(token_info.mint)}] Failed to buy {token_info.symbol}: {buy_result.error_message}"
-        )
-
-        # Calculate realized PnL for failed buy (loss from fees only)
-        pnl_dict = position._get_pnl()
-        position.realized_pnl_sol_decimal = pnl_dict["realized_pnl_sol_decimal"]
-        position.realized_net_pnl_sol_decimal = pnl_dict["realized_net_pnl_sol_decimal"]
-        
-        from core.pubkeys import LAMPORTS_PER_SOL
-        logger.debug(
-            f"[{self._mint_prefix(token_info.mint)}] Failed buy PnL: {position.realized_pnl_sol_decimal:.6f} SOL "
-            f"(fees: {pnl_dict['total_fees_raw'] / LAMPORTS_PER_SOL:.6f} SOL)"
-        )
-
-
-        # Unsubscribe from trade tracking (buy failed)
-        if self.token_listener:
-            try:
-                await self.token_listener.unsubscribe_token_trades(mint=str(token_info.mint))
-                logger.info(
-                    f"[{self._mint_prefix(token_info.mint)}] Unsubscribed from trade tracking after failed buy"
-                )
-            except Exception as e:
-                logger.exception(
-                    f"[{self._mint_prefix(token_info.mint)}] Failed to unsubscribe from trade tracking: {e}"
-                )
-
-        # Persist failed trade to database if available
-        if self.database_manager:
-            try:
-                await self.database_manager.update_position(position)
-
-                # Insert failed buy trade
-                await self.database_manager.insert_trade(
-                    trade_result=buy_result,
-                    mint=str(token_info.mint),
-                    position_id=position.position_id,
-                    trade_type="buy",
-                    run_id=self.run_id,
-                )
-
-                logger.debug(
-                    f"[{self._mint_prefix(token_info.mint)}] Persisted failed buy trade and position to database"
-                )
-            except Exception as e:
-                logger.exception(
-                    f"[{self._mint_prefix(token_info.mint)}] Failed to persist failed buy trade to database: {e}"
-                )
-
-        # Update market quality score asynchronously (event-driven)
-        # Position is already marked as inactive with FAILED_BUY exit reason
-        if self.market_quality_controller:
-            asyncio.create_task(
-                self.market_quality_controller.update_quality_score(self.run_id)
-            )
-
-    async def _monitor_position_until_exit(
-        self, token_info: TokenInfo, position: Position
-    ) -> None:
-        """Monitor a position until exit conditions are met using event-driven architecture."""
-
-        curve_manager = self.platform_implementations.curve_manager
-        
-        # Create position monitor instance
-        position_monitor = PositionMonitor(
-            position=position,
-            token_info=token_info,
-            curve_manager=curve_manager,
-            seller=self.seller,
-            price_check_interval=self.price_check_interval,
-            database_manager=self.database_manager,
-            token_listener=self.token_listener,
-            run_id=self.run_id,
-            enable_volatility_adjustment=self.enable_volatility_adjustment,
-            volatility_window_seconds=self.volatility_window_seconds,
-            volatility_tp_adjustments=self.volatility_tp_adjustments,
-            take_profit_percentage=self.take_profit_percentage,
-            market_quality_controller=self.market_quality_controller,
-        )
-        
-        # Start monitoring - this will handle all event-driven logic
-        await position_monitor.monitor()
 
     def _get_pool_address(self, token_info: TokenInfo) -> Pubkey:
         """Get the pool/curve address for price monitoring using platform-agnostic method."""
@@ -1072,51 +865,59 @@ class UniversalTrader:
                 max_no_price_change_time=self.max_no_price_change_time,
             )
             
-            # Subscribe to trade tracking for resumed positions
-            await self.token_listener.subscribe_token_trades(token_info)
-            logger.debug(
-                f"[{self._mint_prefix(position.mint)}] Subscribed to trade tracking for resumed position {token_info.symbol}"
+            # Create PositionMonitor instance for resumed position
+            curve_manager = self.platform_implementations.curve_manager
+            position_monitor = PositionMonitor(
+                position=position,
+                token_info=token_info,
+                curve_manager=curve_manager,
+                buyer=self.buyer,
+                seller=self.seller,
+                price_check_interval=self.price_check_interval,
+                token_listener=self.token_listener,
+                buy_amount=self.buy_amount,
+                buy_slippage=self.buy_slippage,
+                wait_time_after_creation=self.wait_time_after_creation,
+                max_buy_time=self.max_buy_time,
+                database_manager=self.database_manager,
+                run_id=self.run_id,
+                enable_volatility_adjustment=self.enable_volatility_adjustment,
+                volatility_window_seconds=self.volatility_window_seconds,
+                volatility_tp_adjustments=self.volatility_tp_adjustments,
+                take_profit_percentage=self.take_profit_percentage,
+                stop_loss_percentage=self.stop_loss_percentage,
+                market_quality_controller=self.market_quality_controller,
+                on_buy_sent=None,  # Resumed positions don't increment buy count
+                on_buy_confirmed=None,
             )
             
             # Track as active and start monitoring task
             task_key = str(position.mint)
-            task = asyncio.create_task(
-                self._monitor_resumed_position(token_info, position)
-            )
-            self.position_tasks[task_key] = task
+            monitoring_task = await position_monitor.start_monitoring()
+            monitoring_task.add_done_callback(lambda _: self._cleanup_resumed_position_task(task_key))
+            self.position_tasks[task_key] = monitoring_task
             logger.info(f"_resume_active_positions() [{self._mint_prefix(token_info.mint)}] Created position task")
 
     def _apply_current_exit_config(self, position: Position) -> None:
         """Override exit strategy thresholds using current bot config."""
         # Use the Position's built-in method to avoid code duplication
+        pass
 
+    def _cleanup_resumed_position_task(self, mint: str) -> None:
+        """Callback to remove resumed position task when monitoring completes.
         
-    async def _monitor_resumed_position(
-        self, token_info: TokenInfo, position: Position
-    ) -> None:
-        """Wrapper to monitor a resumed position and cleanup on completion."""
-        mint_key = str(position.mint)
-        try:
-            await self._monitor_position_until_exit(token_info, position)
-        finally:
-            # Unsubscribe from trade tracking
-            if self.token_listener:
-                try:
-                    await self.token_listener.unsubscribe_token_trades(mint=str(position.mint))
-                    logger.debug(f"[{self._mint_prefix(position.mint)}] Unsubscribed from trade tracking for resumed position")
-                except Exception as e:
-                    logger.debug(f"[{self._mint_prefix(position.mint)}] Failed to unsubscribe from trade tracking: {e}")
-            
-            # Remove from position tasks when monitoring ends or task is cancelled
-            if mint_key in self.position_tasks:
-                del self.position_tasks[mint_key]
-                logger.info(f"[{self._mint_prefix(position.mint)}] Removed position task")
-            
-            # Check if we should stop the trader after all positions close
-            if self._max_buys_reached and len(self.position_tasks) == 0:
-                logger.info("All positions have closed after reaching max_buys limit. Stopping trader...")
-                # This will cause the main loop to exit
-                self._main_stop_event.set()
+        Args:
+            mint: Token mint address
+        """
+        if mint in self.position_tasks:
+            del self.position_tasks[mint]
+            logger.info(f"[{self._mint_prefix(mint)}] Removed resumed position task")
+        
+        # Check if we should stop the trader after all positions close
+        if self._max_buys_reached and len(self.position_tasks) == 0:
+            logger.info("All positions have closed after reaching max_buys limit. Stopping trader...")
+            # This will cause the main loop to exit
+            self._main_stop_event.set()
 
 
 # Backward compatibility alias

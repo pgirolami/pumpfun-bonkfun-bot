@@ -5,6 +5,7 @@ Position management for take profit/stop loss functionality.
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+import logging
 from time import time
 from typing import TYPE_CHECKING
 import hashlib
@@ -25,6 +26,7 @@ class ExitReason(Enum):
     TAKE_PROFIT = "take_profit"
     STOP_LOSS = "stop_loss"
     TRAILING_STOP = "trailing_stop"
+    MAX_BUY_TIME = "max_buy_time"
     MAX_HOLD_TIME = "max_hold_time"
     NO_PRICE_CHANGE = "no_price_change"
     INSUFFICIENT_GAIN = "insufficient_gain"
@@ -43,6 +45,7 @@ class Position:
     # Token information
     mint: Pubkey
     platform: Platform
+    token_creation_timestamp: float | None = None
 
     # Position details
     entry_net_price_decimal: float | None = None  # Net price from TradeResult.net_price_sol_decimal()
@@ -64,9 +67,6 @@ class Position:
     # Insufficient gain exit condition
     min_gain_percentage: float | None = None  # minimum gain required within time window
     min_gain_time_window: int = 2  # seconds to check for minimum gain (configurable)
-    
-    # Monitoring timing
-    monitoring_start_ts: int | None = None  # when position monitoring actually started (Unix epoch milliseconds)
     
     # Creator tracking (raw token units)
     creator_token_swap_in: int = 0    # Tokens bought by creator
@@ -154,12 +154,13 @@ class Position:
             position_id=position_id,
             mint=token_info.mint,
             platform=token_info.platform,
+            token_creation_timestamp=token_info.creation_timestamp,
             buy_amount=buy_amount,
             token_quantity_decimal=0.0,  # Will be updated from buy order
             total_token_swapin_amount_raw=0,  # Will be updated from buy order
             total_token_swapout_amount_raw=0,
             entry_ts=entry_ts,
-            is_active=False,  # Not active until buy confirms
+            is_active=True,  # Active immediately since we're *considering* a buy
             max_hold_time=max_hold_time,
             max_no_price_change_time=max_no_price_change_time,
             trailing_stop_percentage=trailing_stop_percentage,
@@ -180,8 +181,8 @@ class Position:
         Args:
             buy_order: BuyOrder with expected token amounts and price
         """
+        # logger.info(f"[{self.mint}] update_from_buy_order() called")
         self.buy_order = buy_order
-        self.is_active = True
         
         # Set expected values from order (these may differ from actual after confirmation)
         
@@ -209,7 +210,7 @@ class Position:
             sell_order: SellOrder with token amount to sell
         """
         self.sell_order = sell_order
-        self.is_active = False
+#        self.is_active = False
 
     def update_from_buy_result(self, buy_result: TradeResult,entry_ts:int) -> None:
         # Update position fields from buy_result
@@ -221,7 +222,7 @@ class Position:
 
         self.entry_ts = entry_ts
 
-        self.exit_reason=buy_result.
+        self.exit_reason=None if buy_result.success else ExitReason.FAILED_BUY
         
         self.entry_net_price_decimal = buy_result.net_price_sol_decimal()
 
@@ -230,6 +231,10 @@ class Position:
         self.tip_fee_raw = buy_result.tip_fee_raw
         self.rent_exemption_amount_raw = buy_result.rent_exemption_amount_raw
         self.unattributed_sol_amount_raw = buy_result.unattributed_sol_amount_raw
+
+        pnl_dict = self._get_pnl(buy_result.net_price_sol_decimal())
+        self.realized_pnl_sol_decimal = pnl_dict["realized_pnl_sol_decimal"]
+        self.realized_net_pnl_sol_decimal = pnl_dict["realized_net_pnl_sol_decimal"]
 
 #    def update_from_sell_result(self, sell_result: TradeResult,entry_ts:int) -> None:
         
@@ -277,16 +282,6 @@ class Position:
         """
         return (self.total_token_swapin_amount_raw or 0) - (self.total_token_swapout_amount_raw or 0)
 
-    def set_monitoring_start_time(self, timestamp: int) -> None:
-        """Set the monitoring start time (when first price was received).
-        
-        Args:
-            timestamp: Unix epoch milliseconds when monitoring started
-        """
-        if self.monitoring_start_ts is None:
-            self.monitoring_start_ts = timestamp
-            logger.debug(f"Position monitoring started at {timestamp} (entry was at {self.entry_ts})")
-
     def should_exit(self, current_price: float | None, current_time: float) -> tuple[bool, ExitReason | None]:
         """Check if position should be exited based on current conditions.
 
@@ -300,14 +295,16 @@ class Position:
         current_time_ms = int(current_time * 1000)
 
         # Check max hold time
-        if self.max_hold_time:
+        if self.max_hold_time and self.buy_order and self.buy_order.trade_start_time:
+            # Max hold time is based on buy order trade start time (total time position has been open)
             start_time = self.buy_order.trade_start_time
-            # Max hold time is based on entry time (total time position has been open)
-            elapsed_time = (current_time_ms - start_time) / 1000  # Convert to seconds
+            elapsed_time = (current_time - start_time)  # Convert to seconds
             if elapsed_time >= self.max_hold_time:
-                logger.info(f"[{str(self.mint)[:8]}] elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time} (start_time={datetime.fromtimestamp(start_time):%Y-%m-%d %H:%M:%S.%f})")
+                logger.info(
+                    f"[{str(self.mint)[:8]}] elapsed_time {elapsed_time} >= max_hold_time {self.max_hold_time} "
+                    f"(start_time={datetime.fromtimestamp(start_time):%Y-%m-%d %H:%M:%S.%f})"
+                )
                 return True, ExitReason.MAX_HOLD_TIME
-#            logger.info(f"elapsed_time {elapsed_time} < max_hold_time {self.max_hold_time}")
 
         if not self.is_active:
             return False, None
@@ -348,9 +345,9 @@ class Position:
 
         # Check insufficient gain within time window
         if self.min_gain_percentage is not None:
-            # Only check if monitoring has started (don't use entry time)
-            if self.monitoring_start_ts is not None:
-                elapsed_time = (current_time_ms - self.monitoring_start_ts) / 1000  # Convert to seconds
+            # Only check if buy order exists and has trade_start_time
+            if self.buy_order and self.buy_order.trade_start_time:
+                elapsed_time = (current_time - self.buy_order.trade_start_time)  # Convert to seconds
                 
                 # Only check if we're within the time window
                 if elapsed_time >= self.min_gain_time_window:
@@ -358,23 +355,28 @@ class Position:
                     current_gain = (current_price - self.entry_net_price_decimal) / self.entry_net_price_decimal
                     
                     if current_gain < self.min_gain_percentage:
-                        logger.info(f"current_gain {current_gain:.4f} < min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s (self.min_gain_time_window={self.min_gain_time_window}s)")
+                        logger.info(
+                            f"current_gain {current_gain:.4f} < min_gain_percentage {self.min_gain_percentage:.4f} "
+                            f"after {elapsed_time:.1f}s (self.min_gain_time_window={self.min_gain_time_window}s)"
+                        )
                         return True, ExitReason.INSUFFICIENT_GAIN
                     else:
-                        logger.debug(f"current_gain {current_gain:.4f} >= min_gain_percentage {self.min_gain_percentage:.4f} after {elapsed_time:.1f}s so setting min_gain_percentage to None so we don't check again")
-                        self.min_gain_percentage=None
-            else:
-                logger.info(f"monitoring_start_ts is not set : {self.monitoring_start_ts}")
+                        logger.debug(
+                            f"current_gain {current_gain:.4f} >= min_gain_percentage {self.min_gain_percentage:.4f} "
+                            f"after {elapsed_time:.1f}s so setting min_gain_percentage to None so we don't check again"
+                        )
+                        self.min_gain_percentage = None
 
         return False, None
 
-    def close_position(self, sell_result: "TradeResult", exit_reason: ExitReason) -> None:
+    def close_position(self, sell_result: TradeResult, exit_reason: ExitReason) -> None:
         """Close the position with exit details.
 
         Args:
             sell_result: TradeResult from the sell transaction
             exit_reason: Reason for exit
         """
+        logging.info(f"[{str(self.mint)[:8]}] close_position() called with exit_reason: {exit_reason}")
         self.is_active = False
         self.exit_net_price_decimal = sell_result.net_price_sol_decimal()
         self.exit_reason = exit_reason
@@ -400,11 +402,11 @@ class Position:
         self.unattributed_sol_amount_raw = (self.unattributed_sol_amount_raw or 0) + (sell_result.unattributed_sol_amount_raw or 0)
             
         # Calculate realized PnL using get_net_pnl method
-        pnl_dict = self._get_pnl()  # No parameter needed since position is now inactive
+        pnl_dict = self._get_pnl(sell_result.net_price_sol_decimal())  # No parameter needed since position is now inactive
         self.realized_pnl_sol_decimal = pnl_dict["realized_pnl_sol_decimal"]
         self.realized_net_pnl_sol_decimal = pnl_dict["realized_net_pnl_sol_decimal"]
 
-    def _get_pnl(self, current_price: float | None = None) -> dict:
+    def _get_pnl(self, current_price: float) -> dict:
         """Calculate profit/loss for the position.
 
         Args:
@@ -413,8 +415,6 @@ class Position:
         Returns:
             Dictionary with PnL information
         """
-        if self.is_active and current_price is None:
-            raise ValueError("current_price required for active position")
 
         # Special case for failed buys - only calculate loss from fees
         if self.exit_reason == ExitReason.FAILED_BUY:
@@ -439,18 +439,19 @@ class Position:
 
         # Handle case where buy hasn't confirmed yet (pending position)
         if self.buy_order is None or self.buy_order.state != OrderState.CONFIRMED:
-            logger.info(f"Position is pending - return zero PnL with available fee information")
+            # logger.info(f"Buy is pending - return zero PnL with available fee information")
             # Position is pending - return zero PnL with available fee information
             transaction_fee_raw = int(self.transaction_fee_raw or 0)
             platform_fee_raw = int(self.platform_fee_raw or 0)
             tip_fee_raw = int(self.tip_fee_raw or 0)
             total_fees_raw = transaction_fee_raw + platform_fee_raw + tip_fee_raw
+            total_fees_sol = float(total_fees_raw) / LAMPORTS_PER_SOL
             
             return {
                 "current_price": None,
                 "net_price_change_decimal": None,
                 "net_price_change_pct": None,
-                "realized_pnl_sol_decimal": 0.0,  # No PnL until buy confirms
+                "realized_pnl_sol_decimal": -total_fees_sol,  # No PnL until buy confirms
                 "realized_net_pnl_sol_decimal": 0.0,
                 "quantity": 0.0,
                 "transaction_fee_raw": transaction_fee_raw,
@@ -459,11 +460,11 @@ class Position:
                 "total_fees_raw": total_fees_raw,
             }
 
-        price_to_use = self.exit_net_price_decimal if not self.is_active else current_price
-        if price_to_use is None:
-            raise ValueError("No price available for PnL calculation")
 
-        net_price_change_decimal = price_to_use - self.entry_net_price_decimal
+        if self.exit_net_price_decimal is not None and self.exit_net_price_decimal != current_price:
+            logger.warning(f"Exit net price decimal {self.exit_net_price_decimal} does not match current price passed as a parameter {current_price}")
+
+        net_price_change_decimal = current_price - self.entry_net_price_decimal
         net_price_change_pct = (net_price_change_decimal / self.entry_net_price_decimal) * 100
 
         transaction_fee_raw = int(self.transaction_fee_raw or 0)
@@ -475,36 +476,20 @@ class Position:
         net_pnl_sol = (net_price_change_decimal * self.token_quantity_decimal)
         gross_pnl_sol = net_pnl_sol - (float(total_fees_raw) / LAMPORTS_PER_SOL)
 
-        if self.is_active:
-            return {
-                "entry_price": self.entry_net_price_decimal,
-                "current_price": price_to_use,
-                "net_price_change_decimal": net_price_change_decimal,
-                "net_price_change_pct": net_price_change_pct,
-                "realized_pnl_sol_decimal": gross_pnl_sol, 
-                "realized_net_pnl_sol_decimal": net_pnl_sol,  
-                "quantity": self.token_quantity_decimal,
-                "transaction_fee_raw": transaction_fee_raw,
-                "platform_fee_raw": platform_fee_raw,
-                "tip_fee_raw": tip_fee_raw,
-                "total_fees_raw": total_fees_raw,
-                "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
-            }
-        else:
-            return {
-                "entry_price": self.entry_net_price_decimal,
-                "current_price": price_to_use,
-                "net_price_change_decimal": net_price_change_decimal,
-                "net_price_change_pct": net_price_change_pct,
-                "realized_pnl_sol_decimal": gross_pnl_sol,
-                "realized_net_pnl_sol_decimal": net_pnl_sol,
-                "quantity": self.token_quantity_decimal,
-                "transaction_fee_raw": transaction_fee_raw,
-                "platform_fee_raw": platform_fee_raw,
-                "tip_fee_raw": tip_fee_raw,
-                "total_fees_raw": total_fees_raw,
-                "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
-            }
+        return {
+            "entry_price": self.entry_net_price_decimal,
+            "current_price": current_price,
+            "net_price_change_decimal": net_price_change_decimal,
+            "net_price_change_pct": net_price_change_pct,
+            "realized_pnl_sol_decimal": gross_pnl_sol, 
+            "realized_net_pnl_sol_decimal": net_pnl_sol,  
+            "quantity": self.token_quantity_decimal,
+            "transaction_fee_raw": transaction_fee_raw,
+            "platform_fee_raw": platform_fee_raw,
+            "tip_fee_raw": tip_fee_raw,
+            "total_fees_raw": total_fees_raw,
+            "total_fees_sol": total_fees_raw / LAMPORTS_PER_SOL,
+        }
 
     def update_creator_tracking(self, creator_swap_in: int, creator_swap_out: int) -> None:
         """Update creator token swap tracking from trade tracker.

@@ -6,12 +6,12 @@ from core.pubkeys import LAMPORTS_PER_SOL, TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE, TO
 from interfaces.core import CurveManager
 from platforms import Platform
 from platforms.pumpfun import curve_manager
-from solders.instruction import Instruction
-from solders.pubkey import Pubkey
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
 from trading.trade_order import BuyOrder, Order, SellOrder
+from trading.position import Position
 from utils.logger import get_logger
 from core.client import SolanaClient
+from platforms.pumpfun.balance_analyzer import BalanceChangeResult
 
 logger = get_logger(__name__)
 
@@ -25,7 +25,7 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
         super().__init__(*args, **kwargs)
         self.dry_run_wait_time = dry_run_wait_time
         self.curve_manager = curve_manager
-        self.PROPAGATION_SLEEP_TIME = 3.0
+        self.DATA_PROPAGATION_SLEEP_TIME = 3.0
     
     async def _execute_transaction(self, order: BuyOrder) -> BuyOrder:
         """Override to simulate instead of actually sending transaction."""
@@ -35,11 +35,12 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                             
         return order
     
-    async def _confirm_transaction(self, order: BuyOrder) -> SolanaClient.ConfirmationResult:
+    async def _confirm_transaction(self, position: Position) -> SolanaClient.ConfirmationResult:
         """Override to simulate transaction confirmation."""
+        order = position.buy_order
 
         # Simulate network latency
-        logger.info(f"[{str(order.token_info.mint)[:8]}]DRY RUN BUY: Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
+        logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN BUY: Simulating buy transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
 
         # Simulate slippage validation - calculate actual SOL cost for fixed token amount
@@ -60,24 +61,22 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
                 # Calculate actual price based on order's token amount and actual SOL cost
                 trade_price_sol_per_token = abs((net_sol_swapped_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS)))
                 order.token_price_sol = trade_price_sol_per_token
-                logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN BUY:  Amount of token swapped would be {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS} tokens) Net SOL swapped {net_sol_swapped_raw} ({net_sol_swapped_raw/1_000_000_000} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
+                # logger.info(f"[{str(buy_order.token_info.mint)[:8]}] DRY RUN BUY:  Amount of token swapped would be {buy_order.token_amount_raw} ({buy_order.token_amount_raw/10**TOKEN_DECIMALS} tokens) Net SOL swapped {net_sol_swapped_raw} ({net_sol_swapped_raw/1_000_000_000} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
 
             except Exception:
-                logger.exception(f"[{str(order.token_info.mint)[:8]}] Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.PROPAGATION_SLEEP_TIME}s and retrying")
-                await asyncio.sleep(self.PROPAGATION_SLEEP_TIME)
+                logger.exception(f"[{str(order.token_info.mint)[:8]}] DRY RUN BUY: Could not retrieve SOL amount swapped for {str(order.token_info.mint)}, account isn't propagated yet. Sleep for {self.DATA_PROPAGATION_SLEEP_TIME}s and retrying")
+                await asyncio.sleep(self.DATA_PROPAGATION_SLEEP_TIME)
 
         order.block_ts=int(time()*1000)
 
         # Check if actual SOL cost exceeds slippage tolerance
         if -net_sol_swapped_raw > order.max_sol_amount_raw:
             # Simulate slippage failure - still charge transaction fees
-            from core.pubkeys import LAMPORTS_PER_SOL
             logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN BUY: Simulating slippage failure - expected max {order.max_sol_amount_raw / LAMPORTS_PER_SOL} SOL, actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL} SOL")
             order.tx_signature = f"DRYRUN_BUY_FAILED_{order.token_info.mint}_{int(time()*1000)}"
             order.slippage_failed = True  # Add flag to indicate slippage failure
         else:
-            from core.pubkeys import LAMPORTS_PER_SOL
-            logger.info(f"[{str(order.token_info.mint)[:8]}]DRY RUN BUY: Slippage check passed - actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL} SOL)")
+            logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN BUY: Slippage check passed - actual cost {-net_sol_swapped_raw / LAMPORTS_PER_SOL} SOL (max allowed: {order.max_sol_amount_raw / LAMPORTS_PER_SOL} SOL)")
         
         return SolanaClient.ConfirmationResult(
             success=not order.slippage_failed,
@@ -86,12 +85,13 @@ class DryRunPlatformAwareBuyer(PlatformAwareBuyer):
             error_message=f"Slippage tolerance exceeded" if order.slippage_failed else None,
         )
     
-    async def _analyze_balance_changes(self, order: BuyOrder):
+    async def _analyze_balance_changes(self, position: Position):
         """Override to simulate balance analysis for dry-run."""
+        order = position.buy_order
         
         # Create a mock balance change result
         from platforms.pumpfun.balance_analyzer import BalanceChangeResult
-#        logger.info(f"Analyzing balance changes for buy order {order}")
+#        logger.info(f"Analyzing balance changes for buy order {buy_order}")
 
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
 
@@ -166,8 +166,10 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         order.tx_signature = f"DRYRUN_SELL_{order.token_info.mint}_{int(time()*1000)}"
         return order
     
-    async def _confirm_transaction(self, order: SellOrder) -> SolanaClient.ConfirmationResult:
+    async def _confirm_transaction(self, position: Position) -> SolanaClient.ConfirmationResult:
         """Override to simulate transaction confirmation."""
+        order = position.sell_order
+        
         # Simulate network latency
         logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN SELL: Simulating sell transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
@@ -184,7 +186,7 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         trade_price_sol_per_token = abs((net_sol_swap_raw / 1_000_000_000) / (order.token_amount_raw / (10 ** TOKEN_DECIMALS)))
         order.token_price_sol = trade_price_sol_per_token
 
-        logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN SELL: Amount of token swapped would be  {order.token_amount_raw} ({order.token_amount_raw/10**TOKEN_DECIMALS} tokens) Net SOL swapped {net_sol_swap_raw} ({net_sol_swap_raw/1_000_000_000} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
+        # logger.info(f"[{str(sell_order.token_info.mint)[:8]}] DRY RUN SELL: Amount of token swapped would be  {sell_order.token_amount_raw} ({sell_order.token_amount_raw/10**TOKEN_DECIMALS} tokens) Net SOL swapped {net_sol_swap_raw} ({net_sol_swap_raw/1_000_000_000} SOL), trade_price_sol_per_token={trade_price_sol_per_token} SOL")
         
         return SolanaClient.ConfirmationResult(
             success=True,
@@ -193,12 +195,11 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
             block_ts=order.block_ts,  # Current time for dry run
         )
     
-    async def _analyze_balance_changes(self, order: SellOrder):
+    async def _analyze_balance_changes(self, position: Position):
         """Override to simulate balance analysis for dry-run."""
-        # logger.info(f"Simulating balance analysis for sell order")
+        order = position.sell_order
         
-        # Create a mock balance change result
-        from platforms.pumpfun.balance_analyzer import BalanceChangeResult
+        # logger.info(f"Simulating balance analysis for sell order")
         
         net_sol_swap_amount_raw = order.expected_sol_swap_amount_raw
 

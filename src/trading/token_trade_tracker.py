@@ -75,21 +75,21 @@ class TokenTradeTracker:
             trade_data: Trade message from PumpPortal containing updated reserves
             timestamp: Unix timestamp when the trade occurred (mandatory)
         """
+        tx_type = trade_data.get("txType", "")
+
         # Extract updated reserves from trade message (real on-chain values)
         sol_reserves_from_trade = int(trade_data.get("vSolInBondingCurve")*LAMPORTS_PER_SOL)
         token_reserves_from_trade = int(trade_data.get("vTokensInBondingCurve")*10**TOKEN_DECIMALS)
+        # Extract trade amounts from trade message and convert to raw units
+        sol_amount_decimal = trade_data.get("solAmount", 0.0)
+        token_amount_decimal = trade_data.get("tokenAmount", 0.0)
+        sol_amount_raw = int(sol_amount_decimal * LAMPORTS_PER_SOL)
+        token_amount_raw = int(token_amount_decimal * 10**TOKEN_DECIMALS)
         
         # Extract trader public key and check if excluded
         trader_public_key = str(trade_data.get("traderPublicKey", ""))
         if trader_public_key and trader_public_key in self.excluded_wallets:
-            # Extract trade amounts from trade message and convert to raw units
-            sol_amount_decimal = trade_data.get("solAmount", 0.0)
-            token_amount_decimal = trade_data.get("tokenAmount", 0.0)
-            sol_amount_raw = int(sol_amount_decimal * LAMPORTS_PER_SOL)
-            token_amount_raw = int(token_amount_decimal * 10**TOKEN_DECIMALS)
-            
             # Determine trade direction
-            tx_type = trade_data.get("txType", "")
             
             if tx_type == "buy" or tx_type == "create":
                 # BUY: the wallet provided SOL to the bonding curve so we need to subtract it to cancel out the transaction
@@ -123,10 +123,8 @@ class TokenTradeTracker:
         
         # Track creator trades (reuse trader_public_key extracted earlier)
         # logger.info(f"[{str(self.mint)[:8]}] apply_trade() -> trader_public_key= {trader_public_key} vs self.creator_public_key= {self.creator_public_key}")
-        if trader_public_key == self.creator_public_key:
-            token_amount_decimal = trade_data.get("tokenAmount", 0.0)
-            token_amount_raw = int(token_amount_decimal * 10**TOKEN_DECIMALS)
-            tx_type = trade_data.get("txType")
+        is_creator_trade = trader_public_key == self.creator_public_key
+        if is_creator_trade:
             
             if tx_type == "buy" or tx_type == "create":
                 self.creator_token_swap_in += token_amount_raw
@@ -156,7 +154,7 @@ class TokenTradeTracker:
         self.price_update_event.set()
         
         formatted_time = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S.%f")[:-3]
-        logger.debug(f"[{str(self.mint)[:8]}] TRADE [{trader_public_key}] at {formatted_time} token: {self.virtual_token_reserves}, SOL: {self.virtual_sol_reserves} -> price={current_price}")
+        logger.info(f"[{str(self.mint)[:8]}] {trader_public_key[:8]}{"■" if is_creator_trade else ""} {tx_type}s {token_amount_decimal} tokens for {sol_amount_decimal} SOL. Reserves: {self.virtual_token_reserves} (token), {self.virtual_sol_reserves} (SOL) -> price={current_price} at {formatted_time}")
     
     def record_simulated_trade(self, sol_swap_raw: int, token_swap_raw: int, timestamp: float) -> None:
         """Record a simulated trade to adjust future reserve calculations.
