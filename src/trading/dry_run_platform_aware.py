@@ -7,7 +7,7 @@ from interfaces.core import CurveManager
 from platforms import Platform
 from platforms.pumpfun import curve_manager
 from trading.platform_aware import PlatformAwareBuyer, PlatformAwareSeller
-from trading.trade_order import BuyOrder, Order, SellOrder
+from trading.trade_order import BuyOrder, Order, OrderState, SellOrder
 from trading.position import Position
 from utils.logger import get_logger
 from core.client import SolanaClient
@@ -173,6 +173,18 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         # Simulate network latency
         logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN SELL: Simulating sell transaction (wait: {self.dry_run_wait_time}s)")
         await asyncio.sleep(self.dry_run_wait_time)
+
+
+        if position.buy_order.state != OrderState.CONFIRMED:
+            logger.info(f"[{str(order.token_info.mint)[:8]}] DRY RUN SELL: Simulating sell transaction failure because buy order is not confirmed so we can't sell")
+            order.tx_signature = f"DRYRUN_SELL_FAILED_{order.token_info.mint}_{int(time()*1000)}"
+            return SolanaClient.ConfirmationResult(
+                success=False,
+                tx=order.tx_signature,
+                error_message="No such token account (=buy order is not confirmed)",
+                block_ts=None,
+            )
+
         order.block_ts=int(time()*1000)
         
         net_sol_swap_raw = await self.curve_manager.calculate_sell_amount_out(
@@ -199,29 +211,39 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
         """Override to simulate balance analysis for dry-run."""
         order = position.sell_order
         
-        # logger.info(f"Simulating balance analysis for sell order")
-        
-        net_sol_swap_amount_raw = order.expected_sol_swap_amount_raw
+        net_sol_swap_amount_raw = 0
+        rent_exemption_amount_raw = 0
+        tip_fee_raw = 0
+        is_sell_failure = order.tx_signature.startswith("DRYRUN_SELL_FAILED_")
+        if is_sell_failure:
+            order.token_amount_raw=0
+            order.protocol_fee_raw=0
+            order.creator_fee_raw=0
+            order.tip_fee_raw=0
+            order.rent_exemption_amount_raw=0
+            order.unattributed_sol_amount_raw=0
+        else: # not a failure
+            net_sol_swap_amount_raw = order.expected_sol_swap_amount_raw
+            rent_exemption_amount_raw = TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE
 
-        # Get platform fee percentage from curve manager
-        platform_constants = await self.curve_manager.get_platform_constants()
-        protocol_fee_percentage = float(platform_constants.get("fee_percentage", 0.95))/100 
-        creator_fee_percentage = float(platform_constants.get("creator_fee_percentage", 0.3))/100 
-        # Still charge transaction fees even on slippage failure
+            # Get platform fee percentage from curve manager
+            platform_constants = await self.curve_manager.get_platform_constants()
+            protocol_fee_percentage = float(platform_constants.get("fee_percentage", 0.95))/100 
+            creator_fee_percentage = float(platform_constants.get("creator_fee_percentage", 0.3))/100 
+            order.protocol_fee_raw = int(net_sol_swap_amount_raw * protocol_fee_percentage)
+            order.creator_fee_raw = int(net_sol_swap_amount_raw * creator_fee_percentage)
+            tip_fee_raw = self.client.tip_amount_lamports if self.client.send_method == "helius_sender" else 0
+
         order.transaction_fee_raw = 5000 + int((order.compute_unit_limit * order.priority_fee) / 1_000_000)
-        order.protocol_fee_raw = int(net_sol_swap_amount_raw * protocol_fee_percentage)
-        order.creator_fee_raw = int(net_sol_swap_amount_raw * creator_fee_percentage)
-
-        tip_fee_raw = self.client.tip_amount_lamports if self.client.send_method == "helius_sender" else 0
-
         sol_amount_raw=(
-            TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE
+            rent_exemption_amount_raw
             +net_sol_swap_amount_raw
             -order.protocol_fee_raw
             -order.creator_fee_raw
             -order.transaction_fee_raw
             -tip_fee_raw
         )
+        order.sol_amount_raw=sol_amount_raw
 
         result = BalanceChangeResult(
             token_swap_amount_raw=-order.token_amount_raw,
@@ -230,17 +252,18 @@ class DryRunPlatformAwareSeller(PlatformAwareSeller):
             protocol_fee_raw=order.protocol_fee_raw,
             creator_fee_raw=order.creator_fee_raw,
             tip_fee_raw=tip_fee_raw,
-            rent_exemption_amount_raw=TOKEN_ACCOUNT_RENT_EXEMPT_RESERVE,
+            rent_exemption_amount_raw=rent_exemption_amount_raw,
             unattributed_sol_amount_raw=0,
             sol_amount_raw=sol_amount_raw,
         )
         
-        # Record simulated trade for price tracking
-        self.curve_manager.record_simulated_trade(
-            mint=order.token_info.mint,
-            sol_swap_raw=net_sol_swap_amount_raw,  # positive for sell
-            token_swap_raw=-order.token_amount_raw,  # negative for sell
-            timestamp=time(),
-        )
+        if not is_sell_failure:
+            # Record simulated trade for price tracking
+            self.curve_manager.record_simulated_trade(
+                mint=order.token_info.mint,
+                sol_swap_raw=net_sol_swap_amount_raw,  # positive for sell
+                token_swap_raw=-order.token_amount_raw,  # negative for sell
+                timestamp=time(),
+            )
         
         return result
