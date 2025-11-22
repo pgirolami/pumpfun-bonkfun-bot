@@ -63,6 +63,8 @@ class TokenInfoConverter:
             else None,
             token_info.initial_buy_token_amount_decimal,
             token_info.initial_buy_sol_amount_decimal,
+            str(token_info.token_program_id) if token_info.token_program_id else None,
+            1 if token_info.is_mayhem_mode else 0,
         )
 
     @staticmethod
@@ -93,6 +95,8 @@ class TokenInfoConverter:
             additional_data=json.loads(row[13]) if row[13] else None,
             initial_buy_token_amount_decimal=row[14] if len(row) > 14 else None,
             initial_buy_sol_amount_decimal=row[15] if len(row) > 15 else None,
+            token_program_id=Pubkey.from_string(row[16]) if len(row) > 16 and row[16] else None,
+            is_mayhem_mode=bool(row[17]) if len(row) > 17 else False,
         )
 
 

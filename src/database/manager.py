@@ -72,6 +72,27 @@ class DatabaseManager:
                 # Do not fail initialization if migration fails; log and continue
                 logger.exception("Failed to migrate 'positions' table to add buy_order and sell_order columns")
             
+            # Migration: ensure 'token_program_id' and 'is_mayhem_mode' columns exist on token_info table
+            try:
+                cursor = conn.execute("PRAGMA table_info(token_info)")
+                columns = {row[1] for row in cursor.fetchall()}
+                if "token_program_id" not in columns:
+                    conn.execute("ALTER TABLE token_info ADD COLUMN token_program_id TEXT")
+                    # Set default for existing rows: TOKEN_PROGRAM (old token program)
+                    conn.execute(
+                        "UPDATE token_info SET token_program_id = ? WHERE token_program_id IS NULL",
+                        ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",)
+                    )
+                if "is_mayhem_mode" not in columns:
+                    conn.execute("ALTER TABLE token_info ADD COLUMN is_mayhem_mode INTEGER DEFAULT 0")
+                    # Set default for existing rows: False (0)
+                    conn.execute(
+                        "UPDATE token_info SET is_mayhem_mode = 0 WHERE is_mayhem_mode IS NULL"
+                    )
+            except Exception:
+                # Do not fail initialization if migration fails; log and continue
+                logger.exception("Failed to migrate 'token_info' table to add token_program_id and is_mayhem_mode columns")
+            
             conn.commit()
 
         logger.info(f"Database initialized at {self.db_path}")
@@ -105,8 +126,8 @@ class DatabaseManager:
                 INSERT OR IGNORE INTO token_info 
                 (mint, platform, name, symbol, uri, bonding_curve, associated_bonding_curve,
                  pool_state, base_vault, quote_vault, user, creator, creator_vault, additional_data,
-                 initial_buy_token_amount_decimal, initial_buy_sol_amount_decimal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 initial_buy_token_amount_decimal, initial_buy_sol_amount_decimal, token_program_id, is_mayhem_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 row,
             )

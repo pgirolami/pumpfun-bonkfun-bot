@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS token_info (
     additional_data TEXT,  -- JSON serialized dict
     initial_buy_token_amount_decimal REAL,  -- PumpPortal initial buy token amount (decimal)
     initial_buy_sol_amount_decimal REAL,  -- PumpPortal initial buy SOL amount (decimal)
+    token_program_id TEXT,  -- Token or Token2022 program identifier
+    is_mayhem_mode INTEGER,  -- pump.fun mayhem mode flag (0/1 boolean)
     PRIMARY KEY (mint, platform)
 );
 
