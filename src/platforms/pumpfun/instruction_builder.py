@@ -65,7 +65,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         """
         instructions = []
 
-        # Get all required accounts
+        # Get all required accounts (includes mayhem-mode-aware fee recipient)
         accounts_info = address_provider.get_buy_instruction_accounts(token_info, user)
         
         # Add user_token_account (derived from ATA for new transactions)
@@ -77,11 +77,12 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         accounts_info["fee"] = selected_fee_recipient
 
         # 1. Create idempotent ATA instruction (won't fail if ATA already exists)
+        # Use token_program from accounts_info to ensure AddressProvider controls program selection
         ata_instruction = create_idempotent_associated_token_account(
             user,  # payer
             user,  # owner
             token_info.mint,  # mint
-            SystemAddresses.TOKEN_PROGRAM,  # token program
+            accounts_info["token_program"],  # token program from AddressProvider
         )
         instructions.append(ata_instruction)
 
@@ -132,7 +133,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             AccountMeta(
                 pubkey=accounts_info["global_volume_accumulator"],
                 is_signer=False,
-                is_writable=True,
+                is_writable=False,
             ),
             AccountMeta(
                 pubkey=accounts_info["user_volume_accumulator"],
@@ -153,11 +154,14 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             ),
         ]
 
-        # Build instruction data: discriminator + token_amount + max_sol_cost
+        # Build instruction data: discriminator + token_amount + max_sol_cost + track_volume
+        # Encode OptionBool for track_volume: [1, 1] = Some(true)
+        track_volume_bytes = bytes([1, 1])
         instruction_data = (
             self._buy_discriminator
             + struct.pack("<Q", minimum_amount_out)  # token amount in raw units
             + struct.pack("<Q", amount_in)  # max SOL cost in lamports
+            + track_volume_bytes  # enable volume tracking
         )
 
         buy_instruction = Instruction(
@@ -191,7 +195,7 @@ class PumpFunInstructionBuilder(InstructionBuilder):
         """
         instructions = []
 
-        # Get all required accounts
+        # Get all required accounts (includes mayhem-mode-aware fee recipient)
         accounts_info = address_provider.get_sell_instruction_accounts(token_info, user)
         
         # Add user_token_account (derived from ATA for new transactions)
@@ -260,11 +264,14 @@ class PumpFunInstructionBuilder(InstructionBuilder):
             ),
         ]
 
-        # Build instruction data: discriminator + token_amount + min_sol_output
+        # Build instruction data: discriminator + token_amount + min_sol_output + track_volume
+        # Encode OptionBool for track_volume: [1, 1] = Some(true)
+        track_volume_bytes = bytes([1, 1])
         instruction_data = (
             self._sell_discriminator
             + struct.pack("<Q", amount_in)  # token amount in raw units
             + struct.pack("<Q", minimum_amount_out)  # min SOL output in lamports
+            + track_volume_bytes  # enable volume tracking
         )
 
         sell_instruction = Instruction(

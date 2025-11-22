@@ -28,6 +28,10 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 logger = get_logger(__name__)
 
+        # mint_str = str(token_info.mint)
+        # if token_info.token_program_id:
+        #     self.traded_token_programs[mint_str] = token_info.token_program_id
+
 
 class UniversalTrader:
     """Universal trading coordinator that works with any supported platform."""
@@ -334,6 +338,8 @@ class UniversalTrader:
 
         # State tracking
         self.token_queue: asyncio.Queue[TokenInfo] = asyncio.Queue[TokenInfo]()
+#        self.traded_mints: set[Pubkey] = set()
+        self.traded_token_programs: dict[str, Pubkey] = {}  # Maps mint (as string) to token_program_id
         self.processing: bool = False
         self.token_timestamps: dict[str, float] = {}
         self._queued_tokens: set[str] = set()  # Track tokens already queued to prevent duplicates
